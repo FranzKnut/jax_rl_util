@@ -210,7 +210,7 @@ def train_brax_baseline(hparams: BraxBaselineParams, logger=DummyLogger()):
             print(f'num_steps: {num_steps}, reward: {reward}')
         debug.callback(print_progress, num_steps, metrics["eval/episode_reward"])
 
-    model_filename = f'artifacts/baseline-{env_name}-{obs_mask}'
+    model_filename = f'artifacts/baselines/{env_name}-{obs_mask}'
     if os.path.exists(model_filename):
         print("Loading existing model")
         params = model.load_params(model_filename)
