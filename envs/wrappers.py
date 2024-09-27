@@ -2,19 +2,22 @@
 
 from dataclasses import dataclass
 from functools import partial
-from typing import Any, Iterable, Optional, Tuple, Union
+import os
+from typing import Iterable
 from brax.envs.base import State
-import chex
-import flax
-from gymnasium import Env
+import gymnasium as gym
 import jax
 from jax import numpy as jnp, random as jrandom
 import numpy as np
-import gym
 import gymnax
-import popjym
 
 import importlib
+
+
+
+def is_discrete(env: gym.Env):
+    """Check if env has discrete Action Space."""
+    return isinstance(env.action_space, gym.spaces.Discrete)
 
 
 class Wrapper:
@@ -27,6 +30,11 @@ class Wrapper:
         if name == "__setstate__":
             raise AttributeError(name)
         return getattr(self.env, name)
+
+    @property
+    def discrete(self) -> bool:
+        """Get action size."""
+        return is_discrete(self)
 
 
 class GymBraxWrapper(Wrapper):
@@ -65,11 +73,6 @@ class GymBraxWrapper(Wrapper):
         """Get action size."""
         act_space = self.action_space
         return act_space.n if self.discrete else act_space.shape[-1]
-
-    @property
-    def discrete(self) -> int:
-        """Get action size."""
-        return isinstance(self.action_space, gym.spaces.Discrete)
 
     @property
     def observation_size(self) -> int:
@@ -124,6 +127,15 @@ class GymnaxBraxWrapper(GymBraxWrapper):
         """Only works for default_params envs."""
         params = self.env.default_params if params is None else params
         return self.env.observation_space(params)
+
+
+# class RenderWrapper(GymnaxToGymWrapper):
+#     def __init__(self, env, params=None, seed: int | None = None):
+#         super().__init__(env, params, seed)
+#         self.vis = Visualizer(env, params, state_seq=None, reward_seq=None)
+
+#     def render(self, mode="human"):
+#         return super().render(mode)
 
 
 class PopJymBraxWrapper(GymnaxBraxWrapper):
@@ -267,13 +279,7 @@ class GymJaxWrapper(Wrapper):
         return act_space.n if self.discrete else act_space.shape[-1]
 
     @property
-    def discrete(self) -> int:
-        """Get action size."""
-        return isinstance(self.env.action_space, gym.spaces.Discrete)
-
-    @property
     def observation_size(self) -> int:
-        """Only works for default_params envs."""
         return self.observation_space.shape
 
 
@@ -342,6 +348,48 @@ class RandomizedAutoResetWrapperNaive(Wrapper):
         return state.replace(pipeline_state=pipeline_state, obs=obs)
 
 
+def get_obs_mask(base_obs_size: int, obs_mask: Iterable[int] | str | int = None):
+    """Get the observation mask from string description.
+
+    obs_mask may take values ['odd', 'even', 'first_half'] or a list of indices.
+    """
+    # Flat observation size
+    if not isinstance(base_obs_size, int):
+        base_obs_size = np.prod(base_obs_size)
+
+    if obs_mask == "odd" or obs_mask == "even":
+        obs_mask = [i for i in range(base_obs_size) if i % 2 == (obs_mask == "odd")]
+    elif obs_mask == "first_half":
+        obs_mask = [i for i in range((base_obs_size + 1) // 2)]
+    elif isinstance(obs_mask, int):
+        obs_mask = jnp.arange(base_obs_size, dtype=jnp.int32)
+    return jnp.array(obs_mask, dtype=jnp.int32)
+
+
+class FlatPOWrapper(Wrapper):
+    """Flattens and Masks Observations in order to create an POMDP."""
+
+    def __init__(self, env: gym.Env, obs_mask: Iterable[int] | str):
+        """Set obs_mask."""
+        super().__init__(env)
+        self.obs_mask = get_obs_mask(np.prod(env.observation_space.shape), obs_mask)
+
+    def reset(self, rng: jnp.ndarray):
+        """Mask Observation."""
+        obs, env_state = self.env.reset(rng)
+        return obs.reshape(-1)[..., self.obs_mask], env_state
+
+    def step(self, rng, state, action: jnp.ndarray):
+        """Mask Observation."""
+        obs, env_state, reward, done = self.env.step(rng, state, action)
+        return obs.reshape(-1)[..., self.obs_mask], env_state, reward, done
+
+    @property
+    def observation_size(self):
+        """Get the size of the masked Observation."""
+        return (len(self.obs_mask),)
+
+
 class FlatObs_BraxWrapper(Wrapper):
     """Flattens Observations."""
 
@@ -359,23 +407,39 @@ class FlatObs_BraxWrapper(Wrapper):
         return state.replace(obs=state.obs.reshape((-1)))
 
 
-class PO_BraxWrapper(Wrapper):
+class POBraxWrapper(Wrapper):
     """Masks Observations in order to create an POMDP."""
 
     def __init__(self, env, obs_mask: Iterable[int]):
         """Set obs_mask."""
         super().__init__(env)
-        self.obs_mask = obs_mask
+        self.obs_mask = get_obs_mask(np.prod(env.observation_size), obs_mask)
 
     def reset(self, rng: jnp.ndarray) -> State:
         """Mask Observation."""
         state = self.env.reset(rng)
+        state.info["full_obs"] = state.obs
         return state.replace(obs=state.obs[..., self.obs_mask])
 
     def step(self, state: State, action: jnp.ndarray) -> State:
         """Mask Observation."""
         state = self.env.step(state, action)
         return state.replace(obs=state.obs[..., self.obs_mask])
+
+    @property
+    def observation_size(self):
+        """Get the size of the masked Observation."""
+        return len(self.obs_mask)
+
+    @property
+    def action_size(self):
+        """Get the size of the masked Observation."""
+        return self.env.action_size
+
+    @property
+    def backend(self):
+        """Get the size of the masked Observation."""
+        return self.env.backend
 
 
 @dataclass
@@ -426,3 +490,141 @@ class LogWrapper:
         info["timestep"] = state.timestep
         info["returned_episode"] = done
         return obs, state, reward, done, info
+
+
+class RGBtoGrayWrapper(Wrapper):
+    """Converts RGB to Grayscale."""
+
+    def _convert(self, obs: jnp.ndarray) -> jnp.ndarray:
+        # Scale to [0, 1]
+        obs = obs / 255.0
+        # Convert to grayscale
+        import dm_pix as pix
+
+        return jax.vmap(pix.rgb_to_grayscale)(obs) - 0.5
+
+    def reset(self, rng):
+        """Convert RGB to Grayscale."""
+        out = self.env.reset(rng)
+        return (self._convert(out[0]), *out[1:])
+
+    def step(self, state, action: jnp.ndarray, key: jrandom.PRNGKey = None):
+        """Convert RGB to Grayscale."""
+        out = self.env.step(state, action, key)
+        return (self._convert(out[0]), *out[1:])
+
+    @property
+    def observation_space(self) -> int:
+        return gym.Space(self.env.observation_space.shape[:-1] + (1,), dtype=float)
+
+
+class ParamWrapper(GymJaxWrapper):
+    """Wrap Gymnax envs for use with Brax Wrappers."""
+
+    def __init__(self, env, params=None):
+        """Set Env params at initialization."""
+        self.env = env
+        env_module = importlib.import_module(env.__class__.__module__)
+        if params is None:
+            self.params = env.default_params
+        else:
+            self.params = env_module.EnvParams(**params)
+
+    def reset(self, rng: jnp.ndarray):
+        """Make brax state from gym reset output and insert env params."""
+        return self.env.reset(rng, self.params)
+
+    def step(self, key, state, action: jnp.ndarray):
+        """Make gymnax step and wrap in brax state."""
+        return self.env.step(key, state, action, self.params)
+
+
+class SaveToFileWrapper(gym.Wrapper, gym.utils.RecordConstructorArgs):
+    """This wrapper saves observations, actions and rewards to file(s)."""
+
+    def __init__(
+        self,
+        env: gym.Env,
+        output_folder: str,
+        min_steps: int = 2,
+        start_filenum: int = 0,
+    ):
+        """Wrapper records arrays of rollouts.
+
+        For now will save one episode per file.
+
+        Args:
+            env: The environment that will be wrapped
+            output_folder (str): The folder where the rollouts will be stored
+
+        """
+        gym.utils.RecordConstructorArgs.__init__(
+            self, output_file=output_folder, min_steps=min_steps, start_filenum=start_filenum
+        )
+        gym.Wrapper.__init__(self, env)
+
+        self.min_steps = min_steps
+
+        self.output_folder = os.path.abspath(output_folder)
+        # Create output folder if needed
+        if os.path.isdir(self.output_folder):
+            print(f"Overwriting existing files in {self.output_folder}")
+        os.makedirs(self.output_folder, exist_ok=True)
+
+        try:
+            self.is_vector_env = self.get_wrapper_attr("is_vector_env")
+        except AttributeError:
+            self.is_vector_env = False
+
+        self.obs_buffer = []
+        self.act_buffer = []
+        self.rew_buffer = [0]
+        self.filenum = start_filenum
+
+    def _save_rollout(self):
+        """Save the current episode to file."""
+        if len(self.obs_buffer) >= self.min_steps:
+            obs = np.array(self.obs_buffer)
+            act = np.array(self.act_buffer)
+            rew = np.array(self.rew_buffer)
+            filename = os.path.join(self.output_folder, f"episode-{self.filenum}.npz")
+            np.savez(filename, obs=obs, act=act, rew=rew)
+            self.filenum += 1
+
+        # In any case, wipe the buffers
+        self.obs_buffer = []
+        self.act_buffer = []
+        self.rew_buffer = [0]
+
+    def reset(self, **kwargs):
+        """Reset the environment using kwargs and then starts recording if video enabled."""
+        self._save_rollout()
+        observations = super().reset(**kwargs)
+        self.obs_buffer.append(observations[0])
+        return observations
+
+    def step(self, action):
+        """Steps through the environment using action, recording actions, observations and rewards"""
+        (
+            observations,
+            rewards,
+            terminateds,
+            truncateds,
+            infos,
+        ) = self.env.step(action)
+
+        self.act_buffer.append(action)
+
+        if terminateds or truncateds:
+            self._save_rollout()
+
+        # Usually with Autoreset, the returned obs is the start of the next episode
+        self.obs_buffer.append(observations)
+        self.rew_buffer.append(rewards)
+
+        return observations, rewards, terminateds, truncateds, infos
+
+    def close(self):
+        """Closes the wrapper then the video recorder."""
+        self._save_rollout()
+        super().close()

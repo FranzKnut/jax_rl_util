@@ -7,19 +7,12 @@ permalink: https://perma.cc/C9ZM-652R
 """
 
 from functools import partial
-import gym
-from gym.envs.classic_control.cartpole import CartPoleEnv
-from gym import spaces
+from gymnasium.envs.classic_control.cartpole import CartPoleEnv
+from gymnasium import spaces
 from jax import numpy as jnp
 from jax import random as jrandom
 import jax
 import numpy as np
-
-gym.envs.register(
-    id='CartpoleContinuousJax-v0',
-    entry_point='experiments.reinforcement.envs.continuous_cartpole:ContinuousCartPoleEnv',
-    order_enforce=False
-)
 
 
 class ContinuousCartPoleEnv(CartPoleEnv):
@@ -30,7 +23,7 @@ class ContinuousCartPoleEnv(CartPoleEnv):
     Source:
         This environment corresponds to the version of the cart-pole problem described by Barto, Sutton, and Anderson
 
-    Observation: 
+    Observation:
         Type: Box(4)
         Num	Observation                 Min         Max
         0	Cart Position             -4.8            4.8
@@ -44,7 +37,7 @@ class ContinuousCartPoleEnv(CartPoleEnv):
         0	Push cart to the left
         1	Push cart to the right
 
-        Note: The amount the velocity that is reduced or increased is not fixed; it depends on the angle the pole is pointing. 
+        Note: The amount the velocity that is reduced or increased is not fixed; it depends on the angle the pole is pointing.
         This is because the center of gravity of the pole increases the amount of energy needed to move the cart underneath it
 
     Reward:
@@ -61,9 +54,9 @@ class ContinuousCartPoleEnv(CartPoleEnv):
         Considered solved when the average reward is greater than or equal to 195.0 over 100 consecutive trials.
     """
 
-    def __init__(self, seed=0, task='balancing'):
+    def __init__(self, seed=0, task="balancing-dv", action_mode="acc"):
         """Initialize environment.
-        
+
         Args:
             seed (int, optional): Random seed. Defaults to 0.
             task (str, optional): Task to solve. Defaults to 'balancing'.
@@ -71,16 +64,21 @@ class ContinuousCartPoleEnv(CartPoleEnv):
                                   suffix 'dv' uses env parameters from a real-world beckhoff system.
         """
         self.key = jrandom.PRNGKey(seed)
-        self.name = "CartPole-v1"
-        super().__init__(render_mode='rgb_array')
-        if task.endswith('dv'):
-            self.force_mag = 3.0
+        self.name = "CartpoleContinuousJax-v0"
+        super().__init__(render_mode="rgb_array")
+
+        self.start_theta = 0
+        if task.endswith("dv"):
+            self.force_mag = 4.0
             self.tau = 0.01
-            self.length = 0.2
+            self.length = 0.41
             self.masscart = 0.46
             self.masspole = 0.08
             self.x_threshold = 0.4
-        if task.startswith('damping'):
+            self.pole_friction = 2.1e-3  # kg m² / s²
+            self.momentum_inertia = 1.05e-2  # kg m^2
+
+        if task.startswith("damping"):
             self.theta_threshold_radians = 30 * jnp.pi / 360
         self.action_space = spaces.Box(low=-1, high=1, shape=(1,), dtype=jnp.float32)
         self.task = task
@@ -91,13 +89,15 @@ class ContinuousCartPoleEnv(CartPoleEnv):
         x_dot = state[1]
         theta = state[2]
         theta_dot = state[3]
-        force = self.force_mag * action.squeeze()
+        xacc = self.force_mag * action.squeeze()
         costheta = jnp.cos(theta)
         sintheta = jnp.sin(theta)
-        temp = (force + self.polemass_length * theta_dot * theta_dot * sintheta) / self.total_mass
-        thetaacc = (self.gravity * sintheta - costheta * temp) / (self.length * (4.0 / 3.0 - self.masspole * costheta * costheta / self.total_mass))
-        xacc = temp - self.polemass_length * thetaacc * costheta / self.total_mass
-        if self.kinematics_integrator == 'euler':
+        # temp = (force + self.polemass_length * theta_dot * theta_dot * sintheta) / self.total_mass
+        thetaacc = (
+            self.masspole * self.length * (self.gravity * sintheta - xacc * costheta) - self.pole_friction * theta_dot
+        ) / self.momentum_inertia
+        # xacc = temp - self.polemass_length * thetaacc * costheta / self.total_mass
+        if self.kinematics_integrator == "euler":
             x = x + self.tau * x_dot
             x_dot = x_dot + self.tau * xacc
             theta = theta + self.tau * theta_dot
@@ -109,21 +109,23 @@ class ContinuousCartPoleEnv(CartPoleEnv):
             theta = theta + self.tau * theta_dot
         state = jnp.array([x, x_dot, theta, theta_dot])
         done = (x < -self.x_threshold) | (x > self.x_threshold)
-        if self.task.startswith('balancing'):
-            done = done | (theta < -self.theta_threshold_radians) | (theta > self.theta_threshold_radians)
+        if self.task.startswith("balancing"):
+            done = done | (jnp.abs(theta) > self.theta_threshold_radians)
 
-        reward = (1-done)
-        if self.task.startswith('damping'):
-            theta_wrapped = (theta + np.pi) % (2 * np.pi) - np.pi
-            theta_symmetric = abs(theta_wrapped)
-            distance_to_target = abs(theta_symmetric - np.pi)
-            distance_to_center = abs(x)
-            reward += distance_to_target * (done - 1) / 10
-            reward += distance_to_center * (done - 1) / 10
-            reward += abs(theta_dot) * (done - 1) / 10
-            reward += abs(x_dot) * (done - 1) / 10
+        reward = self.get_reward(state, action)
 
-        return state, state, reward, done, False
+        return state, reward, done, False, {}
+
+    def get_reward(self, state, action):
+        return 1
+
+    @staticmethod
+    def clip_theta(state):
+        if state[2] > np.pi:
+            state[2] = -2 * np.pi + state[2]
+        elif state[2] <= -np.pi:
+            state[2] = 2 * np.pi + state[2]
+        return state
 
     def step(self, state, action=None, params=None):
         if action is None:
@@ -137,7 +139,7 @@ class ContinuousCartPoleEnv(CartPoleEnv):
         return output
 
     def _reset(self, key):
-        if self.task.startswith('balancing'):
+        if self.task.startswith("balancing"):
             bounds = jnp.array(
                 [
                     self.x_threshold / 2,
@@ -148,16 +150,73 @@ class ContinuousCartPoleEnv(CartPoleEnv):
                 dtype=np.float32,
             )
         else:
-            bounds = jnp.array([0.05, 0.05, np.pi/2, 0.05])
+            bounds = jnp.array([0.05, 0.05, np.pi / 2, 0.05])
 
-        return jrandom.uniform(key, minval=-bounds, maxval=bounds, shape=(4,))
+        initial_state = jrandom.uniform(key, minval=-bounds, maxval=bounds, shape=(4,))
+        initial_state = initial_state.at[2].set(initial_state[2] + self.start_theta)
+        return initial_state
 
-    def reset(self, key=None):
-        if key is None:
-            self.key, key = jrandom.split(self.key)
+    def reset(self, seed=None):
+        if seed is None:
+            self.key, seed = jrandom.split(self.key)
 
         self.elapsed_time = 0.0
-        state = self._reset(key)
+        state = self._reset(seed)
         self.state = state
 
-        return state, state
+        return state, {"state": state}
+
+
+class CartPoleSwingUp(ContinuousCartPoleEnv):
+    def __init__(
+        self,
+        offcenter_penalty_factor=1e-3,
+        theta_dot_penalty_factor=1e-3,
+        switch_x_dir_penalty_factor=1e-2,
+    ):
+        super().__init__(task="swingup-dv")
+        self.start_theta = np.pi
+        self.theta_threshold_radians = np.pi / 2
+        self.offcenter_penalty_factor = offcenter_penalty_factor
+        self.theta_dot_penalty_factor = theta_dot_penalty_factor
+        self.switch_x_dir_penalty_factor = switch_x_dir_penalty_factor
+
+    def get_reward(self, state, action):
+        x, _, theta, theta_dot = state
+        is_above = jnp.abs(theta) < (jnp.pi / 2)
+        reward = jnp.array(
+            [
+                1 + jnp.cos(theta),
+                -self.theta_dot_penalty_factor * jnp.abs(theta_dot) * jnp.cos(theta) * is_above,
+                -self.offcenter_penalty_factor * jnp.abs(x) * jnp.cos(theta) * is_above,
+                -self.switch_x_dir_penalty_factor * ((x * action.squeeze()) < 0) * jnp.sin(theta) * (1 - is_above),
+            ]
+        ).sum()
+        return reward
+
+    def is_terminated(self, state):
+        return state[0] < -self.x_threshold or state[0] > self.x_threshold
+
+
+class CartPoleDampening(ContinuousCartPoleEnv):
+    """CartPoleDecoupled for dampening task"""
+
+    def __init__(self):
+        super().__init__(task="damping-dv")
+        self.name = "CartpoleContinuousJaxSwingUp-v0"
+        self.theta_threshold_radians = 0.5
+        self.start_x_bound = 0.3
+
+    def get_reward(self, state, action):
+        x, _, theta, theta_dot = state
+        reward = np.sum(
+            [
+                1 - np.cos(theta),
+                -0.01 * np.abs(theta_dot),
+                -0.5 * np.abs(x),
+            ]
+        )
+        return reward
+
+    def is_terminated(self, state):
+        return state[0] < -self.x_threshold or state[0] > self.x_threshold
