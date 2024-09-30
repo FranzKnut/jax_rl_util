@@ -5,6 +5,7 @@ from functools import partial
 import os
 from typing import Iterable
 from brax.envs.base import State
+from jax_rl_util.envs.env_util import get_obs_mask
 import gymnasium as gym
 import jax
 from jax import numpy as jnp, random as jrandom
@@ -12,7 +13,6 @@ import numpy as np
 import gymnax
 
 import importlib
-
 
 
 def is_discrete(env: gym.Env):
@@ -348,24 +348,6 @@ class RandomizedAutoResetWrapperNaive(Wrapper):
         return state.replace(pipeline_state=pipeline_state, obs=obs)
 
 
-def get_obs_mask(base_obs_size: int, obs_mask: Iterable[int] | str | int = None):
-    """Get the observation mask from string description.
-
-    obs_mask may take values ['odd', 'even', 'first_half'] or a list of indices.
-    """
-    # Flat observation size
-    if not isinstance(base_obs_size, int):
-        base_obs_size = np.prod(base_obs_size)
-
-    if obs_mask == "odd" or obs_mask == "even":
-        obs_mask = [i for i in range(base_obs_size) if i % 2 == (obs_mask == "odd")]
-    elif obs_mask == "first_half":
-        obs_mask = [i for i in range((base_obs_size + 1) // 2)]
-    elif isinstance(obs_mask, int):
-        obs_mask = jnp.arange(base_obs_size, dtype=jnp.int32)
-    return jnp.array(obs_mask, dtype=jnp.int32)
-
-
 class FlatPOWrapper(Wrapper):
     """Flattens and Masks Observations in order to create an POMDP."""
 
@@ -539,7 +521,17 @@ class ParamWrapper(GymJaxWrapper):
         return self.env.step(key, state, action, self.params)
 
 
-class SaveToFileWrapper(gym.Wrapper, gym.utils.RecordConstructorArgs):
+class JitWrapper(Wrapper):
+    """Jit wrapped jax env."""
+
+    def reset(self, *inputs):
+        return jax.jit(self.env.reset)(*inputs)
+
+    def step(self, *inputs):
+        return jax.jit(self.env.step)(*inputs)
+
+
+class SaveToFileWrapper(Wrapper):
     """This wrapper saves observations, actions and rewards to file(s)."""
 
     def __init__(
@@ -558,9 +550,6 @@ class SaveToFileWrapper(gym.Wrapper, gym.utils.RecordConstructorArgs):
             output_folder (str): The folder where the rollouts will be stored
 
         """
-        gym.utils.RecordConstructorArgs.__init__(
-            self, output_file=output_folder, min_steps=min_steps, start_filenum=start_filenum
-        )
         gym.Wrapper.__init__(self, env)
 
         self.min_steps = min_steps
@@ -596,33 +585,26 @@ class SaveToFileWrapper(gym.Wrapper, gym.utils.RecordConstructorArgs):
         self.act_buffer = []
         self.rew_buffer = [0]
 
-    def reset(self, **kwargs):
+    def reset(self, *args, **kwargs):
         """Reset the environment using kwargs and then starts recording if video enabled."""
         self._save_rollout()
-        observations = super().reset(**kwargs)
-        self.obs_buffer.append(observations[0])
-        return observations
+        state = self.env.reset(*args, **kwargs)
+        self.obs_buffer.append(state.obs)
+        return state
 
-    def step(self, action):
+    def step(self, state, action: jnp.ndarray):
         """Steps through the environment using action, recording actions, observations and rewards"""
-        (
-            observations,
-            rewards,
-            terminateds,
-            truncateds,
-            infos,
-        ) = self.env.step(action)
+        env_state = self.env.step(state, action)
 
         self.act_buffer.append(action)
 
-        if terminateds or truncateds:
+        if env_state.done:
             self._save_rollout()
 
         # Usually with Autoreset, the returned obs is the start of the next episode
-        self.obs_buffer.append(observations)
-        self.rew_buffer.append(rewards)
-
-        return observations, rewards, terminateds, truncateds, infos
+        self.obs_buffer.append(env_state.obs)
+        self.rew_buffer.append(env_state.reward)
+        return env_state
 
     def close(self):
         """Closes the wrapper then the video recorder."""

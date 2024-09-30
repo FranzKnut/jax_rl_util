@@ -28,7 +28,7 @@ import gymnax
 import brax
 import popjym
 
-from jax_rl_util.envs.wrappers import get_obs_mask
+from .env_util import get_obs_mask
 
 from .wrappers import (
     EpisodeWrapper,
@@ -64,7 +64,7 @@ class EnvironmentConfig:
     obs_mask: str | Iterable[int] | None = None
     init_kwargs: dict = field(default_factory=dict, hash=False)
     env_kwargs: dict = field(default_factory=dict, hash=False)
-    max_ep_length: int = 500
+    max_ep_length: int = 1000
     batch_size: int | None = None
     render: bool = True
 
@@ -156,17 +156,17 @@ def make_env(params: EnvironmentConfig, debug=0, make_eval=False, use_vmap_wrapp
         env, env_params = popjym.make(env_name)
         env = PopJymBraxWrapper(env, params.env_kwargs)
     else:
-        if env_name.startswith("brax"):
+        if env_name.startswith("brax-") or env_name in brax.envs._envs:
             # Create entrypoint for brax env
             entry_point = partial(
-                brax.envs.get_environment, env_name="-".join(env_name.split("-")[1:]), **params.env_kwargs
+                brax.envs.get_environment, env_name=env_name.replace("brax-", ""), **params.env_kwargs
             )
             if env_name not in gym.envs.registry:
                 gym.register(env_name, entry_point=entry_point, order_enforce=False)
         # Create a gym environment wrapped with vmap, AutoReset, and Episode wrappers
         env = gym.make(env_name, autoreset=False, disable_env_checker=debug < 3, **params.init_kwargs)
 
-        if not env_name.startswith("brax"):
+        if not (env_name.startswith("brax-") or env_name in brax.envs._envs):
             # probably a gym env
             env = GymBraxWrapper(env, params.env_kwargs)
 
@@ -175,7 +175,8 @@ def make_env(params: EnvironmentConfig, debug=0, make_eval=False, use_vmap_wrapp
     # Wrap with the brax wrappers
     env = EpisodeWrapper(env, params.max_ep_length, action_repeat=1)
     env = FlatObs_BraxWrapper(env)
-    env = POBraxWrapper(env, obs_mask)
+    if obs_mask is not None:
+        env = POBraxWrapper(env, obs_mask)
     if params.batch_size and use_vmap_wrapper:
         env = VmapWrapper(env, batch_size=params.batch_size)
     # env = EfficientAutoResetWrapper(env)
@@ -196,7 +197,8 @@ def make_env(params: EnvironmentConfig, debug=0, make_eval=False, use_vmap_wrapp
 
         eval_env = EpisodeWrapper(eval_env, params.max_ep_length, action_repeat=1)
         eval_env = FlatObs_BraxWrapper(eval_env)
-        eval_env = POBraxWrapper(eval_env, obs_mask)
+        if obs_mask is not None:
+            eval_env = POBraxWrapper(eval_env, obs_mask)
         # eval_env = VmapWrapper(eval_env, batch_size=params.batch_size)
         eval_env = RandomizedAutoResetWrapperNaive(eval_env)
         return env, env_info, eval_env
