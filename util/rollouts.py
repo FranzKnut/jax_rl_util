@@ -14,7 +14,20 @@ from jax_rl_util.envs.environments import EnvironmentConfig, make_env, print_env
 
 @dataclass
 class RolloutConfig:
-    policy_path: str = "artifacts/baselines/inverted_pendulum.ckpt"
+    """Configuration for collecting rollouts.
+
+    Attributes:
+        policy_path (str | None): Path to the policy checkpoint. Defaults to "artifacts/baselines/{env_name}.ckpt".
+        ckpt_type (str): Type of checkpoint. Defaults to "brax".
+        output_dir (str): Directory to save the rollout data. Defaults to "data".
+        env_config (EnvironmentConfig): Configuration for the environment. Defaults to an EnvironmentConfig with
+                                        env_name="inverted_pendulum" and init_kwargs={"backend": "spring"}.
+        num_rollouts (int): Number of rollouts to collect. Defaults to 100.
+        max_steps (int): Maximum number of steps per rollout. Defaults to 1000.
+        seed (int): Random seed for reproducibility. Defaults to 0.
+    """
+
+    policy_path: str | None = None  # defaults to "artifacts/baselines/{env_name}.ckpt"
     ckpt_type: str = "brax"
     output_dir: str = "data"
     env_config: EnvironmentConfig = field(
@@ -32,12 +45,12 @@ def collect_rollouts(config: RolloutConfig):
     env, env_info = make_env(config.env_config)
     print_env_info(env_info)
 
+    policy_path = config.policy_path or f"artifacts/baselines/{config.env_config.env_name}.ckpt"
+
     if config.ckpt_type == "brax":
-        policy_fn = load_brax_model(
-            config.policy_path, config.env_config.env_name, env.observation_size, env.action_size
-        )
+        policy_fn = load_brax_model(policy_path, config.env_config.env_name, env.observation_size, env.action_size)
     elif config.ckpt_type == "orbax":
-        policy_fn = make_flax_inference_fn(config.policy_path, env.observation_size, env.action_size)
+        policy_fn = make_flax_inference_fn(policy_path, env.observation_size, env.action_size)
 
     def _step(carry, _):
         print("Tracing _step")
