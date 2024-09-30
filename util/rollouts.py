@@ -2,6 +2,7 @@ import os
 from baselines.brax_baselines import load_brax_model
 import brax.envs.wrappers.gym
 import numpy as np
+from sqlalchemy import all_
 from rtr_iil import make_flax_inference_fn
 import jax
 from dataclasses import dataclass, field
@@ -39,7 +40,7 @@ class RolloutConfig:
 
 
 # Collect rollouts for the given environment
-def collect_rollouts(config: RolloutConfig):
+def collect_rollouts(config: RolloutConfig, save_rollouts: bool = True):
     rng = jax.random.PRNGKey(config.seed)
 
     env, env_info = make_env(config.env_config)
@@ -51,6 +52,9 @@ def collect_rollouts(config: RolloutConfig):
         policy_fn = load_brax_model(policy_path, config.env_config.env_name, env.observation_size, env.action_size)
     elif config.ckpt_type == "orbax":
         policy_fn = make_flax_inference_fn(policy_path, env.observation_size, env.action_size)
+    avg_reward = collect_rollouts(env, policy_fn, config.seed, config.output_dir, config.num_rollouts, config.max_steps)
+    print(f"Average reward: {avg_reward}")
+    rng = jax.random.PRNGKey(config.seed)
 
     def _step(carry, _):
         print("Tracing _step")
@@ -62,24 +66,30 @@ def collect_rollouts(config: RolloutConfig):
 
     output_dir = os.path.join(config.output_dir, config.env_config.env_name)
     os.makedirs(output_dir, exist_ok=True)
+    total_reward = 0
+    total_num_eps = 0
     for i in range(config.num_rollouts):
         rng, reset_key, step_key = jax.random.split(rng, 3)
         env_state = env.reset(reset_key)
 
         _, (states, actions) = jax.lax.scan(_step, (env_state, step_key), xs=None, length=config.max_steps)
-        filename = os.path.join(output_dir, f"rollout-{i}.npz")
         episode_ends = np.where(states.done)[0]
         num_episodes = max(1, len(episode_ends))
-        np.savez(
-            filename,
-            obs=states.obs[: episode_ends[-1]],
-            act=actions[: episode_ends[-1]],
-            rew=states.reward[: episode_ends[-1]],
-            done=states.done[: episode_ends[-1]],
-        )
-        print(
-            f"Saved {num_episodes} episodes to {filename}. Average reward: {np.sum(states.reward[:episode_ends[-1]]) / num_episodes}"
-        )
+        total_reward += np.sum(states.reward[: episode_ends[-1]])
+        total_num_eps += num_episodes
+        if save_rollouts:
+            filename = os.path.join(output_dir, f"rollout-{i}.npz")
+            np.savez(
+                filename,
+                obs=states.obs[: episode_ends[-1]],
+                act=actions[: episode_ends[-1]],
+                rew=states.reward[: episode_ends[-1]],
+                done=states.done[: episode_ends[-1]],
+            )
+            print(
+                f"Saved {num_episodes} episodes to {filename}. Average reward: {np.sum(states.reward[:episode_ends[-1]]) / num_episodes}"
+            )
+    return total_reward / total_num_eps
 
 
 if __name__ == "__main__":
