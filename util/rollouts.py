@@ -60,7 +60,7 @@ def collect_rollouts(config: RolloutConfig):
             obs=states.obs[: episode_ends[-1]],
             act=actions[: episode_ends[-1]],
             rew=states.reward[: episode_ends[-1]],
-            dones=states.done[: episode_ends[-1]],
+            done=states.done[: episode_ends[-1]],
         )
         print(
             f"Saved {num_episodes} episodes to {filename}. Average reward: {np.sum(states.reward[:episode_ends[-1]]) / num_episodes}"
