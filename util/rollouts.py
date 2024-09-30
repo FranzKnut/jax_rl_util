@@ -47,12 +47,14 @@ def collect_rollouts(config: RolloutConfig):
         _state = env.step(_state, action)
         return (_state, _rng), (_state, action)
 
+    output_dir = os.path.join(config.output_dir, config.env_config.env_name)
+    os.makedirs(output_dir, exist_ok=True)
     for i in range(config.num_rollouts):
         rng, reset_key, step_key = jax.random.split(rng, 3)
         env_state = env.reset(reset_key)
 
         _, (states, actions) = jax.lax.scan(_step, (env_state, step_key), xs=None, length=config.max_steps)
-        filename = os.path.join(config.output_dir, config.env_config.env_name, f"rollout-{i}.npz")
+        filename = os.path.join(output_dir, f"rollout-{i}.npz")
         episode_ends = np.where(states.done)[0]
         num_episodes = max(1, len(episode_ends))
         np.savez(
