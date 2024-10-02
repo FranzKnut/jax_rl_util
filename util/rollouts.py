@@ -56,7 +56,7 @@ def collect_rollouts(config: RolloutConfig, save_rollouts: bool = True, verbose:
         policy_fn, policy = make_flax_inference_fn(policy_path, env.observation_size, env.action_size)
         use_rnn = policy.use_rnn
         rng, policy_key = jax.random.split(rng)
-        init_carry = policy.initialize_carry(policy_key, env.observation_size) if policy.use_rnn else None
+        init_carry = policy.initialize_carry(policy_key, (env.observation_size,)) if policy.use_rnn else None
 
     def _step(carry, _):
         print("Tracing _step")
@@ -69,7 +69,7 @@ def collect_rollouts(config: RolloutConfig, save_rollouts: bool = True, verbose:
                 jax.tree.map(lambda x: x[0], init_carry),
                 _hidden,
             )
-            _hidden, action = policy_fn(_hidden, _state.obs)
+            _hidden, action = policy_fn(_hidden, _state.obs, policy_key)
         else:
             action = policy_fn(_state.obs, policy_key)
         _state = env.step(_state, action)
