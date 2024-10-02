@@ -8,7 +8,6 @@ from dataclasses import dataclass, field
 
 import simple_parsing
 
-import brax
 from jax_rl_util.envs.environments import EnvironmentConfig, make_env, print_env_info
 
 
@@ -107,4 +106,5 @@ if __name__ == "__main__":
     parser = simple_parsing.ArgumentParser()
     parser.add_arguments(RolloutConfig, dest="config")
     args = parser.parse_args()
-    collect_rollouts(args.config)
+    avg_reward = collect_rollouts(args.config)
+    print(f"Average reward: {avg_reward}")
