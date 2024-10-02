@@ -1,10 +1,9 @@
 import os
 from baselines.brax_baselines import load_brax_model
-import brax.envs.wrappers.gym
 import numpy as np
-from sqlalchemy import all_
 from rtr_iil import make_flax_inference_fn
 import jax
+import jax.numpy as jnp
 from dataclasses import dataclass, field
 
 import simple_parsing
@@ -40,29 +39,41 @@ class RolloutConfig:
 
 
 # Collect rollouts for the given environment
-def collect_rollouts(config: RolloutConfig, save_rollouts: bool = True):
+def collect_rollouts(config: RolloutConfig, save_rollouts: bool = True, verbose: bool = True):
     rng = jax.random.PRNGKey(config.seed)
 
     env, env_info = make_env(config.env_config)
-    print_env_info(env_info)
+    if verbose:
+        print_env_info(env_info)
 
     policy_path = config.policy_path or f"artifacts/baselines/{config.env_config.env_name}.ckpt"
 
     if config.ckpt_type == "brax":
         policy_fn = load_brax_model(policy_path, config.env_config.env_name, env.observation_size, env.action_size)
+        use_rnn = False
+        init_carry = None
     elif config.ckpt_type == "orbax":
-        policy_fn = make_flax_inference_fn(policy_path, env.observation_size, env.action_size)
-    avg_reward = collect_rollouts(env, policy_fn, config.seed, config.output_dir, config.num_rollouts, config.max_steps)
-    print(f"Average reward: {avg_reward}")
-    rng = jax.random.PRNGKey(config.seed)
+        policy_fn, policy = make_flax_inference_fn(policy_path, env.observation_size, env.action_size)
+        use_rnn = policy.use_rnn
+        rng, policy_key = jax.random.split(rng)
+        init_carry = policy.initialize_carry(policy_key, env.observation_size) if policy.use_rnn else None
 
     def _step(carry, _):
         print("Tracing _step")
-        _state, _rng = carry
+        _state, _hidden, _rng = carry
         _rng, policy_key = jax.random.split(_rng)
-        action = policy_fn(_state.obs, policy_key)
+        # Reset whenever done
+        if use_rnn:
+            _hidden = jax.tree.map(
+                jax.tree_util.Partial(jnp.where, jnp.squeeze(_state.done)),
+                jax.tree.map(lambda x: x[0], init_carry),
+                _hidden,
+            )
+            _hidden, action = policy_fn(_hidden, _state.obs)
+        else:
+            action = policy_fn(_state.obs, policy_key)
         _state = env.step(_state, action)
-        return (_state, _rng), (_state, action)
+        return (_state, _hidden, _rng), (_state, action)
 
     output_dir = os.path.join(config.output_dir, config.env_config.env_name)
     os.makedirs(output_dir, exist_ok=True)
@@ -72,7 +83,7 @@ def collect_rollouts(config: RolloutConfig, save_rollouts: bool = True):
         rng, reset_key, step_key = jax.random.split(rng, 3)
         env_state = env.reset(reset_key)
 
-        _, (states, actions) = jax.lax.scan(_step, (env_state, step_key), xs=None, length=config.max_steps)
+        _, (states, actions) = jax.lax.scan(_step, (env_state, init_carry, step_key), xs=None, length=config.max_steps)
         episode_ends = np.where(states.done)[0]
         num_episodes = max(1, len(episode_ends))
         total_reward += np.sum(states.reward[: episode_ends[-1]])
