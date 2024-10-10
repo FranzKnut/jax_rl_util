@@ -30,7 +30,7 @@ class RolloutConfig:
     ckpt_type: str = "brax"
     output_dir: str = "data"
     env_config: EnvironmentConfig = field(
-        default_factory=lambda: EnvironmentConfig(env_name="inverted_pendulum", init_kwargs={"backend": "spring"})
+        default_factory=lambda: EnvironmentConfig(env_name="reacher", init_kwargs={"backend": "spring"})
     )
     num_rollouts: int = 100
     max_steps: int = 1000
@@ -59,20 +59,20 @@ def collect_rollouts(config: RolloutConfig, save_rollouts: bool = True, verbose:
 
     def _step(carry, _):
         print("Tracing _step")
-        _state, _hidden, _rng = carry
+        prev_state, _hidden, _rng = carry
         _rng, policy_key = jax.random.split(_rng)
         # Reset whenever done
         if use_rnn:
             _hidden = jax.tree.map(
-                jax.tree_util.Partial(jnp.where, jnp.squeeze(_state.done)),
+                jax.tree_util.Partial(jnp.where, jnp.squeeze(prev_state.done)),
                 jax.tree.map(lambda x: x[0], init_carry),
                 _hidden,
             )
-            _hidden, action = policy_fn(_hidden, _state.obs, policy_key)
+            _hidden, action = policy_fn(_hidden, prev_state.obs, policy_key)
         else:
-            action = policy_fn(_state.obs, policy_key)
-        _state = env.step(_state, action)
-        return (_state, _hidden, _rng), (_state, action)
+            action = policy_fn(prev_state.obs, policy_key)
+        _state = env.step(prev_state, action)
+        return (_state, _hidden, _rng), (prev_state, action)
 
     output_dir = os.path.join(config.output_dir, config.env_config.env_name)
     os.makedirs(output_dir, exist_ok=True)
@@ -83,7 +83,7 @@ def collect_rollouts(config: RolloutConfig, save_rollouts: bool = True, verbose:
         env_state = env.reset(reset_key)
 
         _, (states, actions) = jax.lax.scan(_step, (env_state, init_carry, step_key), xs=None, length=config.max_steps)
-        episode_ends = np.where(states.done)[0]
+        episode_ends = np.where(states.done)[0] if np.any(states.done) else [len(states.done)]
         num_episodes = max(1, len(episode_ends))
         total_reward += np.sum(states.reward[: episode_ends[-1]])
         total_num_eps += num_episodes

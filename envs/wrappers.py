@@ -5,7 +5,7 @@ from functools import partial
 import os
 from typing import Iterable
 from brax.envs.base import State
-from jax_rl_util.envs.env_util import get_obs_mask
+from jax_rl_util.envs.env_util import make_obs_mask
 import gymnasium as gym
 import jax
 from jax import numpy as jnp, random as jrandom
@@ -354,7 +354,7 @@ class FlatPOWrapper(Wrapper):
     def __init__(self, env: gym.Env, obs_mask: Iterable[int] | str):
         """Set obs_mask."""
         super().__init__(env)
-        self.obs_mask = get_obs_mask(np.prod(env.observation_space.shape), obs_mask)
+        self.obs_mask = make_obs_mask(np.prod(env.observation_space.shape), obs_mask)
 
     def reset(self, rng: jnp.ndarray):
         """Mask Observation."""
@@ -395,7 +395,7 @@ class POBraxWrapper(Wrapper):
     def __init__(self, env, obs_mask: Iterable[int]):
         """Set obs_mask."""
         super().__init__(env)
-        self.obs_mask = get_obs_mask(np.prod(env.observation_size), obs_mask)
+        self.obs_mask = make_obs_mask(np.prod(env.observation_size), obs_mask)
 
     def reset(self, rng: jnp.ndarray) -> State:
         """Mask Observation."""

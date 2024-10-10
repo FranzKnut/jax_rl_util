@@ -28,7 +28,7 @@ import gymnax
 import brax
 import popjym
 
-from .env_util import get_obs_mask
+from .env_util import make_obs_mask
 
 from .wrappers import (
     EpisodeWrapper,
@@ -116,7 +116,7 @@ def get_env_specs(env: gym.Env, obs_mask=None):
         # Assuming brax only takes normalized actions!
         act_clip = None
         act_clip = tuple([-1] * ACT_SIZE), tuple([1] * ACT_SIZE)
-    obs_mask = get_obs_mask(env.observation_size, obs_mask)
+    obs_mask = make_obs_mask(env.observation_size, obs_mask)
     OBS_SIZE = len(obs_mask)
 
     return OBS_SIZE, DISCRETE, ACT_SIZE, obs_mask, act_clip

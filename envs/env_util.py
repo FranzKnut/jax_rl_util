@@ -17,7 +17,7 @@ def render_brax(env, states, render_steps=100, render_start=0, camera=None):
     return image.render_array(env.sys, states_to_render, camera=camera)
 
 
-def get_obs_mask(base_obs_size: int, obs_mask: Iterable[int] | str | int = None):
+def make_obs_mask(base_obs_size: int, obs_mask: Iterable[int] | str | int = None):
     """Get the observation mask from string description.
 
     obs_mask may take values ['odd', 'even', 'first_half'] or a list of indices.

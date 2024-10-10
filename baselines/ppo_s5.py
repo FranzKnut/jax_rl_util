@@ -2,6 +2,7 @@ from dataclasses import dataclass
 import jax
 import jax.numpy as jnp
 import flax.linen as nn
+from models.s5.ssm import S5Config
 import numpy as np
 import optax
 from flax.linen.initializers import constant, orthogonal
@@ -63,13 +64,14 @@ class ActorCriticS5(nn.Module):
         self.value_decoder = nn.Dense(1, kernel_init=orthogonal(1.0), bias_init=constant(0.0))
 
         self.s5 = StackedEncoderModel(
-            ssm=self.ssm_init_fn,
             d_model=self.config["S5_D_MODEL"],
-            n_layers=self.config["S5_N_LAYERS"],
-            activation=self.config["S5_ACTIVATION"],
-            do_norm=self.config["S5_DO_NORM"],
-            prenorm=self.config["S5_PRENORM"],
-            do_gtrxl_norm=self.config["S5_DO_GTRXL_NORM"],
+            config=S5Config(
+                n_layers=self.config["S5_N_LAYERS"],
+                activation=self.config["S5_ACTIVATION"],
+                do_norm=self.config["S5_DO_NORM"],
+                prenorm=self.config["S5_PRENORM"],
+                do_gtrxl_norm=self.config["S5_DO_GTRXL_NORM"],
+            ),
         )
         if self.config["CONTINUOUS"]:
             self.log_std = self.param("log_std", nn.initializers.zeros, (self.action_dim,))
