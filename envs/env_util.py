@@ -29,9 +29,9 @@ def make_obs_mask(base_obs_size: int, obs_mask: Iterable[int] | str | int = None
     if obs_mask == "odd" or obs_mask == "even":
         obs_mask = [i for i in range(base_obs_size) if i % 2 == (obs_mask == "odd")]
     elif obs_mask == "first_half":
-        obs_mask = [i for i in range((base_obs_size + 1) // 2)]
+        obs_mask = [i for i in range((base_obs_size) // 2)]  # Rounding down
     elif obs_mask == "second_half":
-        obs_mask = [i for i in range((base_obs_size + 1) // 2, base_obs_size)]
+        obs_mask = [i for i in range((base_obs_size) // 2, base_obs_size)]
     elif isinstance(obs_mask, int):
         obs_mask = jnp.arange(base_obs_size, dtype=jnp.int32)
     elif obs_mask is None:
