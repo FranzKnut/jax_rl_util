@@ -11,7 +11,7 @@ from flax.training.train_state import TrainState
 import distrax
 from envs.wrappers import LogWrapper
 from gymnax.environments import spaces
-from logging_util import DummyLogger
+from util.logging_util import DummyLogger
 from jax_rtrl.models.s5 import init_S5SSM, make_DPLR_HiPPO, StackedEncoderModel
 import wandb
 import popjym

@@ -15,7 +15,7 @@ import functools
 import optax
 
 import warnings
-from jax_rtrl.logging_util import DummyLogger, with_logger
+from util.logging_util import DummyLogger, with_logger
 from envs.environments import EnvironmentParams, make_env
 
 warnings.simplefilter(action="ignore", category=FutureWarning)

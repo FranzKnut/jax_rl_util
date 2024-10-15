@@ -20,8 +20,8 @@ import simple_parsing
 
 from jax_rl_util.envs.env_util import render_brax
 from jax_rl_util.envs.wrappers import POBraxWrapper
-from jax_rtrl.logging_util import DummyLogger
-from jax_rtrl.logging_util import with_logger
+from util.logging_util import DummyLogger
+from util.logging_util import with_logger
 
 import envs  # noqa
 
