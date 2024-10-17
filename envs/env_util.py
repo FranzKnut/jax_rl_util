@@ -34,6 +34,6 @@ def make_obs_mask(base_obs_size: int, obs_mask: Iterable[int] | str | int = None
         obs_mask = [i for i in range((base_obs_size) // 2, base_obs_size)]
     elif isinstance(obs_mask, int):
         obs_mask = jnp.arange(base_obs_size, dtype=jnp.int32)
-    elif obs_mask is None or obs_mask.lower() == "none":
+    elif obs_mask is None or (isinstance(obs_mask, str) and obs_mask.lower() == "none"):
         obs_mask = jnp.arange(base_obs_size, dtype=jnp.int32)
     return jnp.array(obs_mask, dtype=jnp.int32)
