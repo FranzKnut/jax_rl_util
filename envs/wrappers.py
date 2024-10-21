@@ -383,7 +383,7 @@ class FlatObs_BraxWrapper(Wrapper):
 
     def step(self, state: State, action: jnp.ndarray) -> State:
         """Flatten Observations."""
-        state = state.replace(obs=state.info["fo_obs"])
+        state = state.replace(obs=state.info.get("fo_obs", state.obs))
         state = self.env.step(state, action)
         state.info["fo_obs"] = state.obs
         return state.replace(obs=state.obs.reshape((-1)))
