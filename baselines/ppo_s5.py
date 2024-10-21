@@ -2,7 +2,6 @@ from dataclasses import dataclass
 import jax
 import jax.numpy as jnp
 import flax.linen as nn
-from models.s5.ssm import S5Config
 import numpy as np
 import optax
 from flax.linen.initializers import constant, orthogonal
@@ -12,7 +11,7 @@ import distrax
 from envs.wrappers import LogWrapper
 from gymnax.environments import spaces
 from util.logging_util import DummyLogger
-from jax_rtrl.models.s5 import init_S5SSM, make_DPLR_HiPPO, StackedEncoderModel
+from .s5 import S5Config, init_S5SSM, make_DPLR_HiPPO, StackedEncoderModel
 import wandb
 import popjym
 from popjym.wrappers import AliasPrevActionV2

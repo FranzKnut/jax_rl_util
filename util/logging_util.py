@@ -9,13 +9,13 @@ import os
 import traceback
 from typing import Callable
 import jax.numpy as jnp
+from jax.tree_util import tree_reduce
 import numpy as np
 import simple_parsing
 from typing_extensions import override
 
 from PIL import Image
 import jax.tree_util as jtu
-from models.jax_util import leaf_norms, tree_norm
 
 
 class ExceptionPrinter(contextlib.AbstractContextManager):
@@ -363,6 +363,18 @@ def with_logger(
             logger.finalize()
     else:
         return func(hparams)
+
+
+def leaf_norms(tree):
+    """Return Dict of leaf names and their norms."""
+    flattened, _ = jtu.tree_flatten_with_path(tree)
+    flattened = {jtu.keystr(k): v for k, v in flattened}
+    return {k: tree_reduce(lambda x, y: x + jnp.linalg.norm(y), v, initializer=0) for k, v in flattened.items()}
+
+
+def tree_norm(tree, **kwargs):
+    """Sum of the norm of all elements in the tree."""
+    return tree_reduce(lambda x, y: x + jnp.linalg.norm(y, **kwargs), tree, initializer=0)
 
 
 def calc_norms(norm_params: dict = {}, leaf_norm_params: dict = {}):
