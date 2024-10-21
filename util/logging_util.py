@@ -334,6 +334,7 @@ def with_logger(
             return func(_hparams, logger=logger)
 
         return wandb_wrapper(hparams.project_name, pick_fun_and_run, hparams)
+
     elif hparams.logging == "aim":
         logger = AimLogger(hparams.project_name, repo=hparams.repo, hparams=hparams, run_name=run_name)
         try:

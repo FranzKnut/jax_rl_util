@@ -20,7 +20,7 @@ import simple_parsing
 
 from jax_rl_util.envs.env_util import render_brax
 from jax_rl_util.envs.wrappers import POBraxWrapper
-from util.logging_util import DummyLogger
+from util.logging_util import DummyLogger, LoggableConfig
 from util.logging_util import with_logger
 
 import envs  # noqa
@@ -31,11 +31,13 @@ TRAIN = True
 
 os.environ["XLA_FLAGS"] = "--xla_gpu_triton_gemm_any=true"
 
+
 @dataclass
-class BraxBaselineParams:
+class BraxBaselineParams(LoggableConfig):
     """Class representing the training parameters for reinforcement learning."""
 
-    env_name: str = "inverted_pendulum"
+    project_name: str = "brax_baselines"
+    env_name: str = "walker2d"
     env_kwargs: dict = field(default_factory=lambda: {"backend": "spring"})
     obs_mask: str | Iterable[int] | None = None
     render: bool = True
@@ -362,7 +364,7 @@ if __name__ == "__main__" and TRAIN:
 
     for env in envs_list:
         params.env_name = env
-        with_logger(train_brax_baseline, params, run_name=params.env_name + " baseline", project_name="brax_baselines")
+        with_logger(train_brax_baseline, params, run_name=params.env_name + " baseline")
 
 
 def load_brax_model(path, env_name: str, obs_size: int, action_size: int):

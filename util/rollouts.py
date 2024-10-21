@@ -30,7 +30,7 @@ class RolloutConfig:
     ckpt_type: str = "brax"
     output_dir: str = "data"
     env_config: EnvironmentConfig = field(
-        default_factory=lambda: EnvironmentConfig(env_name="reacher", init_kwargs={"backend": "spring"})
+        default_factory=lambda: EnvironmentConfig(env_name="humanoid", init_kwargs={"backend": "spring"})
     )
     num_rollouts: int = 100
     max_steps: int = 1000
