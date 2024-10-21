@@ -8,6 +8,7 @@ from operator import attrgetter
 import os
 import traceback
 from typing import Callable
+import jax
 import jax.numpy as jnp
 from jax.tree_util import tree_reduce
 import numpy as np
