@@ -8,13 +8,13 @@ from operator import attrgetter
 import os
 import traceback
 from typing import Callable
+import jax.numpy as jnp
 import numpy as np
 import simple_parsing
 from typing_extensions import override
 
 from PIL import Image
 import jax.tree_util as jtu
-from jax_rtrl.models.jax_util import tree_stack
 from models.jax_util import leaf_norms, tree_norm
 
 
@@ -128,6 +128,26 @@ def update_nested_dict(d, u):
         else:
             d[k] = v
     return d
+
+
+def tree_stack(trees):
+    """Take a list of trees and stack every corresponding leaf.
+
+    For example, given two trees ((a, b), c) and ((a', b'), c'), returns
+    ((stack(a, a'), stack(b, b')), stack(c, c')).
+    Useful for turning a list of objects into something you can feed to a
+    vmapped function. Taken from https://gist.github.com/willwhitney/dd89cac6a5b771ccff18b06b33372c75
+    """
+    leaves_list = []
+    treedef_list = []
+    for tree in trees:
+        leaves, treedef = jax.tree_flatten(tree)
+        leaves_list.append(leaves)
+        treedef_list.append(treedef)
+
+    grouped_leaves = zip(*leaves_list)
+    result_leaves = [jnp.stack(leaf) for leaf in grouped_leaves]
+    return treedef_list[0].unflatten(result_leaves)
 
 
 class AimLogger(DummyLogger):
