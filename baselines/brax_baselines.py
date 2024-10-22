@@ -37,7 +37,7 @@ class BraxBaselineParams(LoggableConfig):
     """Class representing the training parameters for reinforcement learning."""
 
     project_name: str = "brax_baselines"
-    env_name: str = "walker2d"
+    env_name: str = "inverted_pendulum"
     env_kwargs: dict = field(default_factory=lambda: {"backend": "spring"})
     obs_mask: str | Iterable[int] | None = None
     render: bool = True
