@@ -10,6 +10,9 @@ import simple_parsing
 
 from jax_rl_util.envs.environments import EnvironmentConfig, make_env, print_env_info
 
+# HACK
+BRAX_BACKEND = "generalized"
+
 
 @dataclass
 class RolloutConfig:
@@ -26,11 +29,11 @@ class RolloutConfig:
         seed (int): Random seed for reproducibility. Defaults to 0.
     """
 
-    policy_path: str | None = None  # defaults to "artifacts/baselines/{env_name}.ckpt"
+    policy_path: str | None = None  # defaults to "artifacts/baselines/{backend}/{env_name}.ckpt"
     ckpt_type: str = "brax"
     output_dir: str = "data"
     env_config: EnvironmentConfig = field(
-        default_factory=lambda: EnvironmentConfig(env_name="humanoid", init_kwargs={"backend": "spring"})
+        default_factory=lambda: EnvironmentConfig(env_name="humanoid", init_kwargs={"backend": BRAX_BACKEND})
     )
     num_rollouts: int = 100
     max_steps: int = 1000
@@ -45,7 +48,7 @@ def collect_rollouts(config: RolloutConfig, save_rollouts: bool = True, verbose:
     if verbose:
         print_env_info(env_info)
 
-    policy_path = config.policy_path or f"artifacts/baselines/{config.env_config.env_name}.ckpt"
+    policy_path = config.policy_path or f"artifacts/baselines/{BRAX_BACKEND}/{config.env_config.env_name}.ckpt"
 
     if config.ckpt_type == "brax":
         policy_fn = load_brax_model(policy_path, config.env_config.env_name, env.observation_size, env.action_size)

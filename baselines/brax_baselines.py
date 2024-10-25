@@ -38,7 +38,8 @@ class BraxBaselineParams(LoggableConfig):
 
     project_name: str = "brax_baselines"
     env_name: str = "inverted_pendulum"
-    env_kwargs: dict = field(default_factory=lambda: {"backend": "spring"})
+    backend: str = "generalized"
+    env_kwargs: dict = field(default_factory=dict)
     obs_mask: str | Iterable[int] | None = None
     render: bool = True
 
@@ -257,12 +258,19 @@ MIN_YS = {"reacher": -100, "pusher": -150}
 
 
 def eval_baseline(
-    params, env_name: str, env_kwargs: dict = {}, steps=10000, render=True, render_start=0, render_steps=1000
+    params,
+    env_name: str,
+    env_kwargs: dict = {},
+    steps=10000,
+    render=True,
+    render_start=0,
+    render_steps=1000,
+    brax_backend="generalized",
 ):
     """Evaluate a baseline model on the given environment."""
     # create an env with auto-reset
 
-    env = brax.envs.get_environment(env_name=env_name, **env_kwargs)
+    env = brax.envs.get_environment(env_name=env_name, backend=brax_backend, **env_kwargs)
     jit_env_reset = jax.jit(env.reset)
     jit_env_step = jax.jit(env.step)
     rng = jax.random.PRNGKey(seed=1)
@@ -311,7 +319,7 @@ def train_brax_baseline(hparams: BraxBaselineParams, logger=DummyLogger()):
     """Train a baseline model for control of a brax physics simulation."""
     env_name = hparams.env_name.replace("brax-", "")
     obs_mask = hparams.obs_mask
-    env = brax.envs.get_environment(env_name=env_name, **hparams.env_kwargs)
+    env = brax.envs.get_environment(env_name=env_name, backend=hparams.backend, **hparams.env_kwargs)
     if obs_mask:
         env = POBraxWrapper(env, obs_mask)
 
@@ -335,7 +343,7 @@ def train_brax_baseline(hparams: BraxBaselineParams, logger=DummyLogger()):
 
         debug.callback(print_progress, num_steps, metrics["eval/episode_reward"])
 
-    model_filename = f"artifacts/baselines/{env_name}.ckpt"
+    model_filename = f"artifacts/baselines/{hparams.backend}/{env_name}.ckpt"
     if os.path.exists(model_filename):
         print("Loading existing model")
         params = model.load_params(model_filename)
@@ -349,7 +357,7 @@ def train_brax_baseline(hparams: BraxBaselineParams, logger=DummyLogger()):
     model.save_params(model_filename, params)
     # logger.save_model(model_filename)
     params = model.load_params(model_filename)
-    avg_reward, frames = eval_baseline(params, env_name, hparams.env_kwargs)
+    avg_reward, frames = eval_baseline(params, env_name, hparams.env_kwargs, brax_backend=hparams.backend)
     logger["eval_reward"] = avg_reward
     if hparams.render and not DEBUG:
         logger.log_video("env/video", np.array(frames), fps=30, caption=f"Reward: {avg_reward:.2f}")
