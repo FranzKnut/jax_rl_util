@@ -37,7 +37,7 @@ class BraxBaselineParams(LoggableConfig):
     """Class representing the training parameters for reinforcement learning."""
 
     project_name: str = "brax_baselines"
-    env_name: str = "inverted_pendulum"
+    env_name: str = "halfcheetah"
     backend: str = "generalized"
     env_kwargs: dict = field(default_factory=dict)
     obs_mask: str | Iterable[int] | None = None
@@ -356,6 +356,7 @@ def train_brax_baseline(hparams: BraxBaselineParams, logger=DummyLogger()):
     os.makedirs(os.path.dirname(model_filename), exist_ok=True)
     model.save_params(model_filename, params)
     # logger.save_model(model_filename)
+    print(f"Saved model to {model_filename}")
     params = model.load_params(model_filename)
     avg_reward, frames = eval_baseline(params, env_name, hparams.env_kwargs, brax_backend=hparams.backend)
     logger["eval_reward"] = avg_reward
