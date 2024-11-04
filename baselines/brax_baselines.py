@@ -356,16 +356,17 @@ def train_brax_baseline(hparams: BraxBaselineParams, logger=DummyLogger()):
     # logger.save_model(model_filename)
     print(f"Saved model to {model_filename}")
     params = model.load_params(model_filename)
-    avg_reward, frames = eval_baseline(
+    avg_reward = eval_baseline(
         params,
         env_name,
         hparams.env_kwargs,
         brax_backend=hparams.backend,
         render=hparams.render,
     )
-    logger["eval_reward"] = avg_reward
     if hparams.render and not DEBUG:
+        avg_reward, frames = avg_reward
         logger.log_video("env/video", np.array(frames), fps=30, caption=f"Reward: {avg_reward:.2f}")
+    logger["eval_reward"] = avg_reward
 
 
 if __name__ == "__main__" and TRAIN:

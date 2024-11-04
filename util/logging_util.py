@@ -1,22 +1,22 @@
 """Utilies for logging."""
 
-from argparse import Namespace
 import collections
 import contextlib
-from dataclasses import asdict, dataclass, replace
-from operator import attrgetter
 import os
 import traceback
+from argparse import Namespace
+from dataclasses import asdict, dataclass, replace
+from operator import attrgetter
 from typing import Callable
+
 import jax
 import jax.numpy as jnp
-from jax.tree_util import tree_reduce
+import jax.tree_util as jtu
 import numpy as np
 import simple_parsing
-from typing_extensions import override
-
+from jax.tree_util import tree_reduce
 from PIL import Image
-import jax.tree_util as jtu
+from typing_extensions import override
 
 
 class ExceptionPrinter(contextlib.AbstractContextManager):
@@ -33,6 +33,8 @@ class ExceptionPrinter(contextlib.AbstractContextManager):
 
 @dataclass
 class LoggableConfig(simple_parsing.Serializable):
+    """Base configuration for experiments logged to wandb or aim."""
+
     decode_into_subclasses = True  # do not alter
 
     logging: str | None = "aim"
@@ -58,6 +60,8 @@ class DummyLogger(dict, object):
             Dictonaries of scalar metrics.
         step : int, optional
             Step number, by default framework will use global step.
+        kwargs : any
+            Are passed to the underlying logging method.
         """
         pass
 
@@ -87,6 +91,7 @@ class DummyLogger(dict, object):
         Parameters
         ----------
         name : str
+            Name of the artifact.
         path : str
             Path to the file to be logged.
         """
@@ -98,13 +103,15 @@ class DummyLogger(dict, object):
         Parameters
         ----------
         name : str
-            _description_
+            Name of the logged object.
         frames : array
             leading dimension for frames, then height, width, channels
         step : int, optional
             Step number, by default framework will use global step.
         fps : int, optional
-            _description_, by default 4
+            FPS for the video, by default 4
+        kwargs : any
+            Are passed to the underlying logging method.
         """
         pass
 
@@ -118,6 +125,7 @@ def update_nested_dict(d, u):
         Base dict
     u : dict
         Updates
+
     Returns
     -------
     dict
