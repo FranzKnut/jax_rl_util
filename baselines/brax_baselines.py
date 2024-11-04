@@ -1,29 +1,26 @@
 """Train controller using brax' built-in algorithms."""
 
-from dataclasses import dataclass, field
 import functools
-
-from datetime import datetime
 import os
+from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Iterable
-from brax.training import acme
-import jax
-from jax import debug
-from jax import numpy as jnp
 
 import brax.envs
-from brax.io import model
-from brax.training.agents.ppo import train as ppo
-from brax.training.agents.sac import train as sac
+import envs  # noqa
+import jax
 import numpy as np
 import simple_parsing
+from brax.io import model
+from brax.training import acme
+from brax.training.agents.ppo import train as ppo
+from brax.training.agents.sac import train as sac
+from jax import debug
+from jax import numpy as jnp
+from util.logging_util import DummyLogger, LoggableConfig, with_logger
 
 from jax_rl_util.envs.env_util import render_brax
 from jax_rl_util.envs.wrappers import POBraxWrapper
-from util.logging_util import DummyLogger, LoggableConfig
-from util.logging_util import with_logger
-
-import envs  # noqa
 
 DEBUG = False
 TRAIN = True
@@ -37,7 +34,7 @@ class BraxBaselineParams(LoggableConfig):
     """Class representing the training parameters for reinforcement learning."""
 
     project_name: str = "brax_baselines"
-    env_name: str = "halfcheetah"
+    env_name: str = "inverted_pendulum"
     backend: str = "generalized"
     env_kwargs: dict = field(default_factory=dict)
     obs_mask: str | Iterable[int] | None = None
@@ -305,7 +302,7 @@ def eval_baseline(
         return (state, rng), state
 
     _, states = jax.lax.scan(eval_step, (state, rng), jnp.arange(steps))
-    avg_reward = sum(states.reward) / max(sum(states.done), 1)
+    avg_reward = sum(states.reward) / max(sum(states.done), 1)  # FIXME done is not true at the end of episodes?
     print(f"average reward: {avg_reward}")
     if render:
         print("Rendering...")
@@ -332,6 +329,7 @@ def train_brax_baseline(hparams: BraxBaselineParams, logger=DummyLogger()):
         Args:
             num_steps (int): number of steps so far
             metrics (dict): metrics to log
+
         """
         times.append(datetime.now())
         xdata.append(num_steps)
@@ -358,7 +356,13 @@ def train_brax_baseline(hparams: BraxBaselineParams, logger=DummyLogger()):
     # logger.save_model(model_filename)
     print(f"Saved model to {model_filename}")
     params = model.load_params(model_filename)
-    avg_reward, frames = eval_baseline(params, env_name, hparams.env_kwargs, brax_backend=hparams.backend)
+    avg_reward, frames = eval_baseline(
+        params,
+        env_name,
+        hparams.env_kwargs,
+        brax_backend=hparams.backend,
+        render=hparams.render,
+    )
     logger["eval_reward"] = avg_reward
     if hparams.render and not DEBUG:
         logger.log_video("env/video", np.array(frames), fps=30, caption=f"Reward: {avg_reward:.2f}")
@@ -377,6 +381,7 @@ if __name__ == "__main__" and TRAIN:
 
 
 def load_brax_model(path, env_name: str, obs_size: int, action_size: int):
+    """Load a trained model from given path."""
     params = model.load_params(path)
 
     def normalize(x, y):
