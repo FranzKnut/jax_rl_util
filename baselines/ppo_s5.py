@@ -1,20 +1,23 @@
 from dataclasses import dataclass
+from typing import Any, Dict, NamedTuple, Sequence
+
+import distrax
+import flax.linen as nn
 import jax
 import jax.numpy as jnp
-import flax.linen as nn
 import numpy as np
 import optax
-from flax.linen.initializers import constant, orthogonal
-from typing import Sequence, NamedTuple, Any, Dict
-from flax.training.train_state import TrainState
-import distrax
-from envs.wrappers import LogWrapper
-from gymnax.environments import spaces
-from util.logging_util import DummyLogger
-from .s5 import S5Config, init_S5SSM, make_DPLR_HiPPO, StackedEncoderModel
-import wandb
 import popjym
+from envs.wrappers import LogWrapper
+from flax.linen.initializers import constant, orthogonal
+from flax.training.train_state import TrainState
+from gymnax.environments import spaces
 from popjym.wrappers import AliasPrevActionV2
+from util.logging_util import DummyLogger
+
+import wandb
+
+from .s5 import S5Config, StackedEncoderModel, init_S5SSM, make_DPLR_HiPPO
 
 
 @dataclass

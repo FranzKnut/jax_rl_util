@@ -28,15 +28,16 @@ class PPOParams(LoggableConfig):
 
     project_name: str = "PPO"
     debug: int = 0
-    seed: int = 123
+    seed: int = 0
     episodes: int = 3000000
     patience: int = 20
     eval_every: int = 100
-    eval_steps: int = 10000
+    eval_steps: int = 5000
     gamma: float = 0.99
-    LR: float = 1e-4
+    LR: float = 1e-5
     update_steps: int = 128
     rollout_steps: int = 32
+    train_batch_size: int = 32
     NUM_UNITS: int = 32
     UPDATE_EPOCHS: int = 4
     GAE_LAMBDA: float = 0.9
@@ -44,14 +45,14 @@ class PPOParams(LoggableConfig):
 
     ENT_COEF: float = 0.001
     VF_COEF: float = 0.5
-    gradient_clip: float = 1
+    gradient_clip: float = 1.0
     dt: float = 1
     ANNEAL_LR: bool = True
     MODEL: str = "CTRNN"
-    meta_rl: bool = False
+    meta_rl: bool = True
     log_code: bool = False
     env_params: EnvironmentConfig = field(
-        default_factory=lambda: EnvironmentConfig(env_name="StatelessCartPoleEasy", batch_size=4)
+        default_factory=lambda: EnvironmentConfig(env_name="StatelessCartPoleEasy", batch_size=32)
     )
 
 
@@ -316,13 +317,10 @@ def make_train(config: PPOParams, logger: DummyLogger):
                 rng, _rng = jax.random.split(rng)
                 env_state = eval_env.step(env_state, action[0])
 
-                # Action fed to the Meta-Learner is one-hot encoded for discrete envs.
-                re_action = jax.nn.one_hot(action, env.action_size) if config.discrete else action
-
                 transition = Transition(
                     last_done,
                     action,
-                    re_action,
+                    last_act,
                     value,
                     env_state.reward.squeeze(),
                     last_reward,
@@ -330,6 +328,10 @@ def make_train(config: PPOParams, logger: DummyLogger):
                     last_obs,
                     env_state.info,
                 )
+
+                # Action fed to the Meta-Learner is one-hot encoded for discrete envs.
+                re_action = jax.nn.one_hot(action, env.action_size) if config.discrete else action
+
                 runner_state = (
                     train_state,
                     env_state,
@@ -371,13 +373,10 @@ def make_train(config: PPOParams, logger: DummyLogger):
                 rng, _rng = jax.random.split(rng)
                 env_state = env.step(env_state, action)
 
-                # Action fed to the Meta-Learner is one-hot encoded for discrete envs.
-                re_action = jax.nn.one_hot(action, env.action_size) if config.discrete else action
-
                 transition = Transition(
                     last_done,
                     action,
-                    re_action,
+                    last_act,
                     value,
                     env_state.reward.squeeze(),
                     last_reward,
@@ -385,6 +384,10 @@ def make_train(config: PPOParams, logger: DummyLogger):
                     last_obs,
                     env_state.info,
                 )
+
+                # Action fed to the Meta-Learner is one-hot encoded for discrete envs.
+                re_action = jax.nn.one_hot(action, env.action_size) if config.discrete else action
+
                 runner_state = (
                     train_state,
                     env_state,
@@ -484,7 +487,7 @@ def make_train(config: PPOParams, logger: DummyLogger):
                 ) = update_state
 
                 rng, _rng = jax.random.split(rng)
-                permutation = jax.random.permutation(_rng, config.env_params.batch_size)
+                permutation = jax.random.permutation(_rng, config.train_batch_size)
                 batch = (init_hstate, traj_batch, advantages, targets)
 
                 shuffled_batch = jax.tree_util.tree_map(lambda x: jnp.take(x, permutation, axis=1), batch)
@@ -493,7 +496,7 @@ def make_train(config: PPOParams, logger: DummyLogger):
                     lambda x: jnp.swapaxes(
                         jnp.reshape(
                             x,
-                            [x.shape[0], config.env_params.batch_size, -1] + list(x.shape[2:]),
+                            [x.shape[0], config.train_batch_size, -1] + list(x.shape[2:]),
                         ),
                         1,
                         0,
@@ -564,7 +567,7 @@ def make_train(config: PPOParams, logger: DummyLogger):
                 steps_since_best = steps_since_best.copy() + 1
             logger.log(loggables, step=timestep)
             print("Eval reward:", metric)
-            print(f"Global step: {timestep}, eval reward: {metric:.2f}, best: {logger['best_eval_reward']:.2f}")
+            print(f"Global step: {timestep:2.0e}, eval reward: {metric:.2f}, best: {logger['best_eval_reward']:.2f}")
             return steps_since_best.astype(np.int32)
 
         steps_since_best = jnp.zeros((), dtype=np.int32)
