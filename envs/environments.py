@@ -16,20 +16,19 @@
 """Wrappers to support Brax and Gymnax training."""
 
 from dataclasses import dataclass, field
-from typing import Iterable
-import gym
 from functools import partial
-from jax import numpy as jnp
-import jax
-from brax.envs.base import Env as BraxEnv  # noqa
+from typing import Iterable
 
-
-import gymnax
 import brax
+import gym
+import gymnax
+import jax
 import popjym
+from brax.envs.base import Env as BraxEnv  # noqa
+from jax import numpy as jnp
 
+from . import *  # noqa
 from .env_util import make_obs_mask
-
 from .wrappers import (
     EpisodeWrapper,
     FlatObs_BraxWrapper,
@@ -41,9 +40,6 @@ from .wrappers import (
     VmapWrapper,
     Wrapper,
 )
-
-
-from . import *  # noqa
 
 
 @dataclass(frozen=True, eq=True)
@@ -135,9 +131,11 @@ def make_env(params: EnvironmentConfig, debug=0, make_eval=False, use_vmap_wrapp
     make_eval : bool, optional
         Whether to make an eval env, by default False
         If true, eval env without batching is also returned
+    use_vmap_wrapper : bool, optional
+        Force using the vmap wrapper (even for batchsize 1), by default True
 
     Returns
-    -----------
+    -------
     env : envs.Env
         Environment
     env_info : dict
@@ -177,7 +175,7 @@ def make_env(params: EnvironmentConfig, debug=0, make_eval=False, use_vmap_wrapp
     env = FlatObs_BraxWrapper(env)
     if obs_mask is not None:
         env = POBraxWrapper(env, obs_mask)
-    if params.batch_size and use_vmap_wrapper:
+    if (params.batch_size > 1) or use_vmap_wrapper:
         env = VmapWrapper(env, batch_size=params.batch_size)
     # env = EfficientAutoResetWrapper(env)
     env = RandomizedAutoResetWrapperNaive(env)

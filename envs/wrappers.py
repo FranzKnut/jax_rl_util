@@ -1,18 +1,20 @@
 """Wrappers for gym environments."""
 
+import importlib
+import os
 from dataclasses import dataclass
 from functools import partial
-import os
 from typing import Iterable
-from brax.envs.base import State
-from jax_rl_util.envs.env_util import make_obs_mask
-import gymnasium as gym
-import jax
-from jax import numpy as jnp, random as jrandom
-import numpy as np
-import gymnax
 
-import importlib
+import gymnasium as gym
+import gymnax
+import jax
+import numpy as np
+from brax.envs.base import State
+from jax import numpy as jnp
+from jax import random as jrandom
+
+from jax_rl_util.envs.env_util import make_obs_mask
 
 
 def is_discrete(env: gym.Env):

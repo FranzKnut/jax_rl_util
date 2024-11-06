@@ -1,5 +1,4 @@
-"""
-Classic cart-pole system implemented by Rich Sutton et al.
+"""Classic cart-pole system implemented by Rich Sutton et al.
 
 adjusted for jax by jlemmel
 Copied from http://incompleteideas.net/sutton/book/code/pole.c
@@ -7,12 +6,13 @@ permalink: https://perma.cc/C9ZM-652R
 """
 
 from functools import partial
-from gymnasium.envs.classic_control.cartpole import CartPoleEnv
-from gymnasium import spaces
-from jax import numpy as jnp
-from jax import random as jrandom
+
 import jax
 import numpy as np
+from gymnasium import spaces
+from gymnasium.envs.classic_control.cartpole import CartPoleEnv
+from jax import numpy as jnp
+from jax import random as jrandom
 
 
 class ContinuousCartPoleEnv(CartPoleEnv):

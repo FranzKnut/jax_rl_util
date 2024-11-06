@@ -1,10 +1,13 @@
+"""Utiliy functions for working with environments."""
 from typing import Iterable
+
 import jax
 import numpy as np
 from jax import numpy as jnp
 
 
 def render_brax(env, states, render_steps=100, render_start=0, camera=None):
+    """Render a sequence of states from a Brax environment."""
     from brax.io import image
 
     steps = len(states.pipeline_state.q)

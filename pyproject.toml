@@ -7,11 +7,11 @@ readme = "README.md"
 packages = [{ include = "envs" }, { include = "util" }]
 
 [tool.poetry.dependencies]
-python = "^3.9"
+python = "^3.11"
 gymnasium = "^1.0.0"
 brax = "^0.11.0"
 gymnax = "^0.0.8"
-# popjym = { git = "https://github.com/EdanToledo/popjym.git", branch = "main" }
+popjym = { git = "https://github.com/EdanToledo/popjym.git", branch = "main" }
 simple-parsing = "^0.1.6"
 
 
