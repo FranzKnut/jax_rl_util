@@ -4,27 +4,27 @@ Note that it might be necessary to install additional dependencies to run this
 """
 
 import os
+
 import bsuite
 import haiku as hk
-from bsuite.logging import csv_logging
-from bsuite.baselines import base
-from bsuite.baselines import experiment
-from bsuite.baselines.jax.actor_critic_rnn.agent import ActorCriticRNN
-import optax
-import pandas as pd
-import numpy as np
 import jax.numpy as jnp
 import jax.random as jrandom
+import numpy as np
+import optax
+import pandas as pd
+from bsuite.baselines import base, experiment
+from bsuite.baselines.jax.actor_critic_rnn.agent import ActorCriticRNN
+from bsuite.logging import csv_logging
 
-from models.jax.rnns_haiku import CTRNNCell_simple_hk
+from jax_rl_util.baselines.rnns_haiku import CTRNNCell_simple_hk
 
 EXPERIMENT = "MemoryLength"
-MEMORY_LENGTHS = [4, 8, 16, 32, 64]
-NUM_EPISODES = 1000
+MEMORY_LENGTHS = [64]
+NUM_EPISODES = 10000
 SEQ_LEN = 64
-MODEL = 'CTRNN'
+MODEL = "CTRNN"
 NUM_RUNS = 10
-OUTPUT_PATH = f'./logs/bsuite/{MODEL}-{str(NUM_EPISODES)}EPS-{str(SEQ_LEN)}SEQ/'
+OUTPUT_PATH = f"./logs/bsuite/{MODEL}-{str(NUM_EPISODES)}EPS-{str(SEQ_LEN)}SEQ/"
 
 
 def eval_agent(env, agent: base.Agent, steps=5000):
@@ -47,13 +47,14 @@ def eval_agent(env, agent: base.Agent, steps=5000):
 experiments = pd.DataFrame(index=[f"run-{i}" for i in range(NUM_RUNS)])
 
 
-def make_agent(obs_spec, action_spec, seed: int = 0,
-               model='LSTM', hidden_size=32, seq_len=32, td_lambda=0.99) -> base.Agent:
+def make_agent(
+    obs_spec, action_spec, seed: int = 0, model="LSTM", hidden_size=32, seq_len=32, td_lambda=0.99
+) -> base.Agent:
     """Create an actor-critic agent with default hyperparameters."""
-    if model == 'LSTM':
+    if model == "LSTM":
         initial_rnn_state = hk.LSTMState(
-            hidden=jnp.zeros((1, hidden_size), dtype=jnp.float32),
-            cell=jnp.zeros((1, hidden_size), dtype=jnp.float32))
+            hidden=jnp.zeros((1, hidden_size), dtype=jnp.float32), cell=jnp.zeros((1, hidden_size), dtype=jnp.float32)
+        )
 
         def network(inputs: jnp.ndarray, state):
             flat_inputs = hk.Flatten()(inputs)
@@ -68,7 +69,7 @@ def make_agent(obs_spec, action_spec, seed: int = 0,
             value = value_head(embedding)
             return (logits, jnp.squeeze(value, axis=-1)), state
 
-    elif model == 'CTRNN':
+    elif model == "CTRNN":
         initial_rnn_state = jnp.zeros((1, hidden_size))
 
         def network(inputs, state):
@@ -102,9 +103,9 @@ def train_multiple_for_length(length):
     eval_rewards = []
     print("Experiments for length {}".format(length))
     for i in range(NUM_RUNS):
-        id = f'MemoryLength-{str(length)}-{str(i)}'
-        experiments['fname'] = os.path.join(OUTPUT_PATH, f"bsuite_id_-_{id}.csv")
-        env = bsuite.load("memory_len", {'memory_length': length})
+        id = f"MemoryLength-{str(length)}-{str(i)}"
+        experiments["fname"] = os.path.join(OUTPUT_PATH, f"bsuite_id_-_{id}.csv")
+        env = bsuite.load("memory_len", {"memory_length": length})
         env = csv_logging.wrap_environment(env, bsuite_id=id, results_dir=OUTPUT_PATH, overwrite=True)
         agent = make_agent(
             obs_spec=env.observation_spec(),
@@ -115,8 +116,10 @@ def train_multiple_for_length(length):
         )
         print("    Training {}/{}".format(i + 1, NUM_RUNS))
         experiment.run(agent, env, num_episodes=NUM_EPISODES, verbose=True)
-        print("    Evaluating")
-        eval_rewards.append(eval_agent(env, agent))
+        print("    Evaluating", end="")
+        reward = eval_agent(env, agent)
+        print(": ", reward)
+        eval_rewards.append(reward)
     return eval_rewards
 
 
@@ -124,7 +127,7 @@ if EXPERIMENT == "MemoryLength":
     print("Model: {}".format(MODEL))
     for length in MEMORY_LENGTHS:
         experiments[length] = train_multiple_for_length(length)
-        experiments.to_csv(os.path.join(OUTPUT_PATH, 'MemoryLength.csv'))
+        experiments.to_csv(os.path.join(OUTPUT_PATH, "MemoryLength.csv"))
 # elif EXPERIMENT == "AllGymnax":
 #     print("Model: {}".format(MODEL))
 #     for env in env_names:

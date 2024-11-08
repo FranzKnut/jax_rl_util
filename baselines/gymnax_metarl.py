@@ -8,11 +8,11 @@ from typing import Tuple
 
 import chex
 import distrax
+import gymnax
 import haiku as hk
 import jax
 import jax.numpy as jnp
 import optax
-import gymnax
 import pandas as pd
 from experiments.wandb_sweeps.AllGymnax import all_env_names
 
