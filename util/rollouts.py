@@ -1,17 +1,18 @@
+"""Utility for collection rollouts of a given brax environment."""
+
 import os
-from baselines.brax_baselines import load_brax_model
-import numpy as np
-from rtr_iil import make_flax_inference_fn
-import jax
-import jax.numpy as jnp
 from dataclasses import dataclass, field
 
+import jax
+import jax.numpy as jnp
+import numpy as np
 import simple_parsing
+from baselines.brax_baselines import load_brax_model
 
 from jax_rl_util.envs.environments import EnvironmentConfig, make_env, print_env_info
 
 # HACK
-BRAX_BACKEND = "generalized"
+BRAX_BACKEND = "spring"
 
 
 @dataclass
@@ -33,18 +34,24 @@ class RolloutConfig:
     ckpt_type: str = "brax"
     output_dir: str = "data"
     env_config: EnvironmentConfig = field(
-        default_factory=lambda: EnvironmentConfig(env_name="humanoid", init_kwargs={"backend": BRAX_BACKEND})
+        default_factory=lambda: EnvironmentConfig(
+            env_name="halfcheetah",
+            init_kwargs={
+                "backend": BRAX_BACKEND,
+                # "exclude_current_positions_from_observation": False,
+            },
+        )
     )
     num_rollouts: int = 100
     max_steps: int = 1000
     seed: int = 0
 
 
-# Collect rollouts for the given environment
 def collect_rollouts(config: RolloutConfig, save_rollouts: bool = True, verbose: bool = True):
+    """Collect rollouts for the given environment."""
     rng = jax.random.PRNGKey(config.seed)
 
-    env, env_info = make_env(config.env_config)
+    env, env_info = make_env(config.env_config, use_vmap_wrapper=False)
     if verbose:
         print_env_info(env_info)
 
@@ -55,6 +62,8 @@ def collect_rollouts(config: RolloutConfig, save_rollouts: bool = True, verbose:
         use_rnn = False
         init_carry = None
     elif config.ckpt_type == "orbax":
+        from rtr_iil import make_flax_inference_fn  # FIXME
+
         policy_fn, policy = make_flax_inference_fn(policy_path, env.observation_size, env.action_size)
         use_rnn = policy.use_rnn
         rng, policy_key = jax.random.split(rng)
@@ -64,16 +73,19 @@ def collect_rollouts(config: RolloutConfig, save_rollouts: bool = True, verbose:
         print("Tracing _step")
         prev_state, _hidden, _rng = carry
         _rng, policy_key = jax.random.split(_rng)
-        # Reset whenever done
+        obs = prev_state.obs
+        if not getattr(env, "_exclude_current_positions_from_observation", True):
+            obs = obs[1:]
         if use_rnn:
+            # Reset when done
             _hidden = jax.tree.map(
                 jax.tree_util.Partial(jnp.where, jnp.squeeze(prev_state.done)),
                 jax.tree.map(lambda x: x[0], init_carry),
                 _hidden,
             )
-            _hidden, action = policy_fn(_hidden, prev_state.obs, policy_key)
+            _hidden, action = policy_fn(_hidden, obs, policy_key)
         else:
-            action = policy_fn(prev_state.obs, policy_key)
+            action = policy_fn(obs, policy_key)
         _state = env.step(prev_state, action)
         return (_state, _hidden, _rng), (prev_state, action)
 

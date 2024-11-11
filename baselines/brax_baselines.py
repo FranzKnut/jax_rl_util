@@ -34,8 +34,8 @@ class BraxBaselineParams(LoggableConfig):
     """Class representing the training parameters for reinforcement learning."""
 
     project_name: str = "brax_baselines"
-    env_name: str = "inverted_pendulum"
-    backend: str = "generalized"
+    env_name: str = "halfcheetah"
+    backend: str = "spring"
     env_kwargs: dict = field(default_factory=dict)
     obs_mask: str | Iterable[int] | None = None
     render: bool = True
@@ -267,7 +267,7 @@ def eval_baseline(
     """Evaluate a baseline model on the given environment."""
     # create an env with auto-reset
 
-    env = brax.envs.get_environment(env_name=env_name, backend=brax_backend, **env_kwargs)
+    env = brax.envs.create(env_name=env_name, backend=brax_backend, **env_kwargs)
     jit_env_reset = jax.jit(env.reset)
     jit_env_step = jax.jit(env.step)
     rng = jax.random.PRNGKey(seed=1)
@@ -302,7 +302,7 @@ def eval_baseline(
         return (state, rng), state
 
     _, states = jax.lax.scan(eval_step, (state, rng), jnp.arange(steps))
-    avg_reward = sum(states.reward) / max(sum(states.done), 1)  # FIXME done is not true at the end of episodes?
+    avg_reward = sum(states.reward) / max(sum(states.done), 1)
     print(f"average reward: {avg_reward}")
     if render:
         print("Rendering...")
