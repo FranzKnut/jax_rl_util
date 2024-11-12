@@ -8,8 +8,7 @@ import jax.numpy as jnp
 import numpy as np
 import simple_parsing
 from baselines.brax_baselines import load_brax_model
-
-from jax_rl_util.envs.environments import EnvironmentConfig, make_env, print_env_info
+from envs.environments import EnvironmentConfig, make_env, print_env_info
 
 # HACK
 BRAX_BACKEND = "spring"

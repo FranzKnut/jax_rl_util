@@ -1,10 +1,12 @@
 """Remove unwanted aim runs."""
+
 import argparse
+
 import aim
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--repo', type=str, default=".")
-parser.add_argument('--remove', action='store_true')
+parser.add_argument("--repo", type=str, default=".")
+parser.add_argument("--remove", action="store_true")
 args = parser.parse_args()
 
 repo = aim.Repo(args.repo)
