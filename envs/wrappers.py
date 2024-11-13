@@ -300,7 +300,6 @@ class RandomizedAutoResetWrapper(Wrapper):
 
     def step(self, state: State, action: jnp.ndarray) -> State:
         """Resample new initial state for all parallel envs."""
-        state = state.replace(done=jnp.zeros_like(state.done))
         state = self.env.step(state, action)
         rng, _rng = jrandom.split(state.info["rng"])
         done = state.done
@@ -314,40 +313,41 @@ class RandomizedAutoResetWrapper(Wrapper):
         return state.replace(done=done)
 
 
-class RandomizedAutoResetWrapperNaive(Wrapper):
-    """Automatically resets Brax envs that are done.
+# class RandomizedAutoResetWrapperNaive(Wrapper):
+#     """Automatically resets Brax envs that are done.
 
-    Force resample every step. Inefficient
-    """
+#     Force resample every step. Inefficient
+#     """
 
-    def reset(self, rng: jnp.ndarray) -> State:
-        """Make brax state from gym reset output."""
-        reset_key, step_key = jrandom.split(rng)
-        state = self.env.reset(reset_key)
-        if hasattr(self, "batch_size"):
-            step_key = jax.random.split(step_key, self.batch_size)
-        state.info["rng"] = step_key
-        return state
+#     def reset(self, rng: jnp.ndarray) -> State:
+#         """Make brax state from gym reset output."""
+#         reset_key, step_key = jrandom.split(rng)
+#         state = self.env.reset(reset_key)
+#         if hasattr(self, "batch_size"):
+#             step_key = jax.random.split(step_key, self.batch_size)
+#         state.info["rng"] = step_key
+#         return state
 
-    def step(self, state: State, action: jnp.ndarray) -> State:
-        """Resample new initial state for all parallel envs."""
-        if "steps" in state.info:
-            steps = state.info["steps"]
-            steps = jnp.where(state.done, jnp.zeros_like(steps), steps)
-            state.info.update(steps=steps)
-        state = state.replace(done=jnp.zeros_like(state.done))
-        state = self.env.step(state, action)
-        reset_state = self.env.reset(state.info["rng"])
+#     def step(self, state: State, action: jnp.ndarray) -> State:
+#         """Resample new initial state for all parallel envs."""
+#         if "steps" in state.info:
+#             steps = state.info["steps"]
+#             steps = jnp.where(state.done, jnp.zeros_like(steps), steps)
+#             state.info.update(steps=steps)
+#         state = state.replace(done=jnp.zeros_like(state.done))
+#         state = self.env.step(state, action)
+#         _rng, state.info["rng"] = jrandom.split(state.info["rng"])
+#         reset_state = self.env.reset(_rng)
 
-        def where_done(new, old):
-            done = state.done
-            if done.shape:
-                done = jnp.reshape(done, [new.shape[0]] + [1] * (len(new.shape) - 1))
-            return jnp.where(done, new, old)
+#         def where_done(new, old):
+#             done = state.done
+#             if done.shape:
+#                 done = jnp.reshape(done, [new.shape[0]] + [1] * (len(new.shape) - 1))
+#             return jnp.where(done, new, old)
 
-        pipeline_state = jax.jax.tree.map(where_done, reset_state.pipeline_state, state.pipeline_state)
-        obs = where_done(reset_state.obs, state.obs)
-        return state.replace(pipeline_state=pipeline_state, obs=obs)
+#         pipeline_state = jax.jax.tree.map(where_done, reset_state.pipeline_state, state.pipeline_state)
+#         obs = where_done(reset_state.obs, state.obs)
+#         return state.replace(pipeline_state=pipeline_state, obs=obs)
 
 
 class FlatPOWrapper(Wrapper):

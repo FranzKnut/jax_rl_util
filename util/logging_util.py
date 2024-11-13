@@ -75,6 +75,20 @@ class DummyLogger(dict, object):
         """
         pass
 
+    def log_dist(self, values, step=None, **kwargs):
+        """Log a distribution of values.
+
+        Parameters
+        ----------
+        values : dict
+            Dictonaries of values for distributions.
+        step : int, optional
+            Step number, by default framework will use global step.
+        kwargs : any
+            Are passed to the underlying logging method.
+        """
+        pass
+
     def finalize(self, all_param_norms=None):
         """Log additional plots or media.
 
@@ -189,7 +203,7 @@ class AimLogger(DummyLogger):
             self.checkpointer = orbax.checkpoint.PyTreeCheckpointer()
 
     @override
-    def log(self, metrics, step=None, context=None):
+    def log(self, metrics: dict, step=None, context=None):
         """Loop over scalars and track them with aim."""
         for k, v in metrics.items():
             self.run.track(v, name=k, epoch=None if step is None else int(step), context=context)
@@ -204,6 +218,12 @@ class AimLogger(DummyLogger):
             Dict of hyperparameters.
         """
         self.run["hparams"] = params_dict
+
+    def log_dist(self, values: dict, step=None, context=None):
+        """Log the given distribution with aim."""
+        # TODO: allow sequences.Distributions
+        for k, v in values.items():
+            self.run.track(aim.Distribution(v), name=k, epoch=None if step is None else int(step), context=context)
 
     def __setitem__(self, key, value):
         """Log scalar for aim."""
@@ -275,6 +295,12 @@ class WandbLogger(DummyLogger):
     def log(self, metrics, step=None, context=None):
         """Log metrics to wandb."""
         wandb.log(metrics, step=step)
+
+    def log_dist(self, values: dict, step=None, context=None):
+        """Log the given distribution with wandb."""
+        # TODO: allow sequences.Distributions
+        values = {k: wandb.Histogram(v) for k, v in values.items()}
+        wandb.log(values, step=step)
 
     def __setitem__(self, key, value):
         """Log scalar for wandb."""

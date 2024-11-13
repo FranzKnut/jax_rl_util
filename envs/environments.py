@@ -36,7 +36,7 @@ from .wrappers import (
     GymnaxBraxWrapper,
     POBraxWrapper,
     PopJymBraxWrapper,
-    RandomizedAutoResetWrapperNaive,
+    RandomizedAutoResetWrapper,
     VmapWrapper,
     Wrapper,
 )
@@ -178,7 +178,7 @@ def make_env(params: EnvironmentConfig, debug=0, make_eval=False, use_vmap_wrapp
     if (params.batch_size is not None and (params.batch_size > 1)) or use_vmap_wrapper:
         env = VmapWrapper(env, batch_size=params.batch_size)
     # env = EfficientAutoResetWrapper(env)
-    env = RandomizedAutoResetWrapperNaive(env)
+    env = RandomizedAutoResetWrapper(env)
     env_info = dict(obs_size=OBS_SIZE, discrete=DISCRETE, act_size=ACT_SIZE, obs_mask=obs_mask, act_clip=act_clip)
 
     if make_eval:
@@ -198,7 +198,7 @@ def make_env(params: EnvironmentConfig, debug=0, make_eval=False, use_vmap_wrapp
         if obs_mask is not None:
             eval_env = POBraxWrapper(eval_env, obs_mask)
         # eval_env = VmapWrapper(eval_env, batch_size=params.batch_size)
-        eval_env = RandomizedAutoResetWrapperNaive(eval_env)
+        eval_env = RandomizedAutoResetWrapper(eval_env)
         return env, env_info, eval_env
 
     return env, env_info
