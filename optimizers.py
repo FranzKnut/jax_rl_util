@@ -221,7 +221,6 @@ def make_multi_transform(configs: dict, label_fn: callable = None):
     -------
         optax optimizer
     """
-
     optimizers = {k: make_optimizer(v) for k, v in configs.items()}
     label_fn = label_fn or partial(label_subtrees, subtrees=list(configs.keys()))
     return optax.multi_transform(optimizers, label_fn)
@@ -241,8 +240,8 @@ def get_current_lrs(opt_state, opt_config: OptimizerConfig):
 
 
 def map_nested_fn(fn):
-    """
-    Recursively apply `fn to the key-value pairs of a nested dict / pytree.
+    """Recursively apply `fn` to the key-value pairs of a nested dict / pytree.
+
     We use this for some of the optax definitions below.
     """
 
