@@ -175,10 +175,10 @@ def make_env(params: EnvironmentConfig, debug=0, make_eval=False, use_vmap_wrapp
     env = FlatObs_BraxWrapper(env)
     if obs_mask is not None:
         env = POBraxWrapper(env, obs_mask)
+    env = RandomizedAutoResetWrapper(env)
+    # env = EfficientAutoResetWrapper(env)
     if (params.batch_size is not None and (params.batch_size > 1)) or use_vmap_wrapper:
         env = VmapWrapper(env, batch_size=params.batch_size)
-    # env = EfficientAutoResetWrapper(env)
-    env = RandomizedAutoResetWrapper(env)
     env_info = dict(obs_size=OBS_SIZE, discrete=DISCRETE, act_size=ACT_SIZE, obs_mask=obs_mask, act_clip=act_clip)
 
     if make_eval:

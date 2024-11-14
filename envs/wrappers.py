@@ -282,6 +282,7 @@ class GymJaxWrapper(Wrapper):
 
     @property
     def observation_size(self) -> int:
+        """Get observation size."""
         return self.observation_space.shape
 
 
@@ -543,7 +544,7 @@ class SaveToFileWrapper(Wrapper):
         min_steps: int = 2,
         start_filenum: int = 0,
     ):
-        """Wrapper records arrays of rollouts.
+        """Create wrapper that records arrays of rollouts.
 
         For now will save one episode per file.
 
