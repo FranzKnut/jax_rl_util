@@ -10,7 +10,8 @@ import simple_parsing
 from baselines.brax_baselines import load_brax_model
 from envs.environments import EnvironmentConfig, make_env, print_env_info
 
-BRAX_ENVS_POS = ["ant", "halfcheetah", "humanoid"]
+BRAX_ENVS_POS_DIMS = {"ant": 2, "halfcheetah": 1, "humanoid": 2}
+
 
 @dataclass
 class RolloutConfig:
@@ -30,7 +31,6 @@ class RolloutConfig:
     policy_path: str | None = None  # defaults to "artifacts/baselines/{backend}/{env_name}.ckpt"
     ckpt_type: str = "brax"
     output_dir: str = "data"
-    with_pos: bool = True  # Includes absolute position. Only has effect for envs in BRAX_ENVS_POS
     env_config: EnvironmentConfig = field(
         default_factory=lambda: EnvironmentConfig(
             env_name="humanoid",
@@ -49,7 +49,7 @@ def collect_rollouts(config: RolloutConfig, save_rollouts: bool = True, verbose:
     """Collect rollouts for the given environment."""
     rng = jax.random.PRNGKey(config.seed)
 
-    if config.with_pos and config.env_config.env_name in BRAX_ENVS_POS:
+    if config.env_config.env_name in BRAX_ENVS_POS_DIMS:
         config.env_config.init_kwargs["exclude_current_positions_from_observation"] = False
 
     env, env_info = make_env(config.env_config, use_vmap_wrapper=True)
@@ -77,7 +77,8 @@ def collect_rollouts(config: RolloutConfig, save_rollouts: bool = True, verbose:
         _rng, policy_key = jax.random.split(_rng)
         obs = prev_state.obs
         if not getattr(env, "_exclude_current_positions_from_observation", True):
-            obs = obs[:, 1:]
+            dims = 2 if config.env_config.env_name in ["ant", "humanoid"] else 1
+            obs = obs[:, dims:]
         if use_rnn:
             # Reset when done
             _hidden = jax.tree.map(
@@ -92,9 +93,7 @@ def collect_rollouts(config: RolloutConfig, save_rollouts: bool = True, verbose:
         return (_state, _hidden, _rng), (prev_state, action)
 
     # Make output directory
-    output_dir = os.path.join(
-        config.output_dir, backend, config.env_config.env_name + ("_with_pos" if config.with_pos else "")
-    )
+    output_dir = os.path.join(config.output_dir, backend, config.env_config.env_name + "_with_pos")
     os.makedirs(output_dir, exist_ok=True)
     total_reward = 0
     total_num_eps = 0
