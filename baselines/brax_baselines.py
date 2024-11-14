@@ -36,6 +36,7 @@ class BraxBaselineParams(LoggableConfig):
     project_name: str = "brax_baselines"
     env_name: str = "halfcheetah"
     backend: str = "spring"
+    force: bool = False
     env_kwargs: dict = field(default_factory=dict)
     obs_mask: str | Iterable[int] | None = None
     render: bool = True
@@ -312,11 +313,11 @@ def eval_baseline(
         return avg_reward
 
 
-def train_brax_baseline(hparams: BraxBaselineParams, logger=DummyLogger()):
+def train_brax_baseline(config: BraxBaselineParams, logger=DummyLogger()):
     """Train a baseline model for control of a brax physics simulation."""
-    env_name = hparams.env_name.replace("brax-", "")
-    obs_mask = hparams.obs_mask
-    env = brax.envs.get_environment(env_name=env_name, backend=hparams.backend, **hparams.env_kwargs)
+    env_name = config.env_name.replace("brax-", "")
+    obs_mask = config.obs_mask
+    env = brax.envs.get_environment(env_name=env_name, backend=config.backend, **config.env_kwargs)
     if obs_mask:
         env = POBraxWrapper(env, obs_mask)
 
@@ -341,8 +342,8 @@ def train_brax_baseline(hparams: BraxBaselineParams, logger=DummyLogger()):
 
         debug.callback(print_progress, num_steps, metrics["eval/episode_reward"])
 
-    model_filename = f"artifacts/baselines/{hparams.backend}/{env_name}.ckpt"
-    if os.path.exists(model_filename):
+    model_filename = f"artifacts/baselines/{config.backend}/{env_name}.ckpt"
+    if os.path.exists(model_filename) and not config.force:
         print("Loading existing model")
         params = model.load_params(model_filename)
     else:
@@ -359,11 +360,11 @@ def train_brax_baseline(hparams: BraxBaselineParams, logger=DummyLogger()):
     avg_reward = eval_baseline(
         params,
         env_name,
-        hparams.env_kwargs,
-        brax_backend=hparams.backend,
-        render=hparams.render,
+        config.env_kwargs,
+        brax_backend=config.backend,
+        render=config.render,
     )
-    if hparams.render and not DEBUG:
+    if config.render and not DEBUG:
         avg_reward, frames = avg_reward
         logger.log_video("env/video", np.array(frames), fps=30, caption=f"Reward: {avg_reward:.2f}")
     logger["eval_reward"] = avg_reward

@@ -10,9 +10,7 @@ import simple_parsing
 from baselines.brax_baselines import load_brax_model
 from envs.environments import EnvironmentConfig, make_env, print_env_info
 
-# HACK
-BRAX_BACKEND = "spring"
-
+BRAX_ENVS_POS = ["ant", "halfcheetah", "humanoid"]
 
 @dataclass
 class RolloutConfig:
@@ -32,16 +30,17 @@ class RolloutConfig:
     policy_path: str | None = None  # defaults to "artifacts/baselines/{backend}/{env_name}.ckpt"
     ckpt_type: str = "brax"
     output_dir: str = "data"
+    with_pos: bool = True  # Includes absolute position. Only has effect for envs in BRAX_ENVS_POS
     env_config: EnvironmentConfig = field(
         default_factory=lambda: EnvironmentConfig(
-            env_name="halfcheetah",
+            env_name="humanoid",
             init_kwargs={
-                "backend": BRAX_BACKEND,
-                # "exclude_current_positions_from_observation": False,
+                "backend": "spring",
             },
+            batch_size=10,
         )
     )
-    num_rollouts: int = 100
+    num_rollouts: int = 10
     max_steps: int = 1000
     seed: int = 0
 
@@ -50,11 +49,15 @@ def collect_rollouts(config: RolloutConfig, save_rollouts: bool = True, verbose:
     """Collect rollouts for the given environment."""
     rng = jax.random.PRNGKey(config.seed)
 
-    env, env_info = make_env(config.env_config, use_vmap_wrapper=False)
+    if config.with_pos and config.env_config.env_name in BRAX_ENVS_POS:
+        config.env_config.init_kwargs["exclude_current_positions_from_observation"] = False
+
+    env, env_info = make_env(config.env_config, use_vmap_wrapper=True)
     if verbose:
         print_env_info(env_info)
 
-    policy_path = config.policy_path or f"artifacts/baselines/{BRAX_BACKEND}/{config.env_config.env_name}.ckpt"
+    backend = config.env_config.init_kwargs.get("backend", "none")
+    policy_path = config.policy_path or f"artifacts/baselines/{backend}/{config.env_config.env_name}.ckpt"
 
     if config.ckpt_type == "brax":
         policy_fn = load_brax_model(policy_path, config.env_config.env_name, env.observation_size, env.action_size)
@@ -74,7 +77,7 @@ def collect_rollouts(config: RolloutConfig, save_rollouts: bool = True, verbose:
         _rng, policy_key = jax.random.split(_rng)
         obs = prev_state.obs
         if not getattr(env, "_exclude_current_positions_from_observation", True):
-            obs = obs[1:]
+            obs = obs[:, 1:]
         if use_rnn:
             # Reset when done
             _hidden = jax.tree.map(
@@ -88,7 +91,10 @@ def collect_rollouts(config: RolloutConfig, save_rollouts: bool = True, verbose:
         _state = env.step(prev_state, action)
         return (_state, _hidden, _rng), (prev_state, action)
 
-    output_dir = os.path.join(config.output_dir, config.env_config.env_name)
+    # Make output directory
+    output_dir = os.path.join(
+        config.output_dir, backend, config.env_config.env_name + ("_with_pos" if config.with_pos else "")
+    )
     os.makedirs(output_dir, exist_ok=True)
     total_reward = 0
     total_num_eps = 0
@@ -97,22 +103,26 @@ def collect_rollouts(config: RolloutConfig, save_rollouts: bool = True, verbose:
         env_state = env.reset(reset_key)
 
         _, (states, actions) = jax.lax.scan(_step, (env_state, init_carry, step_key), xs=None, length=config.max_steps)
-        episode_ends = np.where(states.done)[0] if np.any(states.done) else [len(states.done)]
+        states, actions = jax.tree.map(lambda x: x.swapaxes(0, 1), (states, actions))
+        episode_ends = jnp.where(
+            jnp.any(states.done, axis=1),
+            jnp.array([jnp.where(d, size=1)[0][0] for d in states.done]),
+            states.done.shape[-1],
+        )
         num_episodes = max(1, len(episode_ends))
-        total_reward += np.sum(states.reward[: episode_ends[-1]])
+        _reward = np.sum([np.sum(states.reward[i, :l]) for i, l in enumerate(episode_ends)])
+        total_reward += _reward
         total_num_eps += num_episodes
         if save_rollouts:
             filename = os.path.join(output_dir, f"rollout-{i}.npz")
             np.savez(
                 filename,
-                obs=states.obs[: episode_ends[-1]],
-                act=actions[: episode_ends[-1]],
-                rew=states.reward[: episode_ends[-1]],
-                done=states.done[: episode_ends[-1]],
+                obs=states.obs,
+                act=actions,
+                rew=states.reward,
+                done=states.done,
             )
-            print(
-                f"Saved {num_episodes} episodes to {filename}. Average reward: {np.sum(states.reward[:episode_ends[-1]]) / num_episodes}"
-            )
+            print(f"Saved {num_episodes} episodes to {filename}. Average reward: {_reward / num_episodes}")
     return total_reward / total_num_eps
 
 
