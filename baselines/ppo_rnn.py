@@ -52,7 +52,7 @@ class PPOParams(LoggableConfig):
     meta_rl: bool = True
     log_code: bool = False
     env_params: EnvironmentConfig = field(
-        default_factory=lambda: EnvironmentConfig(env_name="StatelessCartPoleEasy", batch_size=32)
+        default_factory=lambda: EnvironmentConfig(env_name="CartPole-v1", batch_size=32)
     )
 
 
@@ -346,7 +346,7 @@ def make_train(config: PPOParams, logger: DummyLogger):
 
             runner_state, traj_batch = jax.lax.scan(_env_step, runner_state, None, config.eval_steps)
 
-            return traj_batch.reward.sum() / jnp.max(jnp.array([jnp.sum(traj_batch.done), 1]))
+            return jnp.sum(traj_batch.reward) / (jnp.sum(traj_batch.done) + 1)
 
         # TRAIN LOOP
         def _update_step(runner_state, unused):
