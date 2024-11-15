@@ -351,8 +351,19 @@ class WandbLogger(DummyLogger):
         wandb.log({name: wandb.Video(frames, fps=fps, caption=caption)}, step=step)
 
 
-def wandb_wrapper(project_name, func, hparams: LoggableConfig):
-    """Init wandb and evaluate function."""
+def wandb_wrapper(project_name, func: Callable | dict[str, Callable], hparams: LoggableConfig):
+    """Init wandb and evaluate function.
+    
+    Parameters
+    ----------
+    project_name : str
+        Name of the project
+    func : Callable | dict[str, Callable]
+        Function to evaluate, if dict, pick function by project_name.
+    hparams : LoggableConfig
+        Hyperparameters for the run.
+        Will be updated by wandb.config if called by wandb.agent.
+    """
     global wandb
     import wandb
 
@@ -374,6 +385,8 @@ def wandb_wrapper(project_name, func, hparams: LoggableConfig):
         if hparams.log_code:
             wandb.run.log_code()
 
+        if isinstance(func, dict):
+            func = func[project_name]
         return func(hparams, logger=logger)
 
 
@@ -382,15 +395,35 @@ def with_logger(
     hparams: LoggableConfig,
     run_name="",
 ):
-    """Wrap training function with logger."""
+    """Wrap training function with logger.
+    
+    Parameters
+    ----------
+    func : Callable
+        Function to evaluate. 
+    hparams : LoggableConfig
+        Hyperparameters for the run. If dict, pick hparams by project_name.
+        Will be updated by wandb.config if called by wandb.agent.
+    run_name : str, optional
+        Name of the run, by default "".
+        
+    Returns
+    -------
+    Any
+        Result of the function
+    """
     if hparams.logging == "wandb":
 
         def pick_fun_and_run(_hparams, logger):
             return func(_hparams, logger=logger)
 
+        # Getting the function is done inside after wandb.init to get sweep config first. 
         return wandb_wrapper(hparams.project_name, pick_fun_and_run, hparams)
 
     elif hparams.logging == "aim":
+        # Get the function if it is a dict
+        if isinstance(func, dict):
+            func = func[hparams.project_name]
         logger = AimLogger(hparams.project_name, repo=hparams.repo, hparams=hparams, run_name=run_name)
         try:
             return func(hparams, logger=logger)
