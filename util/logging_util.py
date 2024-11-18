@@ -32,10 +32,8 @@ class ExceptionPrinter(contextlib.AbstractContextManager):
 
 
 @dataclass
-class LoggableConfig(simple_parsing.Serializable):
+class LoggableConfig(simple_parsing.Serializable, decode_into_subclasses=True):
     """Base configuration for experiments logged to wandb or aim."""
-
-    decode_into_subclasses = True  # do not alter
 
     logging: str | None = "aim"
     repo: str | None = None
