@@ -10,7 +10,8 @@ import optax
 class OptimizerConfig:
     """Class representing the parameters for an optimizer.
 
-    Attributes:
+    Attributes
+    ----------
         opt_name (str): The name of the optimizer.
         learning_rate (float): The learning rate for the optimizer.
         kwargs (dict): Additional keyword arguments for the optimizer.
@@ -39,7 +40,9 @@ def label_subtrees(params, subtrees):
     Parameters
     ----------
     params : tree
+        A nested dict of parameters.
     subtrees : list of subtree names
+        List of subtree names to replace.
 
     Returns
     -------
@@ -61,18 +64,21 @@ def make_optimizer(config=OptimizerConfig(), direction="min") -> optax.GradientT
 
     Parameters
     ----------
-    learning_rate : float
-        initial learning rate
+    config : OptimizerConfig, optional
+        learning_rate : float
+            initial learning rate
+        direction : str, optional
+            min or max. Defaults to "min", by default "min"
+        opt_name : str, optional
+            Name of optimizer, by default 'sgd'
+        gradient_clip : int, optional
+            Clip gradient norm. Defaults to 0
+        lr_decay : int, optional
+            Exponential lr decay. Defaults to 1, by default 1
+        optimizer_params : dict, optional
+            Additional kwargs to the optimizer, by default {}
     direction : str, optional
-        min or max. Defaults to "min", by default "min"
-    opt_name : str, optional
-        Name of optimizer, by default 'sgd'
-    gradient_clip : int, optional
-        Clip gradient norm. Defaults to 0
-    lr_decay : int, optional
-         Exponential lr decay. Defaults to 1, by default 1
-    optimizer_params : dict, optional
-        Additional kwargs to the optimizer, by default {}
+        min or max. Defaults to "min".
 
     Returns
     -------
@@ -214,8 +220,8 @@ def make_multi_transform(configs: dict, label_fn: callable = None):
     ----------
     configs : dict
         A nested dict of optimizer configs.
-    params : dict, optional
-        A nested dict of parameters.
+    label_fn : callable, optional
+        A function that labels subtrees of the model parameter dict with keys of the configs dict.
 
     Returns
     -------

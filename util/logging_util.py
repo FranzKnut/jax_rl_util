@@ -109,6 +109,9 @@ class DummyLogger(dict, object):
         """
         pass
 
+    def log_img(self, name, img, step=None, caption="", pil_mode="RGB", format="png"):
+        """Log an image to wandb."""
+
     def log_video(self, name: str, frames, step: int = None, fps=4, **kwargs):
         """Save a video given as array.
 
@@ -344,6 +347,14 @@ class WandbLogger(DummyLogger):
         wandb.log_artifact(artifact)
 
     @override
+    def log_img(self, name, img, step=None, caption="", pil_mode="RGB", format="png"):
+        """Log an image to wandb."""
+        self.log(
+            {name: wandb.Image(img, caption=caption, mode=pil_mode, format=format)},
+            step=step,
+        )
+
+    @override
     def log_video(self, name, frames, step=None, fps=30, caption=""):
         """Log a video to wandb."""
         wandb.log({name: wandb.Video(frames, fps=fps, caption=caption)}, step=step)
@@ -351,7 +362,7 @@ class WandbLogger(DummyLogger):
 
 def wandb_wrapper(project_name, func: Callable | dict[str, Callable], hparams: LoggableConfig):
     """Init wandb and evaluate function.
-    
+
     Parameters
     ----------
     project_name : str
@@ -394,17 +405,17 @@ def with_logger(
     run_name="",
 ):
     """Wrap training function with logger.
-    
+
     Parameters
     ----------
     func : Callable
-        Function to evaluate. 
+        Function to evaluate.
     hparams : LoggableConfig
         Hyperparameters for the run. If dict, pick hparams by project_name.
         Will be updated by wandb.config if called by wandb.agent.
     run_name : str, optional
         Name of the run, by default "".
-        
+
     Returns
     -------
     Any
@@ -415,7 +426,7 @@ def with_logger(
         def pick_fun_and_run(_hparams, logger):
             return func(_hparams, logger=logger)
 
-        # Getting the function is done inside after wandb.init to get sweep config first. 
+        # Getting the function is done inside after wandb.init to get sweep config first.
         return wandb_wrapper(hparams.project_name, pick_fun_and_run, hparams)
 
     elif hparams.logging == "aim":
