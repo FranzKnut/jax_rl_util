@@ -304,6 +304,7 @@ class RandomizedAutoResetWrapper(Wrapper):
         # HACK: some envs like pusher do not change the done flag, so we have to reset it here
         state = state.replace(done=jnp.zeros_like(state.done))
         state = self.env.step(state, action)
+        done = state.done
         rng, _rng = jrandom.split(state.info["rng"])
 
         def _reset():
@@ -312,7 +313,7 @@ class RandomizedAutoResetWrapper(Wrapper):
             return reset_state
 
         state = jax.lax.cond(state.done, _reset, lambda: state)
-        return state
+        return state.replace(done=done)
 
 
 # class RandomizedAutoResetWrapperNaive(Wrapper):
