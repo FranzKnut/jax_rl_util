@@ -1,6 +1,7 @@
 """Get results from wandb and make latex table."""
 
 import os
+
 import pandas as pd
 import wandb
 
