@@ -1,12 +1,12 @@
 
-import numpy as np
-
 from functools import reduce
+
 import aim
-from plotly.subplots import make_subplots
+import numpy as np
+import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
-import pandas as pd
+from plotly.subplots import make_subplots
 
 repo1 = aim.Repo('aim_repos/brax_new/')
 repo2 = aim.Repo('aim_repos/baselines/')

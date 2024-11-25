@@ -302,7 +302,7 @@ class RandomizedAutoResetWrapper(Wrapper):
     def step(self, state: State, action: jnp.ndarray) -> State:
         """Resample new initial state for all parallel envs."""
         # HACK: some envs like pusher do not change the done flag, so we have to reset it here
-        state = state.replace(done=jnp.zeros_like(state.done))
+        state = state.replace(done=jnp.zeros_like(state.done, dtype=state.done.dtype))
         state = self.env.step(state, action)
         done = state.done
         rng, _rng = jrandom.split(state.info["rng"])

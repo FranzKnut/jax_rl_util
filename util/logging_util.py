@@ -36,7 +36,7 @@ class LoggableConfig(simple_parsing.Serializable, decode_into_subclasses=True):
     """Base configuration for experiments logged to wandb or aim."""
 
     logging: str | None = "aim"
-    repo: str | None = None
+    repo: str | None = None  # Used for entity for wandb
     project_name: str | None = "default"
     debug: bool | int = False
     log_code: bool = False
@@ -381,6 +381,7 @@ def wandb_wrapper(project_name, func: Callable | dict[str, Callable], hparams: L
     with wandb.init(
         project=project_name,
         config=hparams,
+        entity=hparams.repo,
         mode="disabled" if hparams.debug else "online",
         dir="logs/",
         save_code=False,
