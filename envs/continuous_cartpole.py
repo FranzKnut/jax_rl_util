@@ -7,6 +7,7 @@ permalink: https://perma.cc/C9ZM-652R
 
 from functools import partial
 
+import gymnasium
 import jax
 import numpy as np
 from gymnasium import spaces
@@ -220,3 +221,7 @@ class CartPoleDampening(ContinuousCartPoleEnv):
 
     def is_terminated(self, state):
         return state[0] < -self.x_threshold or state[0] > self.x_threshold
+
+
+gymnasium.register(id="CartpoleContinuousJax-v0", entry_point=ContinuousCartPoleEnv, order_enforce=False)
+gymnasium.register(id="CartpoleContinuousJaxSwingUp-v0", entry_point=CartPoleSwingUp, order_enforce=False)

@@ -36,7 +36,7 @@ class LoggableConfig(simple_parsing.Serializable, decode_into_subclasses=True):
     """Base configuration for experiments logged to wandb or aim."""
 
     logging: str | None = "aim"
-    repo: str | None = None  # Used for entity for wandb
+    repo: str | None = None  # Used for entity in wandb
     project_name: str | None = "default"
     debug: bool | int = False
     log_code: bool = False
@@ -48,6 +48,10 @@ class DummyLogger(dict, object):
     def __repr__(self) -> str:
         """Return name of logger."""
         return "DummyLogger"
+
+    def flush(self):
+        """Flush the logs."""
+        pass
 
     def log(self, metrics: dict, step: int = None, **kwargs):
         """Log a dictionary of metrics (per step).
@@ -109,7 +113,7 @@ class DummyLogger(dict, object):
         """
         pass
 
-    def log_img(self, name, img, step=None, caption="", pil_mode="RGB", format="png"):
+    def log_img(self, name, img, step=None, caption="", pil_mode="RGB"):
         """Log an image to wandb."""
 
     def log_video(self, name: str, frames, step: int = None, fps=4, **kwargs):
@@ -312,6 +316,11 @@ class WandbLogger(DummyLogger):
         return wandb.run.summary[key]
 
     @override
+    def flush(self):
+        """Flush the logs."""
+        wandb.Api().flush()
+
+    @override
     def finalize(self, all_param_norms: dict = None, x_vals=None):
         """Make lineplots for all items in all_param_norms."""
         if all_param_norms:
@@ -347,10 +356,10 @@ class WandbLogger(DummyLogger):
         wandb.log_artifact(artifact)
 
     @override
-    def log_img(self, name, img, step=None, caption="", pil_mode="RGB", format="png"):
+    def log_img(self, name, img, step=None, caption="", pil_mode="RGB", format=None):
         """Log an image to wandb."""
         self.log(
-            {name: wandb.Image(img, caption=caption, mode=pil_mode, format=format)},
+            {name: wandb.Image(img, caption=caption, mode=pil_mode)},
             step=step,
         )
 
@@ -381,10 +390,10 @@ def wandb_wrapper(project_name, func: Callable | dict[str, Callable], hparams: L
     with wandb.init(
         project=project_name,
         config=hparams,
-        entity=hparams.repo,
         mode="disabled" if hparams.debug else "online",
         dir="logs/",
         save_code=False,
+        entity=hparams.repo,
     ), ExceptionPrinter():
         # If called by wandb.agent,
         # this config will be set by Sweep Controller
