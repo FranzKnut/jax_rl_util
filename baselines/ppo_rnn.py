@@ -15,16 +15,17 @@ import jax.random as jrandom
 import numpy as np
 import optax
 import simple_parsing
-from envs.wrappers import VmapWrapper
 from flax.linen.initializers import constant, orthogonal
 from flax.training.train_state import TrainState
 
+from envs.wrappers import VmapWrapper
 from jax_rl_util.envs.environments import EnvironmentConfig, make_env
 from jax_rl_util.util.logging_util import DummyLogger, LoggableConfig, with_logger
 
 warnings.simplefilter(action="ignore", category=FutureWarning)
 
 jax.config.update("jax_debug_nans", True)
+os.environ["XLA_FLAGS"] = "--xla_gpu_triton_gemm_any=true"
 
 
 @dataclass
@@ -40,26 +41,25 @@ class PPOParams(LoggableConfig):
     eval_every: int = 1
     eval_steps: int = 1000
     eval_batch_size: int = 10
-    gamma: float = 0.99
-    LR: float = 1e-3
-    update_steps: int = 10
-    collect_steps: int = 1000
-    rollout_horizon: int = 100
-    train_batch_size: int = 32
-    NUM_UNITS: int = 16
-    UPDATE_EPOCHS: int = 1
-    GAE_LAMBDA: float = 0.9
-    CLIP_EPS: float = 0.2
-    ENT_COEF: float = 0.0
+    gamma: float = 0.95
+    LR: float = 3e-4
+    rollout_horizon: int = 20
+    train_batch_size: int = 128
+    NUM_UNITS: int = 128
+    update_steps: int = 1
+    UPDATE_EPOCHS: int = 8
+    GAE_LAMBDA: float = 0.95
+    CLIP_EPS: float = 0.3
+    ENT_COEF: float = 0.001
     VF_COEF: float = 0.5
     gradient_clip: float | None = 1.0
     dt: float = 1.0
     ANNEAL_LR: bool = False
-    MODEL: str = "CTRNN"
+    MODEL: str = "MLP"
     meta_rl: bool = False
-    act_dist_name: str = "normal"
+    act_dist_name: str = "brax"
     env_params: EnvironmentConfig = field(
-        default_factory=lambda: EnvironmentConfig(env_name="CartPole-v1", batch_size=32)
+        default_factory=lambda: EnvironmentConfig(env_name="brax-halfcheetah", batch_size=256)
     )
     eps: float = 1e-6
 
@@ -214,6 +214,10 @@ class ActorCriticRNN(nn.Module):
                 return distrax.Transformed(
                     distrax.Beta(alpha, beta), distrax.ScalarAffine(jnp.array(self.action_limits[0]), act_range)
                 )
+            elif self.config.act_dist_name == "brax":
+                from brax.training.distribution import NormalTanhDistribution
+
+                return NormalTanhDistribution(event_size=self.action_dim).create_dist(model_out)
             else:
                 mean = model_out[..., : model_out.shape[-1] // 2]
                 log_std = model_out[..., model_out.shape[-1] // 2 :]
@@ -329,7 +333,7 @@ def make_train(config: PPOParams, logger: DummyLogger):
             sample_sequence_length=config.rollout_horizon,
             period=1,
             min_length_time_axis=config.rollout_horizon,
-            max_length_time_axis=config.collect_steps,
+            max_length_time_axis=config.rollout_horizon,
         )
 
         @jax.jit
@@ -460,7 +464,7 @@ def make_train(config: PPOParams, logger: DummyLogger):
                 return runner_state, transition
 
             initial_hstate = runner_state[-2]
-            runner_state, traj_batch = jax.lax.scan(_env_step, runner_state, None, config.collect_steps)
+            runner_state, traj_batch = jax.lax.scan(_env_step, runner_state, None, config.rollout_horizon)
 
             # CALCULATE ADVANTAGE
             train_state, env_state, last_act, hstate, rng = runner_state
@@ -621,7 +625,7 @@ def make_train(config: PPOParams, logger: DummyLogger):
                 if i % config.eval_every == 0:
                     eval_reward, _traj = eval_model(runner_state[0])
 
-                    timestep = runner_state[0].step * config.collect_steps * config.env_params.batch_size
+                    timestep = runner_state[0].step * config.rollout_horizon * config.env_params.batch_size
                     loggables = {
                         **jax.tree.map(jnp.mean, loggables),
                         "eval/rewards": eval_reward,

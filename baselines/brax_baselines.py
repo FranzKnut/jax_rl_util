@@ -7,7 +7,6 @@ from datetime import datetime
 from typing import Iterable
 
 import brax.envs
-import envs  # noqa
 import jax
 import numpy as np
 import simple_parsing
@@ -19,6 +18,7 @@ from jax import debug
 from jax import numpy as jnp
 from util.logging_util import DummyLogger, LoggableConfig, with_logger
 
+import envs  # noqa
 from jax_rl_util.envs.env_util import render_brax
 from jax_rl_util.envs.wrappers import POBraxWrapper
 
@@ -36,7 +36,7 @@ class BraxBaselineParams(LoggableConfig):
     project_name: str = "brax_baselines"
     env_name: str = "halfcheetah"
     backend: str = "spring"
-    force: bool = False
+    force: bool = True
     env_kwargs: dict = field(default_factory=dict)
     obs_mask: str | Iterable[int] | None = None
     render: bool = True
