@@ -18,8 +18,8 @@ import simple_parsing
 from flax.linen.initializers import constant, orthogonal
 from flax.training.train_state import TrainState
 
-from envs.wrappers import VmapWrapper
 from jax_rl_util.envs.environments import EnvironmentConfig, make_env
+from jax_rl_util.envs.wrappers import VmapWrapper
 from jax_rl_util.util.logging_util import DummyLogger, LoggableConfig, with_logger
 
 warnings.simplefilter(action="ignore", category=FutureWarning)
@@ -44,24 +44,25 @@ class PPOParams(LoggableConfig):
     gamma: float = 0.95
     LR: float = 3e-4
     rollout_horizon: int = 20
-    train_batch_size: int = 128
-    NUM_UNITS: int = 128
-    update_steps: int = 1
-    UPDATE_EPOCHS: int = 8
+    train_batch_size: int = 512
+    NUM_UNITS: int = 256
+    update_steps: int = 8
+    UPDATE_EPOCHS: int = 32
     GAE_LAMBDA: float = 0.95
     CLIP_EPS: float = 0.3
     ENT_COEF: float = 0.001
     VF_COEF: float = 0.5
     gradient_clip: float | None = 1.0
     dt: float = 1.0
+    normalize: bool = True
     ANNEAL_LR: bool = False
     MODEL: str = "MLP"
     meta_rl: bool = False
     act_dist_name: str = "brax"
     env_params: EnvironmentConfig = field(
-        default_factory=lambda: EnvironmentConfig(env_name="brax-halfcheetah", batch_size=256)
+        default_factory=lambda: EnvironmentConfig(env_name="brax-halfcheetah", batch_size=512)
     )
-    eps: float = 1e-6
+    eps: float = 0
 
 
 class LSTM(nn.Module):
@@ -176,7 +177,9 @@ class MLP(nn.Module):
         ins, resets = x
         y = nn.Dense(self.config.NUM_UNITS)(ins)
         y = nn.relu(y)
-        y = nn.Dense(self.config.NUM_UNITS)(ins)
+        y = nn.Dense(self.config.NUM_UNITS)(y)
+        y = nn.relu(y)
+        y = nn.Dense(self.config.NUM_UNITS)(y)
         return carry, y
 
     @staticmethod
@@ -281,6 +284,8 @@ def make_train(config: PPOParams, logger: DummyLogger):
     env, env_info, eval_env = make_env(config.env_params, make_eval=True)
     eval_env = VmapWrapper(eval_env, config.eval_batch_size)
     _discrete = env_info["discrete"]
+    
+    normalizer_state = 
 
     def linear_schedule(count):
         frac = (
@@ -515,12 +520,13 @@ def make_train(config: PPOParams, logger: DummyLogger):
                             log_prob = log_prob.mean(axis=-1)
 
                         # CALCULATE VALUE LOSS
-                        value_pred_clipped = traj_batch.value + (value - traj_batch.value).clip(
-                            -config.CLIP_EPS, config.CLIP_EPS
-                        )
-                        value_losses = jnp.square(value - targets)
-                        value_losses_clipped = jnp.square(value_pred_clipped - targets)
-                        value_loss = 0.5 * jnp.maximum(value_losses, value_losses_clipped).mean()
+                        # value_pred_clipped = traj_batch.value + (value - traj_batch.value).clip(
+                        #     -config.CLIP_EPS, config.CLIP_EPS
+                        # )
+                        value_losses = jnp.square(targets - value)
+                        # value_losses_clipped = jnp.square(value_pred_clipped - targets)
+                        # value_loss = 0.5 * jnp.maximum(value_losses, value_losses_clipped).mean()
+                        value_loss = 0.5 * value_losses.mean()
 
                         # CALCULATE ACTOR LOSS
                         ratio = jnp.exp(log_prob - traj_batch.log_prob)
@@ -589,22 +595,7 @@ def make_train(config: PPOParams, logger: DummyLogger):
             )
             update_state, loss_info = jax.lax.scan(_update_epoch, update_state, None, config.UPDATE_EPOCHS)
             train_state = update_state[0]
-            # metric = {"rewards": traj_batch.reward, "dones": traj_batch.done, "step": train_state.step}
             rng = update_state[-1]
-
-            # def callback(info):
-            #     # FIXME: May become NaN!
-            #     return_values = jnp.sum(info["rewards"]) / jnp.sum(info["dones"])
-            #     # Logging -------------------------------------------------------------
-            #     metrics = {
-            #         "steps": info["step"] * config.rollout_steps * config.env_params.batch_size,
-            #         "mean_reward": return_values,
-            #     }
-            #     # W & B logging
-            #     logger.log(metrics, step=info["step"])
-
-            # jax.debug.callback(callback, metric)
-
             runner_state = (train_state, env_state, last_act, hstate, rng)
             return runner_state, loss_info
 
