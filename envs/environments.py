@@ -46,11 +46,11 @@ from .wrappers import (
 class EnvironmentConfig:
     """Parameters for gym environments.
 
-    Attributes:
+    Attributes
+    ----------
         obs_mask (Union[str, Iterable[int]]): Mask for the observation space.
-        gymnax_params (dict): Parameters for the GymNax library.
+        env_kwargs (dict): Arguments for the env step function.
         init_kwargs (dict): Initialization arguments for the environment.
-        env_params (dict): Additional parameters for the environment.
         batch_size (int): Number of parallel environments.
         render (bool): Whether to render the environment during training.
     """

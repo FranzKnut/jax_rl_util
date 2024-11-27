@@ -40,8 +40,8 @@ class PPOParams(LoggableConfig):
     debug: int = 0
     seed: int = 0
     MODEL: str = "MLP"
-    NUM_UNITS: int = 128
-    meta_rl: bool = True
+    NUM_UNITS: int = 64
+    meta_rl: bool = False
     act_dist_name: str = "normal"
     log_norms: bool = False
 
@@ -53,15 +53,15 @@ class PPOParams(LoggableConfig):
     eval_batch_size: int = 10
     collect_horizon: int = 20
     rollout_horizon: int = 10
-    train_batch_size: int = 128
-    update_steps: int = 10
+    train_batch_size: int = 32
+    update_steps: int = 1
     UPDATE_EPOCHS: int = 4
 
     # Optimization settings
     LR: float = 3e-4
     gamma: float = 0.99
     GAE_LAMBDA: float = 0.9
-    CLIP_EPS: float = 0.3
+    CLIP_EPS: float = 0.2
     ENT_COEF: float = 0.001
     VF_COEF: float = 0.5
     gradient_clip: float | None = 1.0
@@ -69,7 +69,7 @@ class PPOParams(LoggableConfig):
 
     # Env settings
     env_params: EnvironmentConfig = field(
-        default_factory=lambda: EnvironmentConfig(env_name="brax-halfcheetah", batch_size=256)
+        default_factory=lambda: EnvironmentConfig(batch_size=64)
     )
     dt: float = 1.0
     normalize: bool = True
@@ -352,8 +352,6 @@ def make_train(config: PPOParams, logger: DummyLogger):
         if config.normalize:
             normalizer_state = running_statistics.init_state(obsv[0])
             normalize = running_statistics.normalize
-            # Normalize initial observation
-            env_state = env_state.replace(obs=normalize(env_state.obs, normalizer_state))
         else:
             normalizer_state = None
 
@@ -378,8 +376,6 @@ def make_train(config: PPOParams, logger: DummyLogger):
             rng, rng_init = jax.random.split(rng)
 
             env_state = eval_env.reset(rng_init)
-            # Normalize observations
-            env_state = env_state.replace(obs=normalize(env_state.obs, _normalizer_state))
             runner_state = (
                 env_state,
                 jnp.zeros((eval_env.batch_size, env.action_size)),
@@ -393,7 +389,7 @@ def make_train(config: PPOParams, logger: DummyLogger):
                 rng, _rng = jax.random.split(rng)
 
                 # SELECT ACTION
-                x = _env_state.obs[None, :]
+                x = normalize(_env_state.obs[None, :], _normalizer_state)
                 if config.meta_rl:
                     x = jnp.concatenate(
                         [x, last_act[None], _env_state.reward.reshape((1, eval_env.batch_size, -1))],
@@ -461,7 +457,7 @@ def make_train(config: PPOParams, logger: DummyLogger):
                 rng, _rng = jax.random.split(rng)
 
                 # SELECT ACTION
-                x = env_state.obs
+                x = normalize(env_state.obs, _normalizer_state)
                 if config.meta_rl:
                     x = jnp.concatenate([x, last_act, env_state.reward.reshape((env.batch_size, 1))], axis=-1)
                 ac_in = (x[None], env_state.done[None, :])
@@ -531,7 +527,7 @@ def make_train(config: PPOParams, logger: DummyLogger):
                     def _loss_fn(params):
                         # CALCULATE ADVANTAGES
                         # Compute the last value
-                        x = _batch.next_obs[-1:]
+                        x = normalize(_batch.next_obs[-1:], _normalizer_state)
                         last_hidden = jax.tree.map(lambda a: a[-1], _batch.hidden)
                         re_action = (
                             jax.nn.one_hot(_batch.action[-1:], env.action_size) if _discrete else _batch.action[-1:]
@@ -564,7 +560,7 @@ def make_train(config: PPOParams, logger: DummyLogger):
 
                         _init_hstate = jax.tree.map(lambda a: a[0], _batch.hidden)  # T=0, B, H
                         # RERUN NETWORK
-                        x = _batch.obs
+                        x = normalize(_batch.obs, _normalizer_state)
                         if config.meta_rl:
                             x = jnp.concatenate(
                                 [x, _batch.prev_action, _batch.prev_reward.reshape((*x.shape[:2], 1))],

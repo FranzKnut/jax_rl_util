@@ -1,9 +1,11 @@
 """Plot data that was downloaded from wandb."""
 
 import os
-from eval.eval_util import pull_fields
-import pandas as pd
+
 import matplotlib.pyplot as plt
+import pandas as pd
+
+from eval.eval_util import pull_fields
 
 FIELDS = ["env_name", "agent_type", "learning_rate", "seed", "obs_mask"]
 VAL_FIELD = "best_eval"
