@@ -34,39 +34,46 @@ os.environ["XLA_FLAGS"] = "--xla_gpu_triton_gemm_any=true"
 class PPOParams(LoggableConfig):
     """Parameters for PPO."""
 
+    # General settings
     project_name: str | None = "PPO RNN"
     logging: str = "aim"
     debug: int = 0
     seed: int = 0
+    MODEL: str = "MLP"
+    NUM_UNITS: int = 128
+    meta_rl: bool = True
+    act_dist_name: str = "normal"
+    log_norms: bool = False
+
+    # Training Settings
     episodes: int = 100000
     patience: int = 100
     eval_every: int = 1
     eval_steps: int = 1000
     eval_batch_size: int = 10
-    gamma: float = 0.99
-    LR: float = 3e-4
     collect_horizon: int = 20
     rollout_horizon: int = 10
     train_batch_size: int = 128
-    NUM_UNITS: int = 64
     update_steps: int = 10
     UPDATE_EPOCHS: int = 4
+
+    # Optimization settings
+    LR: float = 3e-4
+    gamma: float = 0.99
     GAE_LAMBDA: float = 0.9
-    CLIP_EPS: float = 0.2
+    CLIP_EPS: float = 0.3
     ENT_COEF: float = 0.001
     VF_COEF: float = 0.5
     gradient_clip: float | None = 1.0
-    dt: float = 1.0
-    normalize: bool = True
     ANNEAL_LR: bool = False
-    MODEL: str = "MLP"
-    meta_rl: bool = True
-    act_dist_name: str = "normal"
+
+    # Env settings
     env_params: EnvironmentConfig = field(
         default_factory=lambda: EnvironmentConfig(env_name="brax-halfcheetah", batch_size=256)
     )
+    dt: float = 1.0
+    normalize: bool = True
     eps: float = 0
-    log_norms: bool = False
 
 
 class LSTM(nn.Module):
