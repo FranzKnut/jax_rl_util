@@ -18,6 +18,7 @@ import simple_parsing
 from brax.training.acme import running_statistics
 from flax.linen.initializers import constant, orthogonal
 from flax.training.train_state import TrainState
+from models.lru import OnlineLRULayer
 
 from jax_rl_util.envs.environments import EnvironmentConfig, make_env, print_env_info
 from jax_rl_util.envs.wrappers import VmapWrapper
@@ -39,7 +40,7 @@ class PPOParams(LoggableConfig):
     logging: str = "aim"
     debug: int = 0
     seed: int = 0
-    MODEL: str = "MLP"
+    MODEL: str = "LRU"
     NUM_UNITS: int = 64
     meta_rl: bool = False
     act_dist_name: str = "normal"
@@ -54,7 +55,7 @@ class PPOParams(LoggableConfig):
     collect_horizon: int = 20
     rollout_horizon: int = 10
     train_batch_size: int = 32
-    update_steps: int = 1
+    update_steps: int = 10
     UPDATE_EPOCHS: int = 4
 
     # Optimization settings
@@ -68,9 +69,7 @@ class PPOParams(LoggableConfig):
     ANNEAL_LR: bool = False
 
     # Env settings
-    env_params: EnvironmentConfig = field(
-        default_factory=lambda: EnvironmentConfig(batch_size=64)
-    )
+    env_params: EnvironmentConfig = field(default_factory=lambda: EnvironmentConfig(batch_size=64))
     dt: float = 1.0
     normalize: bool = True
     eps: float = 0
@@ -168,6 +167,27 @@ class GRU(nn.Module):
     def initialize_carry(self, rng, input_shape):
         """Use a dummy key since the default state init fn is just zeros."""
         return nn.GRUCell(self.config.NUM_UNITS, parent=None).initialize_carry(rng, input_shape)
+
+
+class LRU(nn.Module):
+    """LRU module."""
+
+    config: PPOParams
+    d_hidden: int = 64
+
+    @nn.compact
+    def __call__(self, carry, x):
+        """Apply the module."""
+        x = jax.tree.map(lambda a: jnp.swapaxes(a, 0, 1), x)
+        ins, resets = x
+        carry, out = jax.vmap(OnlineLRULayer(self.config.NUM_UNITS, self.d_hidden))(carry, ins, resets)
+        return carry, jnp.swapaxes(out, 0, 1)
+
+    def initialize_carry(self, rng, input_shape):
+        """Initialize the lru hidden state as zeros."""
+        batch_size = input_shape[0:1] if len(input_shape) > 1 else ()
+        hidden_init = jnp.zeros((*batch_size, self.d_hidden), dtype=jnp.complex64)
+        return hidden_init
 
 
 class MLP(nn.Module):
