@@ -6,7 +6,6 @@ import warnings
 from dataclasses import dataclass, field
 from typing import Dict, NamedTuple, Sequence
 
-from cv2 import norm
 import distrax
 import flashbax as fbx
 import flax.linen as nn
@@ -16,18 +15,17 @@ import jax.random as jrandom
 import numpy as np
 import optax
 import simple_parsing
+from brax.training.acme import running_statistics
 from flax.linen.initializers import constant, orthogonal
 from flax.training.train_state import TrainState
 
 from jax_rl_util.envs.environments import EnvironmentConfig, make_env
 from jax_rl_util.envs.wrappers import VmapWrapper
-from jax_rl_util.util.logging_util import DummyLogger, LoggableConfig, with_logger
-
-from brax.training.acme import running_statistics
+from jax_rl_util.util.logging_util import DummyLogger, LoggableConfig, log_norms, with_logger
 
 warnings.simplefilter(action="ignore", category=FutureWarning)
 
-jax.config.update("jax_disable_jit", True)
+# jax.config.update("jax_disable_jit", True)
 # jax.config.update("jax_debug_nans", True)
 os.environ["XLA_FLAGS"] = "--xla_gpu_triton_gemm_any=true"
 
@@ -36,7 +34,7 @@ os.environ["XLA_FLAGS"] = "--xla_gpu_triton_gemm_any=true"
 class PPOParams(LoggableConfig):
     """Parameters for PPO."""
 
-    project_name: str | None = None
+    project_name: str | None = "PPO RNN"
     logging: str = "aim"
     debug: int = 0
     seed: int = 0
@@ -46,25 +44,26 @@ class PPOParams(LoggableConfig):
     eval_steps: int = 1000
     eval_batch_size: int = 10
     gamma: float = 0.99
-    LR: float = 1e-3
+    LR: float = 3e-4
+    collect_horizon: int = 20
     rollout_horizon: int = 10
-    train_batch_size: int = 32
-    NUM_UNITS: int = 4
+    train_batch_size: int = 128
+    NUM_UNITS: int = 64
     update_steps: int = 10
     UPDATE_EPOCHS: int = 4
     GAE_LAMBDA: float = 0.9
     CLIP_EPS: float = 0.2
-    ENT_COEF: float = 0.0
+    ENT_COEF: float = 0.001
     VF_COEF: float = 0.5
     gradient_clip: float | None = 1.0
     dt: float = 1.0
-    normalize: bool = False
+    normalize: bool = True
     ANNEAL_LR: bool = False
-    MODEL: str = "MLP"
-    meta_rl: bool = False
-    act_dist_name: str = "brax"
+    MODEL: str = "CTRNN"
+    meta_rl: bool = True
+    act_dist_name: str = "normal"
     env_params: EnvironmentConfig = field(
-        default_factory=lambda: EnvironmentConfig(env_name="CartPole-v1", batch_size=16)
+        default_factory=lambda: EnvironmentConfig(env_name="brax-halfcheetah", batch_size=256)
     )
     eps: float = 0
 
@@ -207,7 +206,12 @@ class ActorCriticRNN(nn.Module):
 
         Args:
         ----
-            model_out (jnp.ndarray): Output of the actor
+            model_out : (jnp.ndarray):
+                    Output of the actor
+            log_std_min : (float):
+                    Minimum value of the log std
+            log_std_max : (float), optional:
+                    Maximum value of the log std
 
         Returns:
         -------
@@ -273,6 +277,7 @@ class Transition(NamedTuple):
     """A transition used in batch updates."""
 
     done: jnp.ndarray
+    next_done: jnp.ndarray
     action: jnp.ndarray
     prev_action: jnp.ndarray
     value: jnp.ndarray
@@ -280,6 +285,7 @@ class Transition(NamedTuple):
     prev_reward: jnp.ndarray
     log_prob: jnp.ndarray
     obs: jnp.ndarray
+    next_obs: jnp.ndarray
     hidden: jnp.ndarray
     info: jnp.ndarray
 
@@ -318,7 +324,7 @@ def make_train(config: PPOParams, logger: DummyLogger):
             tx = optax.chain(
                 optax.clip_by_global_norm(config.gradient_clip) if config.gradient_clip else optax.identity(),
                 # optax.sgd(config.LR),
-                optax.adam(config.LR, eps=1e-5),
+                optax.adam(config.LR),
             )
         train_state = TrainState.create(
             apply_fn=network.apply,
@@ -350,12 +356,12 @@ def make_train(config: PPOParams, logger: DummyLogger):
             sample_batch_size=config.train_batch_size,
             sample_sequence_length=config.rollout_horizon,
             period=1,
-            min_length_time_axis=config.rollout_horizon,
-            max_length_time_axis=config.rollout_horizon,
+            min_length_time_axis=config.collect_horizon,
+            max_length_time_axis=config.collect_horizon,
         )
 
         @jax.jit
-        def eval_model(train_state, _normalizer_state, seed=0):
+        def eval_model(params, _normalizer_state, seed=0):
             """Evaluate model."""
             print("Tracing eval_model.")
             rng = jax.random.PRNGKey(seed)
@@ -365,7 +371,6 @@ def make_train(config: PPOParams, logger: DummyLogger):
             # Normalize observations
             env_state = env_state.replace(obs=normalize(env_state.obs, _normalizer_state))
             runner_state = (
-                train_state,
                 env_state,
                 jnp.zeros((eval_env.batch_size, env.action_size)),
                 _rnn_model.initialize_carry(rng_init, env_state.obs.shape),
@@ -374,15 +379,18 @@ def make_train(config: PPOParams, logger: DummyLogger):
             # COLLECT TRAJECTORIES
 
             def _env_step(runner_state, unused):
-                _train_state, _env_state, last_act, prev_hstate, rng = runner_state
+                _env_state, last_act, prev_hstate, rng = runner_state
                 rng, _rng = jax.random.split(rng)
 
                 # SELECT ACTION
                 x = _env_state.obs[None, :]
                 if config.meta_rl:
-                    x = jnp.concatenate([x, last_act[None], _env_state.reward[None]], axis=-1)
+                    x = jnp.concatenate(
+                        [x, last_act[None], _env_state.reward.reshape((1, eval_env.batch_size, -1))],
+                        axis=-1,
+                    )
                 ac_in = (x, _env_state.done[None, :])
-                next_hstate, pi, value = network.apply(_train_state.params, prev_hstate, ac_in)
+                next_hstate, pi, value = network.apply(params, prev_hstate, ac_in)
                 action = pi.sample(seed=_rng)
                 log_prob = pi.log_prob(action * (1 - config.eps))
                 value, action, log_prob = (
@@ -400,6 +408,7 @@ def make_train(config: PPOParams, logger: DummyLogger):
 
                 transition = Transition(
                     _env_state.done,
+                    next_env_state.done,
                     action,
                     last_act,
                     value,
@@ -407,6 +416,7 @@ def make_train(config: PPOParams, logger: DummyLogger):
                     _env_state.reward,
                     log_prob,
                     _env_state.obs,
+                    next_env_state.obs,
                     prev_hstate,
                     _env_state.info,
                 )
@@ -415,7 +425,6 @@ def make_train(config: PPOParams, logger: DummyLogger):
                 re_action = jax.nn.one_hot(action, env.action_size) if _discrete else action
 
                 runner_state = (
-                    _train_state,
                     next_env_state,
                     re_action,
                     next_hstate,
@@ -433,7 +442,7 @@ def make_train(config: PPOParams, logger: DummyLogger):
 
         # TRAIN LOOP
         @jax.jit
-        def _update_step(runner_state, unused):
+        def update_step(runner_state, unused):
             print("Tracing update_step.")
 
             # COLLECT TRAJECTORIES
@@ -444,7 +453,7 @@ def make_train(config: PPOParams, logger: DummyLogger):
                 # SELECT ACTION
                 x = env_state.obs
                 if config.meta_rl:
-                    x = jnp.concatenate([x, last_act, env_state.reward], axis=-1)
+                    x = jnp.concatenate([x, last_act, env_state.reward.reshape((env.batch_size, 1))], axis=-1)
                 ac_in = (x[None], env_state.done[None, :])
                 next_hstate, pi, value = network.apply(train_state.params, prev_hstate, ac_in)
                 action = pi.sample(seed=_rng)
@@ -464,6 +473,7 @@ def make_train(config: PPOParams, logger: DummyLogger):
 
                 transition = Transition(
                     env_state.done,
+                    next_env_state.done,
                     action,
                     last_act,
                     value,
@@ -471,8 +481,9 @@ def make_train(config: PPOParams, logger: DummyLogger):
                     env_state.reward,
                     log_prob.mean(axis=-1) if not _discrete else log_prob,
                     env_state.obs,
+                    next_env_state.obs,
                     prev_hstate,
-                    next_env_state.info,
+                    env_state.info,
                 )
 
                 # Action fed to the Meta-Learner is one-hot encoded for discrete envs.
@@ -489,86 +500,80 @@ def make_train(config: PPOParams, logger: DummyLogger):
                 return runner_state, transition
 
             # initial_hstate = runner_state[-2]
-            runner_state, traj_batch = jax.lax.scan(_env_step, runner_state, None, config.rollout_horizon)
+            runner_state, traj_batch = jax.lax.scan(_env_step, runner_state, None, config.collect_horizon)
             train_state, env_state, _normalizer_state, last_act, hstate, rng = runner_state
 
             # UPDATE NORMALIZER
             if config.normalize:
                 _normalizer_state = running_statistics.update(_normalizer_state, traj_batch.obs)
 
-            # CALCULATE ADVANTAGE
-
-            # Compute the last value
-            x = env_state.obs[None, :]
-            if config.meta_rl:
-                x = jnp.concatenate([x, last_act[None], env_state.reward[None]], axis=-1)
-            ac_in = (x, env_state.done[None])
-            _, _, last_val = network.apply(train_state.params, hstate, ac_in)
-
-            def _calculate_gae(_batch, last_val, last_done):
-                """Compute the generalized advantage estimates."""
-
-                def _get_advantages(carry, transition: Transition):
-                    gae, next_value, next_done = carry
-                    done, value, reward = transition.done, transition.value, transition.reward.squeeze()
-                    delta = reward + config.gamma * next_value * (1 - next_done) - value
-                    gae = delta + config.gamma * config.GAE_LAMBDA * (1 - next_done) * gae
-                    return (gae, value, done), gae
-
-                _, advantages = jax.lax.scan(
-                    jax.vmap(_get_advantages),
-                    (jnp.zeros_like(last_val), last_val, last_done),
-                    _batch,
-                    reverse=True,
-                    unroll=config.rollout_horizon,
-                )
-                return advantages, advantages + _batch.value
-
-            advantages, targets = _calculate_gae(traj_batch, last_val.squeeze(0), env_state.done)
-
-            # Add to buffer
-            batch = (traj_batch, advantages, targets)
-
             # Swap axes to make batch major
-            batch_major = jax.tree_util.tree_map(lambda x: jnp.swapaxes(x, 0, 1), batch)
+            batch_major = jax.tree_util.tree_map(lambda x: jnp.swapaxes(x, 0, 1), traj_batch)
             # Add to buffer
             buffer_state = buffer.init(jax.tree.map(lambda x: x[0][0], batch_major))
             buffer_state = buffer.add(buffer_state, batch_major)
 
             # UPDATE NETWORK
-            @jax.jit
             def _update_epoch(update_state, unused):
-                (
-                    train_state,
-                    # init_hstate,
-                    # traj_batch,
-                    # advantages,
-                    # targets,
-                    rng,
-                ) = update_state
+                (train_state, rng) = update_state
 
-                def _update_minbatch(train_state, batch_info):
+                def _update_minbatch(train_state, _batch: Transition):
                     def _loss_fn(params):
-                        _batch, gae, target_value = batch_info
+                        # CALCULATE ADVANTAGES
+                        # Compute the last value
+                        x = _batch.next_obs[-1:]
+                        last_hidden = jax.tree.map(lambda a: a[-1], _batch.hidden)
+                        re_action = (
+                            jax.nn.one_hot(_batch.action[-1:], env.action_size) if _discrete else _batch.action[-1:]
+                        )
+
+                        if config.meta_rl:
+                            x = jnp.concatenate([x, re_action, _batch.reward[-1:]], axis=-1)
+                        ac_in = (x, _batch.done[-1:])
+                        _, _, _last_val = network.apply(train_state.params, last_hidden, ac_in)
+
+                        def _calculate_gae(_batch, values, last_val, last_done):
+                            """Compute the generalized advantage estimates."""
+
+                            def _get_advantages(carry, _batch):
+                                gae, next_value, next_done = carry
+                                transition, _value = _batch
+                                done, value, reward = transition.done, _value, transition.reward.squeeze()
+                                delta = reward + config.gamma * next_value * (1 - next_done) - value
+                                gae = delta + config.gamma * config.GAE_LAMBDA * (1 - next_done) * gae
+                                return (gae, value, done), gae
+
+                            _, advantages = jax.lax.scan(
+                                jax.vmap(_get_advantages),
+                                (jnp.zeros_like(last_val), last_val, last_done),
+                                (_batch, values),
+                                reverse=True,
+                                unroll=config.rollout_horizon,
+                            )
+                            return advantages, advantages + _batch.value
 
                         _init_hstate = jax.tree.map(lambda a: a[0], _batch.hidden)  # T=0, B, H
                         # RERUN NETWORK
                         x = _batch.obs
                         if config.meta_rl:
-                            x = jnp.concatenate([x, _batch.prev_action, _batch.prev_reward], axis=-1)
-                        _, pi, value = network.apply(params, _init_hstate, (x, _batch.done))
+                            x = jnp.concatenate(
+                                [x, _batch.prev_action, _batch.prev_reward.reshape((*x.shape[:2], 1))],
+                                axis=-1,
+                            )
+                        _, pi, _value = network.apply(params, _init_hstate, (x, _batch.done))
                         log_prob = pi.log_prob(_batch.action * (1 - config.eps))
                         if not _discrete:
                             log_prob = log_prob.mean(axis=-1)
 
+                        gae, target_value = _calculate_gae(_batch, _value, _last_val.squeeze(0), _batch.next_done[-1])
+
                         # CALCULATE VALUE LOSS
-                        value_pred_clipped = _batch.value + (value - _batch.value).clip(
+                        value_pred_clipped = _batch.value + (_value - _batch.value).clip(
                             -config.CLIP_EPS, config.CLIP_EPS
                         )
-                        value_losses = jnp.square(target_value - value)
+                        value_losses = jnp.square(target_value - _value)
                         value_losses_clipped = jnp.square(value_pred_clipped - target_value)
                         value_loss = 0.5 * jnp.maximum(value_losses, value_losses_clipped).mean()
-                        # value_loss = 0.5 * value_losses.mean()
 
                         # CALCULATE ACTOR LOSS
                         ratio = jnp.exp(log_prob - _batch.log_prob)
@@ -600,29 +605,12 @@ def make_train(config: PPOParams, logger: DummyLogger):
                 experience = jax.tree_util.tree_map(lambda x: jnp.swapaxes(x, 0, 1), minibatches.experience)
 
                 train_state, loss_info = _update_minbatch(train_state, experience)
-                update_state = (
-                    train_state,
-                    # init_hstate,
-                    # traj_batch,
-                    # advantages,
-                    # targets,
-                    rng,
-                )
+                update_state = (train_state, rng)
                 return update_state, loss_info
 
-            # init_hstate = jax.tree.map(lambda a: a[None], initial_hstate)  # TBH
-            update_state = (
-                train_state,
-                # init_hstate,
-                # traj_batch,
-                # advantages,
-                # targets,
-                rng,
-            )
+            update_state = (train_state, rng)
             update_state, loss_info = jax.lax.scan(_update_epoch, update_state, None, config.UPDATE_EPOCHS)
-            train_state = update_state[0]
-            rng = update_state[-1]
-            runner_state = (train_state, env_state, _normalizer_state, last_act, hstate, rng)
+            runner_state = (update_state[0], env_state, _normalizer_state, last_act, hstate, update_state[-1])
             return runner_state, loss_info
 
         rng, _rng = jax.random.split(rng)
@@ -639,15 +627,16 @@ def make_train(config: PPOParams, logger: DummyLogger):
         trajectories = None
         try:
             for i in range(config.episodes):
-                runner_state, loggables = jax.lax.scan(_update_step, runner_state, None, config.update_steps)
+                runner_state, loggables = jax.lax.scan(update_step, runner_state, None, config.update_steps)
                 if i % config.eval_every == 0:
-                    eval_reward, _traj = eval_model(runner_state[0], runner_state[2])
+                    eval_reward, _traj = eval_model(runner_state[0].params, runner_state[2])
 
-                    timestep = runner_state[0].step * config.rollout_horizon * config.env_params.batch_size
+                    timestep = runner_state[0].step * config.collect_horizon * config.env_params.batch_size
                     loggables = {
                         **jax.tree.map(jnp.mean, loggables),
                         "eval/rewards": eval_reward,
                         "global_steps": timestep,
+                        **log_norms(runner_state[0].params)[0],
                     }
                     logger.flush()
                     if eval_reward > float(logger["best_eval_reward"]):
@@ -695,5 +684,5 @@ def train_and_eval(config: PPOParams, logger=DummyLogger()):
 
 if __name__ == "__main__":
     params: PPOParams = simple_parsing.parse(PPOParams)
-    best_reward = with_logger(train_and_eval, params)
+    best_reward = with_logger(train_and_eval, params, run_name=params.env_params.env_name)
     print(f"Best eval reward: {best_reward:.2f}")
