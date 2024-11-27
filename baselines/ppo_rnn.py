@@ -48,7 +48,7 @@ class PPOParams(LoggableConfig):
 
     # Training Settings
     episodes: int = 100000
-    patience: int = 100
+    patience: int = 20
     eval_every: int = 1
     eval_steps: int = 1000
     eval_batch_size: int = 10
