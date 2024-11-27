@@ -19,7 +19,7 @@ from brax.training.acme import running_statistics
 from flax.linen.initializers import constant, orthogonal
 from flax.training.train_state import TrainState
 
-from jax_rl_util.envs.environments import EnvironmentConfig, make_env
+from jax_rl_util.envs.environments import EnvironmentConfig, make_env, print_env_info
 from jax_rl_util.envs.wrappers import VmapWrapper
 from jax_rl_util.util.logging_util import DummyLogger, LoggableConfig, log_norms, with_logger
 
@@ -59,13 +59,14 @@ class PPOParams(LoggableConfig):
     dt: float = 1.0
     normalize: bool = True
     ANNEAL_LR: bool = False
-    MODEL: str = "CTRNN"
+    MODEL: str = "MLP"
     meta_rl: bool = True
     act_dist_name: str = "normal"
     env_params: EnvironmentConfig = field(
         default_factory=lambda: EnvironmentConfig(env_name="brax-halfcheetah", batch_size=256)
     )
     eps: float = 0
+    log_norms: bool = False
 
 
 class LSTM(nn.Module):
@@ -297,6 +298,8 @@ def make_train(config: PPOParams, logger: DummyLogger):
     env, env_info, eval_env = make_env(config.env_params, make_eval=True)
     eval_env = VmapWrapper(eval_env, config.eval_batch_size)
     _discrete = env_info["discrete"]
+
+    print_env_info(env_info)
 
     def train(rng, record_best_eval_episode=False):
         # INIT NETWORK
@@ -636,8 +639,9 @@ def make_train(config: PPOParams, logger: DummyLogger):
                         **jax.tree.map(jnp.mean, loggables),
                         "eval/rewards": eval_reward,
                         "global_steps": timestep,
-                        **log_norms(runner_state[0].params)[0],
                     }
+                    if config.log_norms:
+                        loggables.update(**log_norms(runner_state[0].params)[0])
                     logger.flush()
                     if eval_reward > float(logger["best_eval_reward"]):
                         steps_since_best = 0
