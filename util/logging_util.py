@@ -259,7 +259,7 @@ class AimLogger(DummyLogger):
         self.run.report_successful_finish(block=True)
 
     @override
-    def finalize(self):
+    def finalize(self, _=None):
         """Finalize the Run."""
         self.run.finalize()
 
@@ -387,14 +387,17 @@ def wandb_wrapper(project_name, func: Callable | dict[str, Callable], hparams: L
 
     logger = WandbLogger()
 
-    with wandb.init(
-        project=project_name,
-        config=hparams,
-        mode="disabled" if hparams.debug else "online",
-        dir="logs/",
-        save_code=False,
-        entity=hparams.repo,
-    ), ExceptionPrinter():
+    with (
+        wandb.init(
+            project=project_name,
+            config=hparams,
+            mode="disabled" if hparams.debug else "online",
+            dir="logs/",
+            save_code=False,
+            entity=hparams.repo,
+        ),
+        ExceptionPrinter(),
+    ):
         # If called by wandb.agent,
         # this config will be set by Sweep Controller
         hparams = hparams.from_dict(

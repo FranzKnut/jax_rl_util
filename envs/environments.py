@@ -118,7 +118,7 @@ def get_env_specs(env: gym.Env, obs_mask=None):
     return OBS_SIZE, DISCRETE, ACT_SIZE, obs_mask, act_clip
 
 
-def make_env(params: EnvironmentConfig, debug=0, make_eval=False, use_vmap_wrapper=True) -> Wrapper:
+def make_env(params: EnvironmentConfig, debug=0, make_eval=False, use_vmap_wrapper=True) -> tuple[BraxEnv, dict] | tuple[BraxEnv, dict, BraxEnv]:
     """Make brax or gymnax env.
 
     Parameters

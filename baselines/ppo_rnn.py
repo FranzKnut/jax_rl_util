@@ -18,11 +18,11 @@ import simple_parsing
 from brax.training.acme import running_statistics
 from flax.linen.initializers import constant, orthogonal
 from flax.training.train_state import TrainState
-from models.lru import OnlineLRULayer
 
 from jax_rl_util.envs.environments import EnvironmentConfig, make_env, print_env_info
 from jax_rl_util.envs.wrappers import VmapWrapper
 from jax_rl_util.util.logging_util import DummyLogger, LoggableConfig, log_norms, with_logger
+from jax_rtrl.models.lru import OnlineLRULayer
 
 warnings.simplefilter(action="ignore", category=FutureWarning)
 

@@ -8,7 +8,6 @@ import jax.numpy as jnp
 import numpy as np
 import optax
 import popjym
-from envs.wrappers import LogWrapper
 from flax.linen.initializers import constant, orthogonal
 from flax.training.train_state import TrainState
 from gymnax.environments import spaces
@@ -16,6 +15,7 @@ from popjym.wrappers import AliasPrevActionV2
 from util.logging_util import DummyLogger
 
 import wandb
+from jax_rl_util.envs.wrappers import LogWrapper
 
 from .s5 import S5Config, StackedEncoderModel, init_S5SSM, make_DPLR_HiPPO
 
