@@ -221,7 +221,3 @@ class CartPoleDampening(ContinuousCartPoleEnv):
 
     def is_terminated(self, state):
         return state[0] < -self.x_threshold or state[0] > self.x_threshold
-
-
-gymnasium.register(id="CartpoleContinuousJax-v0", entry_point=ContinuousCartPoleEnv, order_enforce=False)
-gymnasium.register(id="CartpoleContinuousJaxSwingUp-v0", entry_point=CartPoleSwingUp, order_enforce=False)

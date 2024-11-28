@@ -22,7 +22,6 @@ from flax.training.train_state import TrainState
 from jax_rl_util.envs.environments import EnvironmentConfig, make_env, print_env_info
 from jax_rl_util.envs.wrappers import VmapWrapper
 from jax_rl_util.util.logging_util import DummyLogger, LoggableConfig, log_norms, with_logger
-from jax_rtrl.models.lru import OnlineLRULayer
 
 warnings.simplefilter(action="ignore", category=FutureWarning)
 
@@ -40,8 +39,8 @@ class PPOParams(LoggableConfig):
     logging: str = "aim"
     debug: int = 0
     seed: int = 0
-    MODEL: str = "LRU"
-    NUM_UNITS: int = 64
+    MODEL: str = "MLP"
+    NUM_UNITS: int = 32
     meta_rl: bool = False
     act_dist_name: str = "normal"
     log_norms: bool = False
@@ -50,26 +49,28 @@ class PPOParams(LoggableConfig):
     episodes: int = 100000
     patience: int = 20
     eval_every: int = 1
-    eval_steps: int = 1000
+    eval_steps: int = 10
     eval_batch_size: int = 10
     collect_horizon: int = 20
     rollout_horizon: int = 10
-    train_batch_size: int = 32
+    train_batch_size: int = 128
     update_steps: int = 10
     UPDATE_EPOCHS: int = 4
 
     # Optimization settings
-    LR: float = 3e-4
+    LR: float = 1e-3
     gamma: float = 0.99
     GAE_LAMBDA: float = 0.9
     CLIP_EPS: float = 0.2
-    ENT_COEF: float = 0.001
+    ENT_COEF: float = 0.0
     VF_COEF: float = 0.5
     gradient_clip: float | None = 1.0
     ANNEAL_LR: bool = False
 
     # Env settings
-    env_params: EnvironmentConfig = field(default_factory=lambda: EnvironmentConfig(batch_size=64))
+    env_params: EnvironmentConfig = field(
+        default_factory=lambda: EnvironmentConfig(env_name="dronegym", batch_size=512)
+    )
     dt: float = 1.0
     normalize: bool = True
     eps: float = 0
@@ -178,6 +179,8 @@ class LRU(nn.Module):
     @nn.compact
     def __call__(self, carry, x):
         """Apply the module."""
+        from jax_rtrl.models.lru import OnlineLRULayer
+
         x = jax.tree.map(lambda a: jnp.swapaxes(a, 0, 1), x)
         ins, resets = x
         carry, out = jax.vmap(OnlineLRULayer(self.config.NUM_UNITS, self.d_hidden))(carry, ins, resets)
@@ -270,7 +273,7 @@ class ActorCriticRNN(nn.Module):
                     log_std = jnp.tanh(log_std)
                     log_std = log_std_min + 0.5 * (log_std_max - log_std_min) * (log_std + 1)
                 else:
-                    log_std = jnp.clip(log_std, a_min=log_std_min)
+                    log_std = jnp.clip(log_std, min=log_std_min)
                 return distrax.Normal(mean, jnp.exp(log_std))
 
     @nn.compact
@@ -687,11 +690,12 @@ def make_train(config: PPOParams, logger: DummyLogger):
             # Save last episode data for plotting.
             os.makedirs("output", exist_ok=True)
             data = {
-                "state": trajectories.info["state"],
                 "time": np.arange(trajectories[0].shape[0]),
                 "action": trajectories.action,
+                **trajectories.info,
             }
-            np.savez("output/trajectories.npz", **data)
+            np.savez("data/ppo_best_trajectory.npz", **data)
+            env_params = getattr(env, "params")
         return logger["best_eval_reward"]
 
     return train
@@ -702,7 +706,7 @@ def train_and_eval(config: PPOParams, logger=DummyLogger()):
     rng = jax.random.PRNGKey(config.seed)
     logger["best_eval_reward"] = -np.inf
     try:
-        return make_train(config, logger)(rng)
+        return make_train(config, logger)(rng, record_best_eval_episode=True)
     except Exception as e:
         raise e
     finally:

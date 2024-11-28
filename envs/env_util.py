@@ -1,6 +1,8 @@
 """Utiliy functions for working with environments."""
+
 from typing import Iterable
 
+import gymnasium as gym
 import jax
 import numpy as np
 from jax import numpy as jnp
@@ -40,3 +42,69 @@ def make_obs_mask(base_obs_size: int, obs_mask: Iterable[int] | str | int = None
     elif obs_mask is None or (isinstance(obs_mask, str) and obs_mask.lower() == "none"):
         obs_mask = jnp.arange(base_obs_size, dtype=jnp.int32)
     return jnp.array(obs_mask, dtype=jnp.int32)
+
+
+def render_frames(_env: gym.Env, states: list, start_idx: int = None, end_idx: int = None):
+    """Render the given states of the environment.
+
+    Parameters
+    ----------
+    _env : gym.Env
+        Environment to render. Can handle Brax, Gymnax and Gym envs.
+    states: list
+        List of states to render.
+    start_idx : int, optional
+        start rendering from this index, by default None, means start at 0
+    end_idx : int, optional
+        render until this index, by default None, means render all
+
+    Returns
+    -------
+    list[array]
+        List of RGB array renderings of the environment at given states.
+    """
+    if not isinstance(states, list):
+        states = [jax.tree.map(lambda x: x[n], states) for n in range(start_idx or 0, end_idx or states.time.shape[0])]
+
+    from envs.wrappers import GymnaxBraxWrapper
+
+    # Define rendering function for specific envs
+    if isinstance(_env.unwrapped, GymnaxBraxWrapper):
+        if _env.name in ["CartPole-v1", "MountainCarContinuous-v0", "MountainCar-v0", "Pendulum-v1", "Acrobot-v1"]:
+            from gymnax.visualize.vis_gym import get_gym_state
+
+            gym__env = gym.make(_env.name, render_mode="rgb_array").unwrapped
+
+            def render_gym(_env, _state):
+                """Taken from gymnax.visualize.vis_gym."""
+                gym_state = get_gym_state(_state, _env.name)
+                if _env.name == "Pendulum-v1":
+                    gym__env.last_u = gym_state[-1]
+                gym__env.state = gym_state
+                rgb_array = gym__env.render()
+                return rgb_array.transpose(2, 0, 1)
+        else:
+            print("Cannot render env: ", _env.name)
+            return []
+
+    elif not hasattr(_env.unwrapped, "env"):  # is Braxenv
+        from brax.io import image
+
+        def render_gym(_env, _state):
+            return image.render_array(_env.sys, _state, 256, 256, camera="track").transpose(2, 0, 1)
+    else:
+
+        def render_gym(_env, _state):
+            _env.unwrapped.env.state = _state
+            if _env.name == "Pendulum-v1":
+                _env.unwrapped.env.last_u = _state[-1]
+            return _env.render().transpose(2, 0, 1)
+
+    frames = []
+    for _state in states:
+        frames.append(render_gym(_env, _state))
+
+    if isinstance(_env.unwrapped, GymnaxBraxWrapper):
+        gym__env.close()
+
+    return frames

@@ -38,6 +38,17 @@ class Wrapper:
         """Get action size."""
         return is_discrete(self)
 
+    @property
+    def action_size(self) -> int:
+        """Get action size."""
+        act_space = self.action_space
+        return act_space.n if self.discrete else act_space.shape[-1]
+
+    @property
+    def observation_size(self) -> int:
+        """Only works for default_params envs."""
+        return np.prod(self.observation_space.shape)
+
 
 class GymBraxWrapper(Wrapper):
     """Wrap Gym envs for use with Brax Wrappers."""
@@ -70,19 +81,8 @@ class GymBraxWrapper(Wrapper):
             reward = jnp.expand_dims(reward, axis=0)
         return state.replace(pipeline_state=gymnax_state, obs=obs, reward=reward, done=done)
 
-    @property
-    def action_size(self) -> int:
-        """Get action size."""
-        act_space = self.action_space
-        return act_space.n if self.discrete else act_space.shape[-1]
 
-    @property
-    def observation_size(self) -> int:
-        """Only works for default_params envs."""
-        return np.prod(self.observation_space.shape)
-
-
-class GymnaxBraxWrapper(GymBraxWrapper):
+class GymnaxBraxWrapper(Wrapper):
     """Wrap Gymnax envs for use with Brax Wrappers."""
 
     def __init__(self, env, params: dict | None = None):
@@ -117,7 +117,7 @@ class GymnaxBraxWrapper(GymBraxWrapper):
     def action_space(self, params=None) -> int:
         """Get action size."""
         params = self.env.default_params if params is None else params
-        return self.env.action_space()
+        return self.env.action_space(params)
 
     @property
     def discrete(self) -> int:

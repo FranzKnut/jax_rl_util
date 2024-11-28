@@ -33,7 +33,7 @@ class RolloutConfig:
     output_dir: str = "data"
     env_config: EnvironmentConfig = field(
         default_factory=lambda: EnvironmentConfig(
-            env_name="humanoid",
+            env_name="ant",
             init_kwargs={
                 "backend": "spring",
             },
