@@ -5,7 +5,6 @@ import argparse
 import csv
 import pathlib
 from collections import OrderedDict
-from dataclasses import fields
 from typing import Tuple
 
 import gymnax
@@ -69,7 +68,6 @@ class EnvParams:
     n_dim: int = 2
     starting_post_ego: Tuple[float, float, float] = (0, 0, 0)
     plot_range: int = 15
-    steps: int = 3000
 
 
 # class EnvState

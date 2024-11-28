@@ -106,8 +106,8 @@ class GymnaxBraxWrapper(Wrapper):
         """Make gymnax step and wrap in brax state."""
         step_key, state.info["rng"] = jrandom.split(state.info["rng"])
         obs, gymnax_state, reward, done, _ = self.env.step_env(step_key, state.pipeline_state, action, self.params)
-        # for k, v in state_gymnax[4].items():
-        #     state.info[k] = v
+        # FIXME: Info dict cannot be passed outside since this function is jitted.
+        # The state given by reset has to contain info with the same structure!
         reward = jnp.array(reward, dtype=jnp.float32)
         if len(reward.shape) == 0:
             reward = jnp.expand_dims(reward, axis=0)

@@ -4,10 +4,12 @@ import argparse
 import os
 import pathlib
 from dataclasses import fields
+import pickle
 
 from gymnax import EnvParams
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
+import numpy as np
 import plotly.graph_objects as go
 
 
@@ -46,26 +48,27 @@ def plotly_drone_pos(fig, data_drones_pos, name):
     #     fig.add_trace(go.Scatter(x=data_ego_pos[..., 0], y=data_drones_pos[..., 2], mode='markers', name='Other Drones'), row=2, col=1)
 
 
-def plot_drones(
-    args: EnvParams,
-    data_ego_pos,
-    data_ego_vel,
-    data_drones_pos,
-    data_true_distance,
-    data_noisy_distance,
-    data_filtered_distance,
-):
+def plot_drones(args: EnvParams, data):
     """Plot the drone positions and distances."""
+    first_ep_end = np.argmax(data["done"][:, 0])
+    data_ego_pos = data["pos"][:first_ep_end, 0, 0, :]
+    data_ego_vel = data["vel"][:first_ep_end, 0, 0, :]
+    data_drones_pos = data["pos"][:first_ep_end, 0, 1:, :]
+    data_true_distance = data["reward"][:first_ep_end, 0]
+    # data_noisy_distance = data["data_noisy_distance"]
+    # data_filtered_distance = data["data_filtered_distance"]
+
     # We transpose so that dim 1 is the time axis and dim 2 is the drone index
-    data_noisy_distance = data_noisy_distance.T
+    # data_noisy_distance = data_noisy_distance.T
     data_true_distance = data_true_distance.T
-    data_filtered_distance = data_filtered_distance.T
+    # data_filtered_distance = data_filtered_distance.T
 
     # Make subplots
     _, axes = plt.subplots(2 if args.dims == 3 else 1, 2)
 
     # time axis
-    data_time = jnp.linspace(0, (args.steps - 1) / args.frequency, num=args.steps)
+    steps = data_ego_pos.shape[0]
+    data_time = jnp.linspace(0, (steps - 1) / args.frequency, num=steps)
 
     ax0 = axes[0] if args.dims == 2 else axes[0, 0]
     ax3 = axes[-1] if args.dims == 2 else axes[-1, -1]
@@ -91,8 +94,8 @@ def plot_drones(
         data_time,
         {
             "Ground-truth distance": data_true_distance,
-            "Noisy measurement": data_noisy_distance,
-            "IIR-Filtered measurement": data_filtered_distance,
+            # "Noisy measurement": data_noisy_distance,
+            # "IIR-Filtered measurement": data_filtered_distance,
         },
         data_ego_vel,
     )
@@ -231,7 +234,17 @@ def plot_drone_eval(ax, eval_output, gym_params: EnvParams):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(prog="sim", description="simulate random drone movements and distance changes")
-    parser.add_argument("-f", "--file", type=pathlib.Path, default="data/output.csv", help="output file name")
-    
-    args = {k: v for k, v in vars(args).items() if k in [f.name for f in fields(EnvParams)]}
-    plot_drones(EnvParams(**args), *output)
+    parser.add_argument(
+        "-f", "--file", type=pathlib.Path, default="data/ppo_best_trajectory.npz", help="output file name"
+    )
+    parser.add_argument("--args_file", type=pathlib.Path, default="data/ppo_env_params.pkl", help="output file name")
+    args = parser.parse_args()
+
+    data = np.load(args.file)
+    if os.path.exists(args.args_file):
+        with open(args.args_file, "rb") as f:
+            params = pickle.load(f)
+    else:
+        params = EnvParams()
+    plot_drones(params, data)
+    plt.show()

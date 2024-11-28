@@ -2,6 +2,7 @@
 
 import functools
 import os
+import pickle
 import warnings
 from dataclasses import dataclass, field
 from typing import Dict, NamedTuple, Sequence
@@ -26,7 +27,8 @@ from jax_rl_util.util.logging_util import DummyLogger, LoggableConfig, log_norms
 warnings.simplefilter(action="ignore", category=FutureWarning)
 
 # jax.config.update("jax_disable_jit", True)
-# jax.config.update("jax_debug_nans", True)
+jax.config.update("jax_debug_nans", True)
+# jax.config.update("jax_enable_x64", True)
 os.environ["XLA_FLAGS"] = "--xla_gpu_triton_gemm_any=true"
 
 
@@ -39,8 +41,8 @@ class PPOParams(LoggableConfig):
     logging: str = "aim"
     debug: int = 0
     seed: int = 0
-    MODEL: str = "MLP"
-    NUM_UNITS: int = 32
+    MODEL: str = "CTRNN"
+    NUM_UNITS: int = 128
     meta_rl: bool = False
     act_dist_name: str = "normal"
     log_norms: bool = False
@@ -49,31 +51,31 @@ class PPOParams(LoggableConfig):
     episodes: int = 100000
     patience: int = 20
     eval_every: int = 1
-    eval_steps: int = 10
+    eval_steps: int = 1000
     eval_batch_size: int = 10
     collect_horizon: int = 20
     rollout_horizon: int = 10
-    train_batch_size: int = 128
-    update_steps: int = 10
-    UPDATE_EPOCHS: int = 4
+    train_batch_size: int = 256
+    update_steps: int = 20
+    UPDATE_EPOCHS: int = 10
 
     # Optimization settings
-    LR: float = 1e-3
+    LR: float = 1e-4
     gamma: float = 0.99
     GAE_LAMBDA: float = 0.9
     CLIP_EPS: float = 0.2
-    ENT_COEF: float = 0.0
+    ENT_COEF: float = 0.001
     VF_COEF: float = 0.5
     gradient_clip: float | None = 1.0
-    ANNEAL_LR: bool = False
+    ANNEAL_LR: bool = True
 
     # Env settings
     env_params: EnvironmentConfig = field(
-        default_factory=lambda: EnvironmentConfig(env_name="dronegym", batch_size=512)
+        default_factory=lambda: EnvironmentConfig(env_name="dronegym", batch_size=1024)
     )
     dt: float = 1.0
-    normalize: bool = True
-    eps: float = 0
+    normalize: bool = False
+    eps: float = 1e-6
 
 
 class LSTM(nn.Module):
@@ -230,7 +232,7 @@ class ActorCriticRNN(nn.Module):
     config: PPOParams
     action_limits: jnp.ndarray = None
 
-    def dist(self, model_out, log_std_min=-5, log_std_max=None):
+    def dist(self, model_out, log_std_min=-1, log_std_max=None):
         """Split the output of the actor into mean and std.
 
         Applies squashing to the normal distribution
@@ -272,9 +274,9 @@ class ActorCriticRNN(nn.Module):
                     # https://spinningup.openai.com/en/latest/algorithms/sac.html#id1
                     log_std = jnp.tanh(log_std)
                     log_std = log_std_min + 0.5 * (log_std_max - log_std_min) * (log_std + 1)
-                else:
+                elif log_std_min is not None:
                     log_std = jnp.clip(log_std, min=log_std_min)
-                return distrax.Normal(mean, jnp.exp(log_std))
+                return distrax.Normal(mean, jax.nn.softplus(log_std))
 
     @nn.compact
     def __call__(self, hidden, x):
@@ -319,6 +321,7 @@ class Transition(NamedTuple):
     next_obs: jnp.ndarray
     hidden: jnp.ndarray
     info: jnp.ndarray
+    state: jnp.ndarray
 
 
 def make_train(config: PPOParams, logger: DummyLogger):
@@ -448,6 +451,7 @@ def make_train(config: PPOParams, logger: DummyLogger):
                     next_env_state.obs,
                     prev_hstate,
                     _env_state.info,
+                    _env_state.pipeline_state,
                 )
 
                 # Action fed to the Meta-Learner is one-hot encoded for discrete envs.
@@ -513,6 +517,7 @@ def make_train(config: PPOParams, logger: DummyLogger):
                     next_env_state.obs,
                     prev_hstate,
                     env_state.info,
+                    env_state.pipeline_state,
                 )
 
                 # Action fed to the Meta-Learner is one-hot encoded for discrete envs.
@@ -606,7 +611,7 @@ def make_train(config: PPOParams, logger: DummyLogger):
 
                         # CALCULATE ACTOR LOSS
                         ratio = jnp.exp(log_prob - _batch.log_prob)
-                        gae = (gae - gae.mean()) / (gae.std() + 1e-8)
+                        gae = (gae - gae.mean()) / (gae.std() + 1e-6)
                         loss_actor1 = ratio * gae
                         loss_actor2 = (
                             jnp.clip(
@@ -692,10 +697,16 @@ def make_train(config: PPOParams, logger: DummyLogger):
             data = {
                 "time": np.arange(trajectories[0].shape[0]),
                 "action": trajectories.action,
+                "reward": trajectories.reward,
+                "done": trajectories.done,
                 **trajectories.info,
+                **trajectories.state,
             }
             np.savez("data/ppo_best_trajectory.npz", **data)
             env_params = getattr(env, "params")
+            if env_params:
+                with open("data/ppo_env_params.pkl", "wb") as f:
+                    pickle.dump(env_params, f)
         return logger["best_eval_reward"]
 
     return train
