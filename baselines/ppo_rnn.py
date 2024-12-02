@@ -42,7 +42,7 @@ class PPOParams(LoggableConfig):
     debug: int = 0
     seed: int = 0
     MODEL: str = "GRU"
-    NUM_UNITS: int = 64
+    NUM_UNITS: int = 128
     meta_rl: bool = True
     act_dist_name: str = "beta"
     log_norms: bool = True
@@ -55,12 +55,12 @@ class PPOParams(LoggableConfig):
     eval_batch_size: int = 10
     collect_horizon: int = 20
     rollout_horizon: int = 20
-    train_batch_size: int = 256
+    train_batch_size: int = 512
     update_steps: int = 10
     UPDATE_EPOCHS: int = 4
 
     # Optimization settings
-    LR: float = 1e-3
+    LR: float = 1e-4
     gamma: float = 0.99
     GAE_LAMBDA: float = 0.95
     CLIP_EPS: float = 0.2
@@ -716,7 +716,7 @@ def make_train(config: PPOParams, logger: DummyLogger):
             print("Interrupted by user, Finalizing...")
         if record_best_eval_episode:
             # Save last episode data for plotting.
-            os.makedirs("output", exist_ok=True)
+            os.makedirs("data", exist_ok=True)
             data = {
                 "time": np.arange(trajectories[0].shape[0]),
                 "action": trajectories.action,
