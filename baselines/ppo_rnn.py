@@ -8,11 +8,13 @@ from dataclasses import dataclass, field
 from typing import Dict, NamedTuple, Sequence
 
 import distrax
+from envs.plot_drones import plot_from_file
 import flashbax as fbx
 import flax.linen as nn
 import jax
 import jax.numpy as jnp
 import jax.random as jrandom
+from matplotlib import pyplot as plt
 import numpy as np
 import optax
 import simple_parsing
@@ -22,7 +24,7 @@ from flax.training.train_state import TrainState
 
 from jax_rl_util.envs.environments import EnvironmentConfig, make_env, print_env_info
 from jax_rl_util.envs.wrappers import VmapWrapper
-from jax_rl_util.util.logging_util import DummyLogger, LoggableConfig, log_norms, with_logger
+from jax_rl_util.util.logging_util import DummyLogger, LoggableConfig, fig_to_array, log_norms, with_logger
 
 warnings.simplefilter(action="ignore", category=FutureWarning)
 
@@ -688,11 +690,11 @@ def make_train(config: PPOParams, logger: DummyLogger):
                 if i % config.eval_every == 0:
                     eval_reward, _traj = eval_model(runner_state[0].params, runner_state[2])
 
-                    timestep = runner_state[0].step * config.collect_horizon * config.env_params.batch_size
+                    timestep = runner_state[0].step  # * config.collect_horizon * config.env_params.batch_size
                     loggables = {
                         **jax.tree.map(jnp.mean, loggables),
                         "eval/rewards": eval_reward,
-                        "global_steps": timestep,
+                        "runner_step": timestep,
                     }
                     if config.log_norms:
                         loggables.update(**log_norms(runner_state[0].params)[0])
@@ -740,7 +742,13 @@ def train_and_eval(config: PPOParams, logger=DummyLogger()):
     rng = jax.random.PRNGKey(config.seed)
     logger["best_eval_reward"] = -np.inf
     try:
-        return make_train(config, logger)(rng, record_best_eval_episode=True)
+        result = make_train(config, logger)(rng, record_best_eval_episode=True)
+
+        if config.env_params.env_name == "dronegym":
+            # CUSTOM Plotting
+            plot_from_file("data/ppo_best_trajectory.npz", "data/ppo_env_params.pkl", "best")
+            logger.log_img("best_trajectory", plt.gcf())
+        return result
     except Exception as e:
         raise e
     finally:

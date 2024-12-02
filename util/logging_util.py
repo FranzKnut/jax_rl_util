@@ -2,6 +2,7 @@
 
 import collections
 import contextlib
+from math import pi
 import os
 import traceback
 from argparse import Namespace
@@ -12,6 +13,7 @@ from typing import Callable
 import jax
 import jax.numpy as jnp
 import jax.tree_util as jtu
+from matplotlib import pyplot as plt
 import numpy as np
 import simple_parsing
 from jax.tree_util import tree_reduce
@@ -272,10 +274,15 @@ class AimLogger(DummyLogger):
     @override
     def log_img(self, name, img, step=None, caption="", pil_mode="RGB", format="png"):
         """Log an image to wandb."""
+        if isinstance(img, plt.Figure):
+            _img = fig_to_array(img)
+            pil_mode = "RGBA"
+        else:
+            _img = np.array(img, dtype=np.uint8)
         self.log(
             {
                 name: aim.Image(
-                    Image.fromarray(np.asarray(img, dtype=np.uint8), mode=pil_mode), caption=caption, format=format
+                    Image.fromarray(_img, mode=pil_mode), caption=caption, format=format
                 )
             },
             step=step,
@@ -493,3 +500,14 @@ def deep_replace(obj, /, **kwargs):
             k = prefix
         obj = replace(obj, **{k: v})
     return obj
+
+
+def fig_to_array(fig: plt.Figure):
+    """Convert matplotlib figure to numpy array."""
+    fig.canvas.draw()
+    return np.array(fig.canvas.renderer.buffer_rgba(), dtype=np.uint8)
+
+
+# .reshape(
+#         fig.canvas.get_width_height()[::-1] + (4,)
+#     )

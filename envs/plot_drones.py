@@ -229,6 +229,40 @@ def plot_drone_eval(ax, eval_output, gym_params: EnvParams):
     ax.legend()
 
 
+def plot_from_file(file="data/ppo_best_trajectory.npz", args_file="data/ppo_env_params.pkl", plot_which="best"):
+    """Plot the evaluation results from a file.
+
+    Args:
+    ----
+        file (str, optional): The file to load the evaluation results from. Defaults to "data/ppo_best_trajectory.npz".
+        args_file (str, optional): The file to load the gym parameters from. Defaults to "data/ppo_env_params.pkl".
+        plot_which (str, optional): Which episode to plot. Defaults to "best".
+
+    Returns:
+    -------
+        None
+    """
+    data = np.load(file)
+    if os.path.exists(args_file):
+        with open(args_file, "rb") as f:
+            params = pickle.load(f)
+    else:
+        params = EnvParams()
+
+    ep_ends = np.argmax(data["done"], axis=0)
+    ep_rewards = np.cumsum(data["reward"], axis=0)[ep_ends, jnp.arange(len(ep_ends))]
+    idx_selected = np.argmax(ep_rewards) if plot_which == "best" else np.argmin(ep_rewards)
+    _ep_end = ep_ends[idx_selected]
+    if _ep_end == 0:
+        _ep_end = -1
+    print("Best ep:", idx_selected, " (%f Reward)" % ep_rewards[idx_selected])
+    data_ego_pos = data["pos"][:_ep_end, idx_selected, 0, :]
+    data_ego_vel = data["vel"][:_ep_end, idx_selected, 0, :]
+    data_drones_pos = data["pos"][:_ep_end, idx_selected, 1:, :]
+    data_true_distance = data["reward"][:_ep_end, idx_selected]
+    plot_drones(params, data_ego_pos, data_ego_vel, data_drones_pos, data_true_distance)
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(prog="sim", description="simulate random drone movements and distance changes")
     parser.add_argument(
@@ -237,37 +271,5 @@ if __name__ == "__main__":
     parser.add_argument("--args_file", type=pathlib.Path, default="data/ppo_env_params.pkl", help="output file name")
     args = parser.parse_args()
 
-    data = np.load(args.file)
-    if os.path.exists(args.args_file):
-        with open(args.args_file, "rb") as f:
-            params = pickle.load(f)
-    else:
-        params = EnvParams()
-
-    ep_ends = np.argmax(data["done"], axis=0)
-    ep_rewards = np.cumsum(data["reward"], axis=0)[ep_ends, jnp.arange(len(ep_ends))]
-    idx_best_ep = np.argmax(ep_rewards)
-    _ep_end = ep_ends[idx_best_ep]
-    if _ep_end == 0:
-        _ep_end = -1
-
-    print("Best ep:", idx_best_ep, " (%f Reward)" % ep_rewards[idx_best_ep])
-    data_ego_pos = data["pos"][:_ep_end, idx_best_ep, 0, :]
-    data_ego_vel = data["vel"][:_ep_end, idx_best_ep, 0, :]
-    data_drones_pos = data["pos"][:_ep_end, idx_best_ep, 1:, :]
-    data_true_distance = data["reward"][:_ep_end, idx_best_ep]
-    plot_drones(params, data_ego_pos, data_ego_vel, data_drones_pos, data_true_distance)
-    plt.show()
-
-    idx_best_ep = np.argmin(ep_rewards)
-    _ep_end = ep_ends[idx_best_ep]
-    if _ep_end == 0:
-        _ep_end = -1
-
-    print("Worst ep:", idx_best_ep, " (%f Reward)" % ep_rewards[idx_best_ep])
-    data_ego_pos = data["pos"][:_ep_end, idx_best_ep, 0, :]
-    data_ego_vel = data["vel"][:_ep_end, idx_best_ep, 0, :]
-    data_drones_pos = data["pos"][:_ep_end, idx_best_ep, 1:, :]
-    data_true_distance = data["reward"][:_ep_end, idx_best_ep]
-    plot_drones(params, data_ego_pos, data_ego_vel, data_drones_pos, data_true_distance)
+    plot_from_file(args.file, args.args_file, "best")
     plt.show()
