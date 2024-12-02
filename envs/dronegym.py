@@ -45,8 +45,11 @@ class EnvParams:
     dims: int = 2
     ndrones: int = 1
     frequency: int = 15
+    max_steps: int = 1000
+    action_mode: int = 0  # 0 = vel, 1 = acc
 
     # velocity parameters for ego drone
+    action_scale: float = 1e-2
     initial_velocity_stddev: float = 0.1
     ego_change_velocity_stddev: float = 0.005
 
@@ -233,7 +236,12 @@ class DroneGym(GymnaxEnv):
         #         self.velocity[2] -= self.position[2] / lim_factor
 
         # controlled_movement_b
-        ego_vel += action
+        if params.action_mode == 0:
+            ego_vel += action * params.action_scale
+        elif params.action_mode == 1:
+            ego_vel = action * params.action_scale
+        else:
+            raise ValueError("Unknown action_mode")
         goto = ego_vel + jnp.where(step % 10 == 0, jrandom.normal(ego_key, [params.n_dim]) * params.goto_stddev, goto)
         ego_vel = ego_vel * 0.99 + (goto - ego_pos) * 0.0004
 
@@ -246,16 +254,27 @@ class DroneGym(GymnaxEnv):
 
         filtered_dist = filtered_dist * (1.0 - params.iir_filter) + noisy_distance * (params.iir_filter)
 
-        self._step += 1
+        is_out_of_time = step >= params.max_steps
 
         state = OrderedDict(
-            {"step": step + 1, "pos": pos, "vel": vel, "goto": goto, "filtered_dist": filtered_dist, "rng": next_key}
+            {
+                "step": step + 1,
+                "pos": pos,
+                "vel": vel,
+                "goto": goto,
+                "filtered_dist": filtered_dist,
+                "rng": next_key,
+            }
         )
 
         # Reward when target is reached
-        reward = 1 / jnp.max(jnp.array([1, true_distance.squeeze()]))
-        reward = jnp.where(jnp.any(jnp.abs(pos) > params.plot_range), -1, reward)
-        done = jnp.any(jnp.abs(pos) > params.plot_range) | (true_distance < 1).squeeze()
+        reward = 0.1 / jnp.max(jnp.array([1, true_distance.squeeze()]))
+        # reward = 0
+        is_outside = jnp.any(jnp.abs(pos) > params.plot_range)
+        is_at_target = (true_distance < 1).squeeze()
+        # reward = jnp.where(is_outside, -1, reward)
+        reward = jnp.where(is_at_target, params.max_steps - step, reward)
+        done = is_outside | is_at_target | is_out_of_time
 
         return (
             true_distance,

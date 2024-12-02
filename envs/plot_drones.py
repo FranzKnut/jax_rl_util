@@ -3,17 +3,17 @@
 import argparse
 import os
 import pathlib
-from dataclasses import fields
 import pickle
 
-from gymnax import EnvParams
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
 import numpy as np
 import plotly.graph_objects as go
+from gymnax import EnvParams
+from matplotlib.axes import Axes
 
 
-def plot_drone_pos(ax, data_ego, data_drones, plot_range=15):
+def plot_drone_pos(ax: Axes, data_ego, data_drones, plot_range=15):
     """Plot the position of the drone on the given axis.
 
     Arguments:
@@ -30,9 +30,11 @@ def plot_drone_pos(ax, data_ego, data_drones, plot_range=15):
     data_ego_x, data_ego_y = data_ego
     data_drones_x, data_drones_y = data_drones
     ax.plot(data_ego_x, data_ego_y, color="red")
-    ax.plot(data_ego_x[0], data_ego_y[0], "rx")
+    ax.plot(data_ego_x[-1], data_ego_y[-1], "rx")
+    circle = plt.Circle((data_drones_x[-1], data_drones_y[-1]), 0.5, color="blue", fill=None)
+    ax.add_artist(circle)
     ax.plot(data_drones_x, data_drones_y, color="blue")
-    ax.plot(data_drones_x[0], data_drones_y[0], "bx")
+    # ax.plot(data_drones_x[0], data_drones_y[0], "bx")
     ax.set_xlim([-plot_range, plot_range])
     ax.set_ylim([-plot_range, plot_range])
 
@@ -48,13 +50,8 @@ def plotly_drone_pos(fig, data_drones_pos, name):
     #     fig.add_trace(go.Scatter(x=data_ego_pos[..., 0], y=data_drones_pos[..., 2], mode='markers', name='Other Drones'), row=2, col=1)
 
 
-def plot_drones(args: EnvParams, data):
+def plot_drones(args: EnvParams, data_ego_pos, data_ego_vel, data_drones_pos, data_true_distance):
     """Plot the drone positions and distances."""
-    first_ep_end = np.argmax(data["done"][:, 0])
-    data_ego_pos = data["pos"][:first_ep_end, 0, 0, :]
-    data_ego_vel = data["vel"][:first_ep_end, 0, 0, :]
-    data_drones_pos = data["pos"][:first_ep_end, 0, 1:, :]
-    data_true_distance = data["reward"][:first_ep_end, 0]
     # data_noisy_distance = data["data_noisy_distance"]
     # data_filtered_distance = data["data_filtered_distance"]
 
@@ -246,5 +243,31 @@ if __name__ == "__main__":
             params = pickle.load(f)
     else:
         params = EnvParams()
-    plot_drones(params, data)
+
+    ep_ends = np.argmax(data["done"], axis=0)
+    ep_rewards = np.cumsum(data["reward"], axis=0)[ep_ends, jnp.arange(len(ep_ends))]
+    idx_best_ep = np.argmax(ep_rewards)
+    _ep_end = ep_ends[idx_best_ep]
+    if _ep_end == 0:
+        _ep_end = -1
+
+    print("Best ep:", idx_best_ep, " (%f Reward)" % ep_rewards[idx_best_ep])
+    data_ego_pos = data["pos"][:_ep_end, idx_best_ep, 0, :]
+    data_ego_vel = data["vel"][:_ep_end, idx_best_ep, 0, :]
+    data_drones_pos = data["pos"][:_ep_end, idx_best_ep, 1:, :]
+    data_true_distance = data["reward"][:_ep_end, idx_best_ep]
+    plot_drones(params, data_ego_pos, data_ego_vel, data_drones_pos, data_true_distance)
+    plt.show()
+
+    idx_best_ep = np.argmin(ep_rewards)
+    _ep_end = ep_ends[idx_best_ep]
+    if _ep_end == 0:
+        _ep_end = -1
+
+    print("Worst ep:", idx_best_ep, " (%f Reward)" % ep_rewards[idx_best_ep])
+    data_ego_pos = data["pos"][:_ep_end, idx_best_ep, 0, :]
+    data_ego_vel = data["vel"][:_ep_end, idx_best_ep, 0, :]
+    data_drones_pos = data["pos"][:_ep_end, idx_best_ep, 1:, :]
+    data_true_distance = data["reward"][:_ep_end, idx_best_ep]
+    plot_drones(params, data_ego_pos, data_ego_vel, data_drones_pos, data_true_distance)
     plt.show()

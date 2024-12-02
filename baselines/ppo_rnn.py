@@ -29,7 +29,7 @@ warnings.simplefilter(action="ignore", category=FutureWarning)
 # jax.config.update("jax_disable_jit", True)
 jax.config.update("jax_debug_nans", True)
 # jax.config.update("jax_enable_x64", True)
-os.environ["XLA_FLAGS"] = "--xla_gpu_triton_gemm_any=true"
+# os.environ["XLA_FLAGS"] = "--xla_gpu_triton_gemm_any=true"
 
 
 @dataclass
@@ -41,33 +41,33 @@ class PPOParams(LoggableConfig):
     logging: str = "aim"
     debug: int = 0
     seed: int = 0
-    MODEL: str = "CTRNN"
-    NUM_UNITS: int = 128
-    meta_rl: bool = False
-    act_dist_name: str = "normal"
-    log_norms: bool = False
+    MODEL: str = "GRU"
+    NUM_UNITS: int = 64
+    meta_rl: bool = True
+    act_dist_name: str = "beta"
+    log_norms: bool = True
 
     # Training Settings
     episodes: int = 100000
-    patience: int = 20
+    patience: int | None = None
     eval_every: int = 1
     eval_steps: int = 1000
     eval_batch_size: int = 10
     collect_horizon: int = 20
-    rollout_horizon: int = 10
+    rollout_horizon: int = 20
     train_batch_size: int = 256
-    update_steps: int = 20
-    UPDATE_EPOCHS: int = 10
+    update_steps: int = 10
+    UPDATE_EPOCHS: int = 4
 
     # Optimization settings
-    LR: float = 1e-4
+    LR: float = 1e-3
     gamma: float = 0.99
-    GAE_LAMBDA: float = 0.9
+    GAE_LAMBDA: float = 0.95
     CLIP_EPS: float = 0.2
-    ENT_COEF: float = 0.001
+    ENT_COEF: float = 1e-3
     VF_COEF: float = 0.5
-    gradient_clip: float | None = 1.0
-    ANNEAL_LR: bool = True
+    gradient_clip: float | None = None
+    ANNEAL_LR: bool = False
 
     # Env settings
     env_params: EnvironmentConfig = field(
@@ -93,17 +93,14 @@ class LSTM(nn.Module):
         ins, resets = x
         rnn_state = jax.tree.map(
             lambda new, old: jnp.where(resets[:, None], new, old),
-            self.initialize_carry(ins.shape[0], ins.shape[1]),
+            self.initialize_carry(self.make_rng(), ins.shape),
             rnn_state,
         )
         return nn.OptimizedLSTMCell(features)(rnn_state, ins)
 
-    @staticmethod
-    def initialize_carry(batch_dims, hidden_size):
+    def initialize_carry(self, rng, input_shape):
         """See flax dokumantation for more info."""
-        return nn.OptimizedLSTMCell(hidden_size, parent=None).initialize_carry(
-            jax.random.PRNGKey(0), (batch_dims, hidden_size)
-        )
+        return nn.OptimizedLSTMCell(self.config.NUM_UNITS, parent=None).initialize_carry(rng, input_shape)
 
 
 class CTRNN(nn.Module):
@@ -232,7 +229,7 @@ class ActorCriticRNN(nn.Module):
     config: PPOParams
     action_limits: jnp.ndarray = None
 
-    def dist(self, model_out, log_std_min=-1, log_std_max=None):
+    def dist(self, model_out, log_std_min=0.01, log_std_max=None):
         """Split the output of the actor into mean and std.
 
         Applies squashing to the normal distribution
@@ -244,39 +241,47 @@ class ActorCriticRNN(nn.Module):
             log_std_min : (float):
                     Minimum value of the log std
             log_std_max : (float), optional:
-                    Maximum value of the log std
+                    Deprecated, unused! Maximum value of the log std
 
         Returns:
         -------
             jnp.ndarray: Mean of the distribution
             jnp.ndarray: Std of the distribution
         """
+        if self.action_limits:
+            # If action limits are defined we sample from [0, 1] and transform the event.
+            act_range = jnp.array(self.action_limits[1]) - jnp.array(self.action_limits[0])
+            act_min = jnp.array(self.action_limits[0])
+            scaling_transform = distrax.ScalarAffine(act_min, act_range)
+
         if self.discrete:
             return distrax.Categorical(logits=model_out)
         else:
             if self.config.act_dist_name == "beta":
                 alpha = jax.nn.softplus(model_out[..., : model_out.shape[-1] // 2])
                 beta = jax.nn.softplus(model_out[..., model_out.shape[-1] // 2 :])
-                act_range = jnp.array(self.action_limits[1]) - jnp.array(self.action_limits[0])
-                return distrax.Transformed(
-                    distrax.Beta(alpha, beta), distrax.ScalarAffine(jnp.array(self.action_limits[0]), act_range)
-                )
+                return distrax.Transformed(distrax.Beta(alpha, beta), scaling_transform)
             elif self.config.act_dist_name == "brax":
                 from brax.training.distribution import NormalTanhDistribution
 
                 return NormalTanhDistribution(event_size=self.action_dim).create_dist(model_out)
             else:
                 mean = model_out[..., : model_out.shape[-1] // 2]
-                log_std = model_out[..., model_out.shape[-1] // 2 :]
+                std = model_out[..., model_out.shape[-1] // 2 :]
 
-                if log_std_max is not None:
-                    # Squashed Gaussian taken from SAC
-                    # https://spinningup.openai.com/en/latest/algorithms/sac.html#id1
-                    log_std = jnp.tanh(log_std)
-                    log_std = log_std_min + 0.5 * (log_std_max - log_std_min) * (log_std + 1)
-                elif log_std_min is not None:
-                    log_std = jnp.clip(log_std, min=log_std_min)
-                return distrax.Normal(mean, jax.nn.softplus(log_std))
+                # if log_std_max is not None:
+                #     # Squashed Gaussian taken from SAC
+                #     # https://spinningup.openai.com/en/latest/algorithms/sac.html#id1
+                #     std = jnp.tanh(std)
+                #     std = log_std_min + 0.5 * (log_std_max - log_std_min) * (std + 1)
+                # elif log_std_min is not None:
+                #     std = jnp.clip(std, min=log_std_min)
+                dist = distrax.Normal(mean, jax.nn.softplus(std) + log_std_min)
+                if not self.action_limits:
+                    return dist
+                else:
+                    tranforms = [distrax.Sigmoid(), scaling_transform]
+                    return distrax.Transformed(dist, distrax.Chain(tranforms))
 
     @nn.compact
     def __call__(self, hidden, x):
@@ -354,7 +359,7 @@ def make_train(config: PPOParams, logger: DummyLogger):
             linear_schedule = optax.linear_schedule(1.0, 0.0, config.episodes * config.update_steps)
             tx = optax.chain(
                 optax.clip_by_global_norm(config.gradient_clip) if config.gradient_clip else optax.identity(),
-                optax.adam(learning_rate=linear_schedule, eps=1e-5),
+                optax.adam(learning_rate=linear_schedule),
             )
         else:
             tx = optax.chain(
@@ -424,7 +429,9 @@ def make_train(config: PPOParams, logger: DummyLogger):
                 ac_in = (x, _env_state.done[None, :])
                 next_hstate, pi, value = network.apply(params, prev_hstate, ac_in)
                 action = pi.sample(seed=_rng)
-                log_prob = pi.log_prob(action * (1 - config.eps))
+                if env_info["act_clip"]:
+                    action = jnp.clip(action, *(1 - config.eps) * jnp.array(env_info["act_clip"]))
+                log_prob = pi.log_prob(action)
                 value, action, log_prob = (
                     value.squeeze(0),
                     action.squeeze(0),
@@ -490,7 +497,9 @@ def make_train(config: PPOParams, logger: DummyLogger):
                 ac_in = (x[None], env_state.done[None, :])
                 next_hstate, pi, value = network.apply(train_state.params, prev_hstate, ac_in)
                 action = pi.sample(seed=_rng)
-                log_prob = pi.log_prob(action * (1 - config.eps))
+                if env_info["act_clip"]:
+                    action = jnp.clip(action, *(1 - config.eps) * jnp.array(env_info["act_clip"]))
+                log_prob = pi.log_prob(action)
                 value, action, log_prob = (
                     value.squeeze(0),
                     action.squeeze(0),
@@ -595,7 +604,11 @@ def make_train(config: PPOParams, logger: DummyLogger):
                                 axis=-1,
                             )
                         _, pi, _value = network.apply(params, _init_hstate, (x, _batch.done))
-                        log_prob = pi.log_prob(_batch.action * (1 - config.eps))
+                        if env_info["act_clip"]:
+                            action = jnp.clip(_batch.action, *(1 - config.eps) * jnp.array(env_info["act_clip"]))
+                        else:
+                            action = _batch.action
+                        log_prob = pi.log_prob(action)
                         if not _discrete:
                             log_prob = log_prob.mean(axis=-1)
 
@@ -611,7 +624,7 @@ def make_train(config: PPOParams, logger: DummyLogger):
 
                         # CALCULATE ACTOR LOSS
                         ratio = jnp.exp(log_prob - _batch.log_prob)
-                        gae = (gae - gae.mean()) / (gae.std() + 1e-6)
+                        gae = (gae - gae.mean()) / (gae.std() + 1e-8)
                         loss_actor1 = ratio * gae
                         loss_actor2 = (
                             jnp.clip(
@@ -622,7 +635,11 @@ def make_train(config: PPOParams, logger: DummyLogger):
                             * gae
                         )
                         loss_actor = -jnp.minimum(loss_actor1, loss_actor2).mean()
-                        entropy = pi.entropy().mean()
+
+                        if config.act_dist_name == "normal":
+                            entropy = pi.distribution.entropy().mean()
+                        else:
+                            entropy = pi.entropy().mean()
 
                         total_loss = loss_actor + config.VF_COEF * value_loss - config.ENT_COEF * entropy
                         return total_loss, {"value_loss": value_loss, "loss_actor": loss_actor, "entropy": entropy}
@@ -633,10 +650,16 @@ def make_train(config: PPOParams, logger: DummyLogger):
                     return train_state, loss_info
 
                 rng, _rng = jax.random.split(rng)
-                minibatches = buffer.sample(buffer_state, _rng)
+                minibatch = buffer.sample(buffer_state, _rng)
+                experience = jax.tree_util.tree_map(lambda x: jnp.swapaxes(x, 0, 1), minibatch.experience)
+
+                # batch_indices = jrandom.choice(
+                #     _rng, config.env_params.batch_size, (config.train_batch_size,), replace=False
+                # )
+                # experience = jax.tree.map(lambda x: x[batch_indices], batch_major)
 
                 # Swap axes back to time major
-                experience = jax.tree_util.tree_map(lambda x: jnp.swapaxes(x, 0, 1), minibatches.experience)
+                # experience = jax.tree_util.tree_map(lambda x: jnp.swapaxes(x, 0, 1), experience)
 
                 train_state, loss_info = _update_minbatch(train_state, experience)
                 update_state = (train_state, rng)

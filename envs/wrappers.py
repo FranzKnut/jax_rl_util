@@ -19,7 +19,7 @@ from jax_rl_util.envs.env_util import make_obs_mask
 
 def is_discrete(env: gym.Env):
     """Check if env has discrete Action Space."""
-    return isinstance(env.action_space, gym.spaces.Discrete)
+    return isinstance(env.action_space, (gym.spaces.Discrete, gymnax.environments.spaces.Discrete))
 
 
 class Wrapper:
@@ -108,7 +108,7 @@ class GymnaxBraxWrapper(Wrapper):
         obs, gymnax_state, reward, done, _ = self.env.step_env(step_key, state.pipeline_state, action, self.params)
         # FIXME: Info dict cannot be passed outside since this function is jitted.
         # The state given by reset has to contain info with the same structure!
-        reward = jnp.array(reward, dtype=jnp.float32)
+        reward = jnp.array(reward, dtype=state.reward.dtype)
         if len(reward.shape) == 0:
             reward = jnp.expand_dims(reward, axis=0)
         return state.replace(pipeline_state=gymnax_state, obs=obs, reward=reward, done=done)
