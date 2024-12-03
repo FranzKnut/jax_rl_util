@@ -43,7 +43,7 @@ class PPOParams(LoggableConfig):
     logging: str = "aim"
     debug: int = 0
     seed: int = 0
-    MODEL: str = "CTRNN"
+    MODEL: str = "GRU"
     NUM_UNITS: int = 256
     meta_rl: bool = True
     act_dist_name: str = "beta"
@@ -55,25 +55,25 @@ class PPOParams(LoggableConfig):
     eval_every: int = 1
     eval_steps: int = 1000
     eval_batch_size: int = 10
-    collect_horizon: int = 20
-    rollout_horizon: int = 20
-    train_batch_size: int = 1024
+    collect_horizon: int = 1000
+    rollout_horizon: int = 100
+    train_batch_size: int = 64
     update_steps: int = 32
     updates_per_batch: int = 4
 
     # Optimization settings
-    LR: float = 1e-4
+    LR: float = 3e-4
     gamma: float = 0.99
     gae_lambda: float = 0.95
     clip_eps: float = 0.2
     ent_coef: float = 1e-4
     vf_coef: float = 0.5
-    gradient_clip: float | None = 1.0
+    gradient_clip: float | None = 0.5
     anneal_lr: bool = False
 
     # Env settings
     env_params: EnvironmentConfig = field(
-        default_factory=lambda: EnvironmentConfig(env_name="dronegym", batch_size=2048)
+        default_factory=lambda: EnvironmentConfig(env_name="dronegym", batch_size=1024)
     )
     dt: float = 1.0
     normalize_obs: bool = False
