@@ -50,8 +50,8 @@ class EnvParams:
 
     # velocity parameters for ego drone
     action_scale: float = 1e-2
-    initial_velocity_stddev: float = 0.1
-    ego_change_velocity_stddev: float = 0.005
+    # initial_velocity_stddev: float = 0.1
+    # ego_change_velocity_stddev: float = 0.005
 
     # velocity parameters for other drones
     velocity_stddev: float = 0
@@ -69,8 +69,14 @@ class EnvParams:
 
     n_drones: int = 1
     n_dim: int = 2
-    starting_post_ego: Tuple[float, float, float] = (0, 0, 0)
-    plot_range: int = 15
+    starting_pos_ego: Tuple[float, float, float] = (5.0, 0.0, 0.0)
+    starting_pos_goal: Tuple[float, float, float] = (0.0, 5.0, 0.0)
+    obstacle_pos: Tuple[float, float, float] = (0.0, 0.0, 0.0)
+    plot_range: int = 10
+
+    # Difficulties
+    obstacle: bool = True
+    obstacle_size: float = 2.0
 
 
 # class EnvState
@@ -111,7 +117,8 @@ class DroneGym(GymnaxEnv):
         self.params = params
 
         # initialize ego and other drones
-        self.starting_pos_ego = jnp.array(params.starting_post_ego)[: params.n_dim]
+        self.starting_pos_ego = jnp.array(params.starting_pos_ego)[: params.n_dim]
+        self.starting_pos_goal = jnp.array(params.starting_pos_goal)[: params.n_dim]
 
     def action_space(self, params: EnvParams):
         """Action space of the environment."""
@@ -141,7 +148,8 @@ class DroneGym(GymnaxEnv):
         initial_pos = jnp.concatenate(
             [
                 self.starting_pos_ego[None],
-                self.params.initial_pos_stddev * jrandom.normal(k_pos, [self.params.n_drones, self.params.n_dim]),
+                self.starting_pos_goal[None],
+                # self.params.initial_pos_stddev * jrandom.normal(k_pos, [self.params.n_drones, self.params.n_dim]),
             ],
             axis=0,
         )
@@ -187,13 +195,7 @@ class DroneGym(GymnaxEnv):
         else:
             assert False, "Invalid noise option!"
 
-    def step_env(
-        self,
-        key,
-        state,
-        action,
-        params: EnvParams,
-    ):
+    def step_env(self, key, state, action, params: EnvParams):
         """Perform a step in the environment.
 
         Arguments:
@@ -256,6 +258,22 @@ class DroneGym(GymnaxEnv):
 
         is_out_of_time = step >= params.max_steps
 
+        # Reward when target is reached
+        reward = 0.1 / jnp.max(jnp.array([1, true_distance.squeeze()])) ** 2
+        # reward = 0
+        is_outside = jnp.any(jnp.abs(pos) > params.plot_range)
+        is_at_target = (true_distance < 1).squeeze()
+        reward = jnp.where(is_at_target, 100, reward)
+        # If reached the target, rotate vector pointing to goal pos by 90 degrees
+        rotated_goal = jnp.array([-pos[1, 1], pos[1, 0]])
+        pos = pos.at[1].set(rotated_goal * is_at_target + pos[1] * (1 - is_at_target))
+
+        done = is_outside | is_out_of_time  # | is_at_target
+
+        if params.obstacle:
+            hit_obstacle = jnp.linalg.norm(pos[0]) <= params.obstacle_size
+            done |= hit_obstacle
+
         state = OrderedDict(
             {
                 "step": step + 1,
@@ -266,16 +284,6 @@ class DroneGym(GymnaxEnv):
                 "rng": next_key,
             }
         )
-
-        # Reward when target is reached
-        reward = 0.1 / jnp.max(jnp.array([1, true_distance.squeeze()]))
-        # reward = 0
-        is_outside = jnp.any(jnp.abs(pos) > params.plot_range)
-        is_at_target = (true_distance < 1).squeeze()
-        # reward = jnp.where(is_outside, -1, reward)
-        reward = jnp.where(is_at_target, params.max_steps - step, reward)
-        done = is_outside | is_at_target | is_out_of_time
-
         return (
             true_distance,
             state,
@@ -339,7 +347,9 @@ class DroneGym(GymnaxEnv):
         k1, k2 = jrandom.split(rng_key)
         initial_state = self.initial_state(k1)
         pos, vel = initial_state["pos"], initial_state["vel"]
-        return self._sample_observation(pos, vel, k2)[0], initial_state
+        obs, _ = self._sample_observation(pos, vel, k2)
+        # obs = jnp.append(pos[0], obs)
+        return obs, initial_state
 
 
 def run_dronegym(args, out_file: str = "data/dronegym_output.csv"):

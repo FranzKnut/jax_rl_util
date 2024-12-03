@@ -7,24 +7,24 @@ import warnings
 from dataclasses import dataclass, field
 from typing import Dict, NamedTuple, Sequence
 
-import distrax
-from envs.plot_drones import plot_from_file
 import flashbax as fbx
 import flax.linen as nn
 import jax
 import jax.numpy as jnp
 import jax.random as jrandom
-from matplotlib import pyplot as plt
 import numpy as np
 import optax
 import simple_parsing
+import tensorflow_probability.substrates.jax as tfp
 from brax.training.acme import running_statistics
+from envs.plot_drones import plot_from_file
 from flax.linen.initializers import constant, orthogonal
 from flax.training.train_state import TrainState
+from matplotlib import pyplot as plt
 
 from jax_rl_util.envs.environments import EnvironmentConfig, make_env, print_env_info
 from jax_rl_util.envs.wrappers import VmapWrapper
-from jax_rl_util.util.logging_util import DummyLogger, LoggableConfig, fig_to_array, log_norms, with_logger
+from jax_rl_util.util.logging_util import DummyLogger, LoggableConfig, log_norms, with_logger
 
 warnings.simplefilter(action="ignore", category=FutureWarning)
 
@@ -43,11 +43,11 @@ class PPOParams(LoggableConfig):
     logging: str = "aim"
     debug: int = 0
     seed: int = 0
-    MODEL: str = "GRU"
-    NUM_UNITS: int = 128
+    MODEL: str = "CTRNN"
+    NUM_UNITS: int = 256
     meta_rl: bool = True
     act_dist_name: str = "beta"
-    log_norms: bool = True
+    log_norms: bool = False
 
     # Training Settings
     episodes: int = 100000
@@ -57,27 +57,27 @@ class PPOParams(LoggableConfig):
     eval_batch_size: int = 10
     collect_horizon: int = 20
     rollout_horizon: int = 20
-    train_batch_size: int = 512
-    update_steps: int = 10
-    UPDATE_EPOCHS: int = 4
+    train_batch_size: int = 1024
+    update_steps: int = 32
+    updates_per_batch: int = 4
 
     # Optimization settings
     LR: float = 1e-4
     gamma: float = 0.99
-    GAE_LAMBDA: float = 0.95
-    CLIP_EPS: float = 0.2
-    ENT_COEF: float = 1e-3
-    VF_COEF: float = 0.5
-    gradient_clip: float | None = None
-    ANNEAL_LR: bool = False
+    gae_lambda: float = 0.95
+    clip_eps: float = 0.2
+    ent_coef: float = 1e-4
+    vf_coef: float = 0.5
+    gradient_clip: float | None = 1.0
+    anneal_lr: bool = False
 
     # Env settings
     env_params: EnvironmentConfig = field(
-        default_factory=lambda: EnvironmentConfig(env_name="dronegym", batch_size=1024)
+        default_factory=lambda: EnvironmentConfig(env_name="dronegym", batch_size=2048)
     )
     dt: float = 1.0
-    normalize: bool = False
-    eps: float = 1e-6
+    normalize_obs: bool = False
+    normalize_gae: bool = False
 
 
 class LSTM(nn.Module):
@@ -254,15 +254,15 @@ class ActorCriticRNN(nn.Module):
             # If action limits are defined we sample from [0, 1] and transform the event.
             act_range = jnp.array(self.action_limits[1]) - jnp.array(self.action_limits[0])
             act_min = jnp.array(self.action_limits[0])
-            scaling_transform = distrax.ScalarAffine(act_min, act_range)
+            scaling_transform = tfp.bijectors.Chain([tfp.bijectors.Shift(act_min), tfp.bijectors.Scale(act_range)])
 
         if self.discrete:
-            return distrax.Categorical(logits=model_out)
+            return tfp.distributions.Categorical(logits=model_out)
         else:
             if self.config.act_dist_name == "beta":
                 alpha = jax.nn.softplus(model_out[..., : model_out.shape[-1] // 2])
                 beta = jax.nn.softplus(model_out[..., model_out.shape[-1] // 2 :])
-                return distrax.Transformed(distrax.Beta(alpha, beta), scaling_transform)
+                return tfp.distributions.TransformedDistribution(tfp.distributions.Beta(alpha, beta), scaling_transform)
             elif self.config.act_dist_name == "brax":
                 from brax.training.distribution import NormalTanhDistribution
 
@@ -278,12 +278,12 @@ class ActorCriticRNN(nn.Module):
                 #     std = log_std_min + 0.5 * (log_std_max - log_std_min) * (std + 1)
                 # elif log_std_min is not None:
                 #     std = jnp.clip(std, min=log_std_min)
-                dist = distrax.Normal(mean, jax.nn.softplus(std) + log_std_min)
+                dist = tfp.distributions.Normal(mean, jax.nn.softplus(std) + log_std_min)
                 if not self.action_limits:
                     return dist
                 else:
-                    tranforms = [distrax.Sigmoid(), scaling_transform]
-                    return distrax.Transformed(dist, distrax.Chain(tranforms))
+                    tranforms = [scaling_transform, tfp.bijectors.Sigmoid()]
+                    return tfp.distributions.TransformedDistribution(dist, tfp.bijectors.Chain(tranforms))
 
     @nn.compact
     def __call__(self, hidden, x):
@@ -317,7 +317,7 @@ class Transition(NamedTuple):
     """A transition used in batch updates."""
 
     done: jnp.ndarray
-    next_done: jnp.ndarray
+    # next_done: jnp.ndarray
     action: jnp.ndarray
     prev_action: jnp.ndarray
     value: jnp.ndarray
@@ -325,7 +325,7 @@ class Transition(NamedTuple):
     prev_reward: jnp.ndarray
     log_prob: jnp.ndarray
     obs: jnp.ndarray
-    next_obs: jnp.ndarray
+    # next_obs: jnp.ndarray
     hidden: jnp.ndarray
     info: jnp.ndarray
     state: jnp.ndarray
@@ -338,6 +338,9 @@ def make_train(config: PPOParams, logger: DummyLogger):
     env, env_info, eval_env = make_env(config.env_params, make_eval=True)
     eval_env = VmapWrapper(eval_env, config.eval_batch_size)
     _discrete = env_info["discrete"]
+    action_clip = jnp.array(env_info["act_clip"])
+    # action_clip = jnp.nextafter(action_clip, action_clip.mean(axis=0))
+    action_clip = (1 - 1e-5) * action_clip
 
     print_env_info(env_info)
 
@@ -357,8 +360,8 @@ def make_train(config: PPOParams, logger: DummyLogger):
 
         network_params = network.init(_rng, init_hstate, init_x)
 
-        if config.ANNEAL_LR:
-            linear_schedule = optax.linear_schedule(1.0, 0.0, config.episodes * config.update_steps)
+        if config.anneal_lr:
+            linear_schedule = optax.linear_schedule(config.LR, 0.0, config.episodes * config.update_steps)
             tx = optax.chain(
                 optax.clip_by_global_norm(config.gradient_clip) if config.gradient_clip else optax.identity(),
                 optax.adam(learning_rate=linear_schedule),
@@ -382,7 +385,7 @@ def make_train(config: PPOParams, logger: DummyLogger):
         init_hstate = _rnn_model.initialize_carry(rng, obsv.shape)
 
         # Set up running statistics
-        if config.normalize:
+        if config.normalize_obs:
             normalizer_state = running_statistics.init_state(obsv[0])
             normalize = running_statistics.normalize
         else:
@@ -432,7 +435,7 @@ def make_train(config: PPOParams, logger: DummyLogger):
                 next_hstate, pi, value = network.apply(params, prev_hstate, ac_in)
                 action = pi.sample(seed=_rng)
                 if env_info["act_clip"]:
-                    action = jnp.clip(action, *(1 - config.eps) * jnp.array(env_info["act_clip"]))
+                    action = jnp.clip(action, *action_clip)
                 log_prob = pi.log_prob(action)
                 value, action, log_prob = (
                     value.squeeze(0),
@@ -449,7 +452,7 @@ def make_train(config: PPOParams, logger: DummyLogger):
 
                 transition = Transition(
                     _env_state.done,
-                    next_env_state.done,
+                    # next_env_state.done,
                     action,
                     last_act,
                     value,
@@ -457,7 +460,7 @@ def make_train(config: PPOParams, logger: DummyLogger):
                     _env_state.reward,
                     log_prob,
                     _env_state.obs,
-                    next_env_state.obs,
+                    # next_env_state.obs,
                     prev_hstate,
                     _env_state.info,
                     _env_state.pipeline_state,
@@ -500,7 +503,7 @@ def make_train(config: PPOParams, logger: DummyLogger):
                 next_hstate, pi, value = network.apply(train_state.params, prev_hstate, ac_in)
                 action = pi.sample(seed=_rng)
                 if env_info["act_clip"]:
-                    action = jnp.clip(action, *(1 - config.eps) * jnp.array(env_info["act_clip"]))
+                    action = jnp.clip(action, *action_clip)
                 log_prob = pi.log_prob(action)
                 value, action, log_prob = (
                     value.squeeze(0),
@@ -517,7 +520,7 @@ def make_train(config: PPOParams, logger: DummyLogger):
 
                 transition = Transition(
                     env_state.done,
-                    next_env_state.done,
+                    # next_env_state.done,
                     action,
                     last_act,
                     value,
@@ -525,7 +528,7 @@ def make_train(config: PPOParams, logger: DummyLogger):
                     env_state.reward,
                     log_prob.mean(axis=-1) if not _discrete else log_prob,
                     env_state.obs,
-                    next_env_state.obs,
+                    # next_env_state.obs,
                     prev_hstate,
                     env_state.info,
                     env_state.pipeline_state,
@@ -549,7 +552,7 @@ def make_train(config: PPOParams, logger: DummyLogger):
             train_state, env_state, _normalizer_state, last_act, hstate, rng = runner_state
 
             # UPDATE NORMALIZER
-            if config.normalize:
+            if config.normalize_obs:
                 _normalizer_state = running_statistics.update(_normalizer_state, traj_batch.obs)
 
             # Swap axes to make batch major
@@ -562,88 +565,98 @@ def make_train(config: PPOParams, logger: DummyLogger):
             def _update_epoch(update_state, unused):
                 (train_state, rng) = update_state
 
-                def _update_minbatch(train_state, _batch: Transition):
+                def _update_minbatch(train_state, batch: Transition):
                     def _loss_fn(params):
                         # CALCULATE ADVANTAGES
                         # Compute the last value
-                        x = normalize(_batch.next_obs[-1:], _normalizer_state)
-                        last_hidden = jax.tree.map(lambda a: a[-1], _batch.hidden)
-                        re_action = (
-                            jax.nn.one_hot(_batch.action[-1:], env.action_size) if _discrete else _batch.action[-1:]
-                        )
-
+                        # x = normalize(batch.obs[-1:], _normalizer_state)
+                        # last_hidden = jax.tree.map(lambda a: a[-1], batch.hidden)
+                        # if config.meta_rl:
+                        #     re_action = (
+                        #         jax.nn.one_hot(batch.prev_action[-1:], env.action_size)
+                        #         if _discrete
+                        #         else batch.prev_action[-1:]
+                        #     )
+                        #     x = jnp.concatenate([x, re_action, batch.prev_reward[-1:]], axis=-1)
+                        # ac_in = (x, batch.done[-1:])
+                        # _, _, _last_val = network.apply(train_state.params, last_hidden, ac_in)
+                        # _batch = jax.tree.map(lambda a: a[:-1], batch)
+                        _init_hstate = jax.tree.map(lambda a: a[0], batch.hidden)  # T=0, B, H
+                        # RERUN NETWORK
+                        x = normalize(batch.obs, _normalizer_state)
                         if config.meta_rl:
-                            x = jnp.concatenate([x, re_action, _batch.reward[-1:]], axis=-1)
-                        ac_in = (x, _batch.done[-1:])
-                        _, _, _last_val = network.apply(train_state.params, last_hidden, ac_in)
+                            x = jnp.concatenate(
+                                [x, batch.prev_action, batch.prev_reward.reshape((*x.shape[:2], 1))],
+                                axis=-1,
+                            )
+                        _, pi, _values = network.apply(params, _init_hstate, (x, batch.done))
 
-                        def _calculate_gae(_batch, values, last_val, last_done):
+                        if env_info["act_clip"]:
+                            action = jnp.clip(batch.action, *action_clip)
+                        else:
+                            action = batch.action
+                        log_prob = pi.log_prob(action)
+                        if not _discrete:
+                            log_prob = log_prob.mean(axis=-1)
+
+                        def _calculate_gae(transitions, values, last_val, last_done):
                             """Compute the generalized advantage estimates."""
 
-                            def _get_advantages(carry, _batch):
+                            def _get_advantages(carry, _batch: tuple[Transition, jax.Array]):
                                 gae, next_value, next_done = carry
-                                transition, _value = _batch
-                                done, value, reward = transition.done, _value, transition.reward.squeeze()
+                                _transition, _value = _batch
+                                done, value, reward = _transition.done, _value, _transition.reward.squeeze()
                                 delta = reward + config.gamma * next_value * (1 - next_done) - value
-                                gae = delta + config.gamma * config.GAE_LAMBDA * (1 - next_done) * gae
+                                gae = delta + config.gamma * config.gae_lambda * (1 - next_done) * gae
                                 return (gae, value, done), gae
 
                             _, advantages = jax.lax.scan(
                                 jax.vmap(_get_advantages),
                                 (jnp.zeros_like(last_val), last_val, last_done),
-                                (_batch, values),
+                                (transitions, values),
                                 reverse=True,
                                 unroll=config.rollout_horizon,
                             )
-                            return advantages, advantages + _batch.value
+                            return advantages, advantages + transitions.value
 
-                        _init_hstate = jax.tree.map(lambda a: a[0], _batch.hidden)  # T=0, B, H
-                        # RERUN NETWORK
-                        x = normalize(_batch.obs, _normalizer_state)
-                        if config.meta_rl:
-                            x = jnp.concatenate(
-                                [x, _batch.prev_action, _batch.prev_reward.reshape((*x.shape[:2], 1))],
-                                axis=-1,
-                            )
-                        _, pi, _value = network.apply(params, _init_hstate, (x, _batch.done))
-                        if env_info["act_clip"]:
-                            action = jnp.clip(_batch.action, *(1 - config.eps) * jnp.array(env_info["act_clip"]))
-                        else:
-                            action = _batch.action
-                        log_prob = pi.log_prob(action)
-                        if not _discrete:
-                            log_prob = log_prob.mean(axis=-1)
-
-                        gae, target_value = _calculate_gae(_batch, _value, _last_val.squeeze(0), _batch.next_done[-1])
+                        # Discard last timestep of batch since it is used for bootstrapping the value
+                        _batch = jax.tree.map(lambda a: a[:-1], batch)
+                        last_val = _values[-1]
+                        _values = _values[:-1]
+                        log_prob = log_prob[:-1]
+                        gae, target_value = _calculate_gae(_batch, _values, last_val, batch.done[-1])
 
                         # CALCULATE VALUE LOSS
-                        value_pred_clipped = _batch.value + (_value - _batch.value).clip(
-                            -config.CLIP_EPS, config.CLIP_EPS
+                        value_pred_clipped = _batch.value + (_values - _batch.value).clip(
+                            -config.clip_eps, config.clip_eps
                         )
-                        value_losses = jnp.square(target_value - _value)
+                        value_losses = jnp.square(target_value - _values)
                         value_losses_clipped = jnp.square(value_pred_clipped - target_value)
                         value_loss = 0.5 * jnp.maximum(value_losses, value_losses_clipped).mean()
+                        # value_loss = 0.5 * value_losses.mean()
 
                         # CALCULATE ACTOR LOSS
                         ratio = jnp.exp(log_prob - _batch.log_prob)
-                        gae = (gae - gae.mean()) / (gae.std() + 1e-8)
+                        if config.normalize_gae:
+                            gae = (gae - gae.mean()) / (gae.std() + 1e-6)
                         loss_actor1 = ratio * gae
                         loss_actor2 = (
                             jnp.clip(
                                 ratio,
-                                1.0 - config.CLIP_EPS,
-                                1.0 + config.CLIP_EPS,
+                                1.0 - config.clip_eps,
+                                1.0 + config.clip_eps,
                             )
                             * gae
                         )
                         loss_actor = -jnp.minimum(loss_actor1, loss_actor2).mean()
+                        total_loss = loss_actor + config.vf_coef * value_loss
 
                         if config.act_dist_name == "normal":
                             entropy = pi.distribution.entropy().mean()
                         else:
                             entropy = pi.entropy().mean()
-
-                        total_loss = loss_actor + config.VF_COEF * value_loss - config.ENT_COEF * entropy
+                        if config.ent_coef:
+                            total_loss -= config.ent_coef * entropy
                         return total_loss, {"value_loss": value_loss, "loss_actor": loss_actor, "entropy": entropy}
 
                     grad_fn = jax.value_and_grad(_loss_fn, has_aux=True)
@@ -668,7 +681,7 @@ def make_train(config: PPOParams, logger: DummyLogger):
                 return update_state, loss_info
 
             update_state = (train_state, rng)
-            update_state, loss_info = jax.lax.scan(_update_epoch, update_state, None, config.UPDATE_EPOCHS)
+            update_state, loss_info = jax.lax.scan(_update_epoch, update_state, None, config.updates_per_batch)
             runner_state = (update_state[0], env_state, _normalizer_state, last_act, hstate, update_state[-1])
             return runner_state, loss_info
 

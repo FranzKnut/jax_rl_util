@@ -4,39 +4,31 @@ import argparse
 import os
 import pathlib
 import pickle
+from typing import Iterable
 
-import jax.numpy as jnp
 import matplotlib.pyplot as plt
 import numpy as np
 import plotly.graph_objects as go
-from gymnax import EnvParams
 from matplotlib.axes import Axes
 
+from jax_rl_util.envs.dronegym import EnvParams
 
-def plot_drone_pos(ax: Axes, data_ego, data_drones, plot_range=15):
+
+def plot_drone_pos(ax: Axes, data_drone):
     """Plot the position of the drone on the given axis.
 
     Arguments:
     ---------
     ax (matplotlib.axes.Axes): The axis on which to plot the drone position.
-    data_ego (tuple): A tuple containing the x and y coordinates of the ego drone.
-    data_drones (tuple): A tuple containing the x and y coordinates of the other drones.
-    plot_range (float, optional): The range of the plot. Defaults to 15.
+    data_drone (tuple): An array containing the x and y coordinates of the drone.
 
     Returns:
     -------
     None
     """
-    data_ego_x, data_ego_y = data_ego
-    data_drones_x, data_drones_y = data_drones
-    ax.plot(data_ego_x, data_ego_y, color="red")
-    ax.plot(data_ego_x[-1], data_ego_y[-1], "rx")
-    circle = plt.Circle((data_drones_x[-1], data_drones_y[-1]), 0.5, color="blue", fill=None)
-    ax.add_artist(circle)
-    ax.plot(data_drones_x, data_drones_y, color="blue")
-    # ax.plot(data_drones_x[0], data_drones_y[0], "bx")
-    ax.set_xlim([-plot_range, plot_range])
-    ax.set_ylim([-plot_range, plot_range])
+    data_drones_x, data_drones_y = data_drone.T
+    ax.plot(data_drones_x, data_drones_y, color="red", linewidth=0.2)
+    ax.plot(data_drones_x[-1], data_drones_y[-1], "rx")
 
 
 def plotly_drone_pos(fig, data_drones_pos, name):
@@ -50,55 +42,89 @@ def plotly_drone_pos(fig, data_drones_pos, name):
     #     fig.add_trace(go.Scatter(x=data_ego_pos[..., 0], y=data_drones_pos[..., 2], mode='markers', name='Other Drones'), row=2, col=1)
 
 
-def plot_drones(args: EnvParams, data_ego_pos, data_ego_vel, data_drones_pos, data_true_distance):
+def plot_drones(args: EnvParams, data, plot_which="all", show_aux=False):
     """Plot the drone positions and distances."""
-    # data_noisy_distance = data["data_noisy_distance"]
-    # data_filtered_distance = data["data_filtered_distance"]
-
-    # We transpose so that dim 1 is the time axis and dim 2 is the drone index
-    # data_noisy_distance = data_noisy_distance.T
-    data_true_distance = data_true_distance.T
-    # data_filtered_distance = data_filtered_distance.T
-
     # Make subplots
-    _, axes = plt.subplots(2 if args.dims == 3 else 1, 2)
+    fig, axes = plt.subplots(2 if args.dims == 3 else 1, 2 if (args.dims == 3) or show_aux else 1)
 
-    # time axis
-    steps = data_ego_pos.shape[0]
-    data_time = jnp.linspace(0, (steps - 1) / args.frequency, num=steps)
+    if isinstance(axes, Iterable):
+        ax0 = axes[0] if args.dims == 2 else axes[0, 0]
+    else:
+        ax0 = axes
+    ax0.set_aspect("equal", adjustable="box")
 
-    ax0 = axes[0] if args.dims == 2 else axes[0, 0]
-    ax3 = axes[-1] if args.dims == 2 else axes[-1, -1]
+    ep_ends = np.where(np.any(data["done"], axis=0), np.argmax(data["done"], axis=0), -1)
+    ep_ends[ep_ends == 0] = -1
 
-    data_ego = (data_ego_pos[..., 0], data_ego_pos[..., 1])
-    data_drones = (data_drones_pos[..., 0], data_drones_pos[..., 1])
-    plot_drone_pos(ax0, data_ego, data_drones)
-    ax0.set_xlabel("X position [m]")
-    ax0.set_ylabel("Y position [m]")
+    ep_rewards = np.cumsum(data["reward"], axis=0)[ep_ends, np.arange(len(ep_ends))]
+    idx_best = np.argmax(ep_rewards)
+    print("Best ep:", idx_best, " (%f Reward)" % ep_rewards[idx_best])
+    data_goals_pos = data["pos"][:ep_ends[idx_best], idx_best, 1:, :]
+    
+
+    if plot_which == "all":
+        for idx, _ep_end in enumerate(ep_ends):
+            data_ego_pos = data["pos"][:_ep_end, idx, 0, :]
+            data_ego_vel = data["vel"][:_ep_end, idx, 0, :]
+            data_true_distance = np.linalg.norm(
+                data["pos"][:_ep_end, idx, :1] - data["pos"][:_ep_end, idx, 1:], axis=-1
+            )
+            plot_drone_pos(ax0, data_drone=data_ego_pos)
+    else:
+        idx_selected = np.argmax(ep_rewards) if plot_which == "best" else np.argmin(ep_rewards)
+        _ep_end = ep_ends[idx_selected]
+        if _ep_end == 0:
+            _ep_end = -1
+        print("Best ep:", idx_selected, " (%f Reward)" % ep_rewards[idx_selected])
+        data_ego_pos = data["pos"][:_ep_end, idx_selected, 0, :]
+        data_ego_vel = data["vel"][:_ep_end, idx_selected, 0, :]
+        data_goals_pos = data["pos"][:_ep_end, idx_selected, 1:, :]
+        data_true_distance = np.linalg.norm(
+            data["pos"][:_ep_end, idx_selected, :1] - data["pos"][:_ep_end, idx_selected, 1:], axis=-1
+        ).T
+
+        data_ego = (data_ego_pos[..., 0], data_ego_pos[..., 1])
+
+    for c in np.unique(data_goals_pos[:, 0], axis=0):
+        circle = plt.Circle(c, 1, color="blue", fill=None)
+        ax0.add_artist(circle)
+        # ax.plot(data_drones_x[0], data_drones_y[0], "bx")
+
+    if args.obstacle:
+        circle = plt.Circle((0, 0), args.obstacle_size, color="grey", fill="grey")
+        ax0.add_artist(circle)
 
     if args.dims == 3:
         ax1, ax2 = axes[0, 1], axes[1, 0]
-        plot_drone_pos(ax1, data_ego_pos[..., 2], data_drones_pos[..., 1])
+        plot_drone_pos(ax1, data_ego_pos[..., 2], data_goals_pos[..., 1], args.plot_range)
         ax1.set_xlabel("Z position [m]")
         ax1.set_ylabel("Y position [m]")
-        plot_drone_pos(ax2, data_ego_pos[..., 0], data_drones_pos[..., 2])
+        plot_drone_pos(ax2, data_ego_pos[..., 0], data_goals_pos[..., 2], args.plot_range)
         ax2.set_xlabel("X position [m]")
         ax2.set_ylabel("Z position [m]")
 
-    plot_distances(
-        args,
-        ax3,
-        data_time,
-        {
-            "Ground-truth distance": data_true_distance,
-            # "Noisy measurement": data_noisy_distance,
-            # "IIR-Filtered measurement": data_filtered_distance,
-        },
-        data_ego_vel,
-    )
+    if show_aux:
+        # time axis
+        steps = data["pos"].shape[0]
+        data_time = np.linspace(0, (steps - 1) / args.frequency, num=steps)
+        ax3 = axes[-1] if args.dims == 2 else axes[-1, -1]
 
-    os.makedirs("plots", exist_ok=True)
-    plt.savefig("plots/drone_sim.png")
+        plot_distances(
+            args,
+            ax3,
+            data_time,
+            {
+                "Ground-truth distance": data_true_distance,
+                # "Noisy measurement": data_noisy_distance,
+                # "IIR-Filtered measurement": data_filtered_distance,
+            },
+            data_ego_vel,
+        )
+
+    ax0.set_xlim([-args.plot_range, args.plot_range])
+    ax0.set_ylim([-args.plot_range, args.plot_range])
+
+    return fig
 
 
 def plot_distances(args: EnvParams, ax, data_time, data: dict, data_ego_vel=None):
@@ -125,7 +151,7 @@ def plot_distances(args: EnvParams, ax, data_time, data: dict, data_ego_vel=None
         ax.plot(data_time, data_ego_vel[:, 1], color="orange")
         if args.dims == 3:
             ax.plot(data_time, data_ego_vel[:, 2], color="yellow")
-    ax.set_ylim([0, 1.41 * args.plot_range])
+    ax.set_ylim([0, args.plot_range])
     ax.set_xlabel("time [s]")
     ax.set_ylabel("distance [m]")
 
@@ -148,19 +174,19 @@ def plotly_drone_eval(fig: go.Figure, eval_output, gym_params: EnvParams):
 
     # Concatenate metrics
     lines_data = {
-        "Ground-truth distance": jnp.concatenate([infos["data_true_distance"], infos_pred["data_true_distance"]]).T,
-        "Noisy measurement": jnp.concatenate([infos["data_noisy_distance"], infos_pred["data_noisy_distance"]]).T,
-        "IIR-Filtered measurement": jnp.concatenate(
+        "Ground-truth distance": np.concatenate([infos["data_true_distance"], infos_pred["data_true_distance"]]).T,
+        "Noisy measurement": np.concatenate([infos["data_noisy_distance"], infos_pred["data_noisy_distance"]]).T,
+        "IIR-Filtered measurement": np.concatenate(
             [infos["data_filtered_distance"], infos_pred["data_filtered_distance"]]
         ).T,
-        "RNN prediction": jnp.concatenate([infos["pred"][..., None, -1], infos_pred["pred"][..., -1]]).T,
+        "RNN prediction": np.concatenate([infos["pred"][..., None, -1], infos_pred["pred"][..., -1]]).T,
     }
 
     # Assuming number of steps is the same for all
     observe_steps = infos["data_true_distance"].shape[0]
     predict_steps = infos_pred["data_true_distance"].shape[0]
     total_steps = observe_steps + predict_steps
-    data_time = jnp.linspace(0, total_steps / gym_params.frequency, num=total_steps)
+    data_time = np.linspace(0, total_steps / gym_params.frequency, num=total_steps)
 
     for line_name, line_data in lines_data.items():
         for drone_idx in range(len(line_data)):
@@ -169,15 +195,15 @@ def plotly_drone_eval(fig: go.Figure, eval_output, gym_params: EnvParams):
             )
 
     fig.add_scatter(
-        x=data_time, y=jnp.concatenate([infos["mae"], infos_pred["mae"]]), mode="lines", name="Absolute error"
+        x=data_time, y=np.concatenate([infos["mae"], infos_pred["mae"]]), mode="lines", name="Absolute error"
     )
 
     fig.add_shape(
         type="line",
         x0=observe_steps / gym_params.frequency,
-        y0=jnp.min(lines_data["RNN prediction"]),
+        y0=np.min(lines_data["RNN prediction"]),
         x1=observe_steps / gym_params.frequency,
-        y1=jnp.max(lines_data["RNN prediction"]),
+        y1=np.max(lines_data["RNN prediction"]),
         line=dict(color="Black", width=2, dash="dash"),
     )
 
@@ -200,28 +226,28 @@ def plot_drone_eval(ax, eval_output, gym_params: EnvParams):
 
     # Concatenate metrics
     lines_data = {
-        "Ground-truth distance": jnp.concatenate([infos["data_true_distance"], infos_pred["data_true_distance"]]).T,
-        "Noisy measurement": jnp.concatenate([infos["data_noisy_distance"], infos_pred["data_noisy_distance"]]).T,
-        "IIR-Filtered measurement": jnp.concatenate(
+        "Ground-truth distance": np.concatenate([infos["data_true_distance"], infos_pred["data_true_distance"]]).T,
+        "Noisy measurement": np.concatenate([infos["data_noisy_distance"], infos_pred["data_noisy_distance"]]).T,
+        "IIR-Filtered measurement": np.concatenate(
             [infos["data_filtered_distance"], infos_pred["data_filtered_distance"]]
         ).T,
-        "RNN prediction": jnp.concatenate([infos["pred"], infos_pred["pred"][:, 0]]).T,
+        "RNN prediction": np.concatenate([infos["pred"], infos_pred["pred"][:, 0]]).T,
     }
 
     # Assuming number of steps is the same for all
     observe_steps = infos["data_true_distance"].shape[0]
     predict_steps = infos_pred["data_true_distance"].shape[0]
     total_steps = observe_steps + predict_steps
-    data_time = jnp.linspace(0, total_steps / gym_params.frequency, num=total_steps)
+    data_time = np.linspace(0, total_steps / gym_params.frequency, num=total_steps)
 
     plot_distances(gym_params, ax, data_time, lines_data)
     # MAE is not per-drone
-    ax.plot(data_time, jnp.concatenate([infos["mae"], infos_pred["mae"]]), label="Absolute error")
+    ax.plot(data_time, np.concatenate([infos["mae"], infos_pred["mae"]]), label="Absolute error")
     # Horizontal line at start of prediction
     ax.vlines(
         observe_steps / gym_params.frequency,
-        ymin=jnp.min(lines_data["Ground-truth distance"]),
-        ymax=jnp.max(lines_data["Ground-truth distance"]),
+        ymin=np.min(lines_data["Ground-truth distance"]),
+        ymax=np.max(lines_data["Ground-truth distance"]),
         color="k",
         linestyle="--",
     )
@@ -245,22 +271,14 @@ def plot_from_file(file="data/ppo_best_trajectory.npz", args_file="data/ppo_env_
     data = np.load(file)
     if os.path.exists(args_file):
         with open(args_file, "rb") as f:
-            params = pickle.load(f)
+            params: EnvParams = pickle.load(f)
     else:
         params = EnvParams()
 
-    ep_ends = np.argmax(data["done"], axis=0)
-    ep_rewards = np.cumsum(data["reward"], axis=0)[ep_ends, jnp.arange(len(ep_ends))]
-    idx_selected = np.argmax(ep_rewards) if plot_which == "best" else np.argmin(ep_rewards)
-    _ep_end = ep_ends[idx_selected]
-    if _ep_end == 0:
-        _ep_end = -1
-    print("Best ep:", idx_selected, " (%f Reward)" % ep_rewards[idx_selected])
-    data_ego_pos = data["pos"][:_ep_end, idx_selected, 0, :]
-    data_ego_vel = data["vel"][:_ep_end, idx_selected, 0, :]
-    data_drones_pos = data["pos"][:_ep_end, idx_selected, 1:, :]
-    data_true_distance = data["reward"][:_ep_end, idx_selected]
-    plot_drones(params, data_ego_pos, data_ego_vel, data_drones_pos, data_true_distance)
+    fig = plot_drones(params, data)
+
+    os.makedirs("plots", exist_ok=True)
+    plt.savefig("plots/drone_sim.png")
 
 
 if __name__ == "__main__":
