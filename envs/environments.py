@@ -26,9 +26,8 @@ import popjym
 from brax.envs.base import Env as BraxEnv  # noqa
 from jax import numpy as jnp
 
-from envs.dronegym import DroneGym
-
 from . import *  # noqa
+from .dronegym import DroneGym
 from .env_util import make_obs_mask
 from .wrappers import (
     EpisodeWrapper,
