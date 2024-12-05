@@ -55,8 +55,8 @@ class PPOParams(LoggableConfig):
     eval_every: int = 1
     eval_steps: int = 1000
     eval_batch_size: int = 10
-    collect_horizon: int = 1000
-    rollout_horizon: int = 100
+    collect_horizon: int = 100
+    rollout_horizon: int = 50
     train_batch_size: int = 64
     update_steps: int = 32
     updates_per_batch: int = 4

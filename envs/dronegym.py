@@ -70,13 +70,13 @@ class EnvParams:
     n_drones: int = 1
     n_dim: int = 2
     starting_pos_ego: Tuple[float, float, float] = (5.0, 0.0, 0.0)
-    starting_pos_goal: Tuple[float, float, float] = (0.0, 5.0, 0.0)
-    obstacle_pos: Tuple[float, float, float] = (0.0, 0.0, 0.0)
+    starting_pos_goal: Tuple[float, float, float] = (-5.0, 0.0, 0.0)
     plot_range: int = 10
 
     # Difficulties
     obstacle: bool = True
-    obstacle_size: float = 2.0
+    obstacle_pos: Tuple[float, float, float] = (0.0, 0.0, 0.0)
+    obstacle_size: float = 1.0
 
 
 # class EnvState
@@ -265,7 +265,7 @@ class DroneGym(GymnaxEnv):
         is_at_target = (true_distance < 1).squeeze()
         reward = jnp.where(is_at_target, 100, reward)
         # If reached the target, rotate vector pointing to goal pos by 90 degrees
-        rotated_goal = jnp.array([-pos[1, 1], pos[1, 0]])
+        rotated_goal = jnp.array([-pos[1, 0], pos[1, 1]])
         pos = pos.at[1].set(rotated_goal * is_at_target + pos[1] * (1 - is_at_target))
 
         done = is_outside | is_out_of_time  # | is_at_target
