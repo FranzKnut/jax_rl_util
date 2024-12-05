@@ -265,10 +265,10 @@ class DroneGym(GymnaxEnv):
         is_at_target = (true_distance < 1).squeeze()
         reward = jnp.where(is_at_target, 100, reward)
         # If reached the target, rotate vector pointing to goal pos by 90 degrees
-        rotated_goal = jnp.array([-pos[1, 0], pos[1, 1]])
-        pos = pos.at[1].set(rotated_goal * is_at_target + pos[1] * (1 - is_at_target))
+        # rotated_goal = jnp.array([-pos[1, 0], pos[1, 1]])
+        # pos = pos.at[1].set(rotated_goal * is_at_target + pos[1] * (1 - is_at_target))
 
-        done = is_outside | is_out_of_time  # | is_at_target
+        done = is_outside | is_out_of_time | is_at_target
 
         if params.obstacle:
             hit_obstacle = jnp.linalg.norm(pos[0]) <= params.obstacle_size

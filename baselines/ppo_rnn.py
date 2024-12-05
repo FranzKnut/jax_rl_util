@@ -77,7 +77,7 @@ class PPOParams(LoggableConfig):
     )
     dt: float = 1.0
     normalize_obs: bool = False
-    normalize_gae: bool = False
+    normalize_gae: bool = True
 
 
 class LSTM(nn.Module):
