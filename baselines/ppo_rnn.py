@@ -44,25 +44,25 @@ class PPOParams(LoggableConfig):
     debug: int = 0
     seed: int = 0
     MODEL: str = "GRU"
-    NUM_UNITS: int = 256
+    NUM_UNITS: int = 32
     meta_rl: bool = True
     act_dist_name: str = "beta"
     log_norms: bool = False
 
     # Training Settings
     episodes: int = 100000
-    patience: int | None = None
+    patience: int | None = 100
     eval_every: int = 1
     eval_steps: int = 1000
     eval_batch_size: int = 10
-    collect_horizon: int = 100
-    rollout_horizon: int = 50
+    collect_horizon: int = 20
+    rollout_horizon: int = 10
     train_batch_size: int = 64
     update_steps: int = 32
     updates_per_batch: int = 4
 
     # Optimization settings
-    LR: float = 3e-4
+    LR: float = 1e-4
     gamma: float = 0.99
     gae_lambda: float = 0.95
     clip_eps: float = 0.2
