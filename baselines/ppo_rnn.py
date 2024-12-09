@@ -44,9 +44,9 @@ class PPOParams(LoggableConfig):
     project_name: str | None = "PPO RNN"
     logging: str = "aim"
     debug: int = 0
-    seed: int = 0
-    MODEL: str = "GRU"
-    NUM_UNITS: int = 32
+    seed: int = -1
+    MODEL: str = "CTRNN"
+    NUM_UNITS: int = 16
     meta_rl: bool = True
     act_dist_name: str = "normal"
     log_norms: bool = False
@@ -59,23 +59,23 @@ class PPOParams(LoggableConfig):
     eval_batch_size: int = 10
     collect_horizon: int = 20
     rollout_horizon: int = 10
-    train_batch_size: int = 64
+    train_batch_size: int = 256
     update_steps: int = 32
     updates_per_batch: int = 4
 
     # Optimization settings
-    LR: float = 1e-3
+    LR: float = 1e-2
     gamma: float = 0.99
     gae_lambda: float = 0.95
     clip_eps: float = 0.2
-    ent_coef: float = 1e-2
+    ent_coef: float = 0e-3
     vf_coef: float = 0.5
-    gradient_clip: float | None = None
+    gradient_clip: float | None = 1.0
     anneal_lr: bool = False
 
     # Env settings
     env_params: EnvironmentConfig = field(
-        default_factory=lambda: EnvironmentConfig(env_name="dronegym", batch_size=1024)
+        default_factory=lambda: EnvironmentConfig(env_name="dronegym", batch_size=512)
     )
     dt: float = 1.0
     normalize_obs: bool = False
@@ -283,11 +283,11 @@ class ActorCriticRNN(nn.Module):
                 # elif log_std_min is not None:
                 #     std = jnp.clip(std, min=log_std_min)
                 dist = tfp.distributions.Normal(mean, jax.nn.softplus(std) + log_std_min)
-                # if not self.action_limits:
-                return dist
-                # else:
-                # tranforms = [scaling_transform, tfp.bijectors.Sigmoid()]
-                # return tfp.distributions.TransformedDistribution(dist, tfp.bijectors.Chain(tranforms))
+                if not self.action_limits:
+                    return dist
+                else:
+                    tranforms = [scaling_transform, tfp.bijectors.Sigmoid()]
+                    return tfp.distributions.TransformedDistribution(dist, tfp.bijectors.Chain(tranforms))
 
     @nn.compact
     def __call__(self, hidden, x):
@@ -450,22 +450,21 @@ def make_train(config: PPOParams, logger: DummyLogger):
                 # STEP ENV
                 rng, _rng = jax.random.split(rng)
                 next_env_state = eval_env.step(_env_state, action)
-                next_env_state = next_env_state.replace(obs=normalize(next_env_state.obs, _normalizer_state))
 
                 transition = Transition(
-                    done=env_state.done,
+                    done=_env_state.done,
                     next_done=next_env_state.done,
                     action=action,
                     prev_action=last_act,
                     value=value,
                     reward=next_env_state.reward,
-                    prev_reward=env_state.reward,
+                    prev_reward=_env_state.reward,
                     log_prob=log_prob.mean(axis=-1) if not _discrete else log_prob,
-                    obs=env_state.obs,
+                    obs=_env_state.obs,
                     # next_obs= # next_env_state.obs,
                     hidden=prev_hstate,
-                    info=env_state.info,
-                    state=env_state.pipeline_state,
+                    info=_env_state.info,
+                    state=_env_state.pipeline_state,
                 )
 
                 # Action fed to the Meta-Learner is one-hot encoded for discrete envs.
@@ -482,7 +481,9 @@ def make_train(config: PPOParams, logger: DummyLogger):
             runner_state, traj_batch = jax.lax.scan(_env_step, runner_state, None, config.eval_steps)
 
             # For episodes that are done early, get the first occurence of done
-            ep_until = jnp.where(traj_batch.next_done.any(axis=0), traj_batch.next_done.argmax(axis=0), -1)
+            ep_until = jnp.where(
+                traj_batch.done.any(axis=0), traj_batch.done.argmax(axis=0), traj_batch.done.shape[0]
+            )
             # Compute cumsum and get value corresponding to end of episode per batch.
             ep_rewards = traj_batch.reward.cumsum(axis=0)[ep_until, jnp.arange(ep_until.shape[-1])]
             return ep_rewards.mean(), traj_batch
@@ -643,7 +644,10 @@ def make_train(config: PPOParams, logger: DummyLogger):
                         loss_actor = -jnp.minimum(loss_actor1, loss_actor2).mean()
                         total_loss = loss_actor + config.vf_coef * value_loss
 
-                        entropy = pi.entropy().mean()
+                        if config.act_dist_name == "normal":
+                            entropy = pi.distribution.entropy().mean()
+                        else:
+                            entropy = pi.entropy().mean()
                         if config.ent_coef:
                             total_loss -= config.ent_coef * entropy
                         return total_loss, {"value_loss": value_loss, "loss_actor": loss_actor, "entropy": entropy}

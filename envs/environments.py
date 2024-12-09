@@ -31,7 +31,7 @@ from .dronegym import DroneGym
 from .env_util import make_obs_mask
 from .wrappers import (
     EpisodeWrapper,
-    FlatObs_BraxWrapper,
+    FlatObsBraxWrapper,
     GymBraxWrapper,
     GymnaxBraxWrapper,
     POBraxWrapper,
@@ -176,7 +176,7 @@ def make_env(
 
     # Wrap with the brax wrappers
     env = EpisodeWrapper(env, params.max_ep_length, action_repeat=1)
-    env = FlatObs_BraxWrapper(env)
+    env = FlatObsBraxWrapper(env)
     if obs_mask is not None:
         env = POBraxWrapper(env, obs_mask)
     env = RandomizedAutoResetWrapper(env)
@@ -201,7 +201,7 @@ def make_env(
                 eval_env = GymBraxWrapper(eval_env, params.env_kwargs)
 
         eval_env = EpisodeWrapper(eval_env, params.max_ep_length, action_repeat=1)
-        eval_env = FlatObs_BraxWrapper(eval_env)
+        eval_env = FlatObsBraxWrapper(eval_env)
         if obs_mask is not None:
             eval_env = POBraxWrapper(eval_env, obs_mask)
         eval_env = RandomizedAutoResetWrapper(eval_env)

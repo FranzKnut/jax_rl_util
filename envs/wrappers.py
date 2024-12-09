@@ -305,6 +305,7 @@ class RandomizedAutoResetWrapper(Wrapper):
         state = state.replace(done=jnp.zeros_like(state.done, dtype=state.done.dtype))
         state = self.env.step(state, action)
         done = state.done
+        reward = state.reward
         rng, _rng = jrandom.split(state.info["rng"])
 
         def _reset():
@@ -313,7 +314,7 @@ class RandomizedAutoResetWrapper(Wrapper):
             return reset_state
 
         state = jax.lax.cond(state.done, _reset, lambda: state)
-        return state.replace(done=done)
+        return state.replace(done=done, reward=reward)
 
 
 # class RandomizedAutoResetWrapperNaive(Wrapper):
@@ -377,7 +378,7 @@ class FlatPOWrapper(Wrapper):
         return (len(self.obs_mask),)
 
 
-class FlatObs_BraxWrapper(Wrapper):
+class FlatObsBraxWrapper(Wrapper):
     """Flattens Observations."""
 
     def reset(self, rng: jnp.ndarray) -> State:

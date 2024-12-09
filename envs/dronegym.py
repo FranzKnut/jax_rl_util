@@ -3,14 +3,12 @@
 
 import argparse
 import csv
-from functools import partial
 import pathlib
 from collections import OrderedDict
 from typing import Tuple
 
 import gymnax
 import gymnax.environments.spaces
-import jax
 import jax.numpy as jnp
 import jax.random as jrandom
 from flax import struct
@@ -44,19 +42,17 @@ class EnvParams:
         steps (int): Number of steps in the environment.
     """
 
-    dims: int = 2
-    ndrones: int = 1
-    frequency: int = 15
+    frequency: int = 30
     max_steps: int = 1000
-    action_mode: int = 0  # 0 = vel, 1 = acc
+    action_mode: int = 1  # 0 = acc, 1 = vel
 
     # velocity parameters for ego drone
-    action_scale: float = 1e-2
+    action_scale: float = 10
+
     # initial_velocity_stddev: float = 0.1
     ego_change_velocity_stddev: float = 0.005
 
     # velocity parameters for other drones
-    velocity_stddev: float = 0
     change_velocity_stddev: float = 0
 
     # distance measurement noise
@@ -64,7 +60,8 @@ class EnvParams:
     noise_color: int = 0
 
     # initial position distribution for other drones
-    initial_pos_stddev: float = 0.1
+    initial_pos_stddev: float = 2.5
+    initial_vel_stddev: float = 0.5
     iir_filter: float = 0.2
     noise_iir_value: float = 0
     goto_stddev: float = 25.0
@@ -79,7 +76,7 @@ class EnvParams:
     include_pos_in_obs: bool = True
     obstacle: bool = True
     obstacle_pos: Tuple[float, float, float] = (0.0, 0.0, 0.0)
-    obstacle_size: float = 1.0
+    obstacle_size: float = 0.5
 
 
 # class EnvState
@@ -118,7 +115,7 @@ class DroneGym(GymnaxEnv):
         self._step = 0
         assert params.n_dim in [2, 3], "Only 2D and 3D is supported"
         self.params = params
-        self.dt = 1
+        self.dt = 1 / params.frequency
         # initialize ego and other drones
         self.starting_pos_ego = jnp.array(params.starting_pos_ego)[: params.n_dim]
         self.starting_pos_goal = jnp.array(params.starting_pos_goal)[: params.n_dim]
@@ -158,13 +155,20 @@ class DroneGym(GymnaxEnv):
             ],
             axis=0,
         )
+        initial_vel = jnp.concatenate(
+            [
+                self.params.initial_vel_stddev * jrandom.normal(k_pos, [self.params.n_drones, self.params.n_dim]),
+                jnp.zeros_like(self.starting_pos_goal[None]),
+            ],
+            axis=0,
+        )
         difference = initial_pos[0] - initial_pos[1:]
         true_distance = jnp.linalg.norm(difference, axis=-1)
         return OrderedDict(
             {
                 "step": 0,
                 "pos": initial_pos,
-                "vel": jnp.zeros([self.params.n_drones + 1, self.params.n_dim]),
+                "vel": initial_vel,
                 "goto": jnp.zeros([self.params.n_drones, self.params.n_dim]),
                 "filtered_dist": true_distance,
                 "rng": k_step,
@@ -221,7 +225,6 @@ class DroneGym(GymnaxEnv):
         # perform ego and other drone movement for next step
         step, pos, vel, goto, filtered_dist, key = state.values()
         ego_key, obs_key, drone_key, next_key = jrandom.split(key, 4)
-        ego_pos = pos[0]
         ego_vel = vel[0]
 
         # Random movement for other drones
@@ -249,16 +252,15 @@ class DroneGym(GymnaxEnv):
             ego_vel = action * params.action_scale
         else:
             raise ValueError("Unknown action_mode")
-        goto = ego_vel + jnp.where(step % 10 == 0, jrandom.normal(ego_key, [params.n_dim]) * params.goto_stddev, goto)
-        ego_vel = ego_vel * 0.99 + (goto - ego_pos) * 0.0004
+        # goto = ego_vel + jnp.where(step % 10 == 0, jrandom.normal(ego_key, [params.n_dim]) * params.goto_stddev, goto)
+        # ego_vel = ego_vel * 0.99 + (goto - ego_pos) * 0.0004
 
         # Concatenate ego and drones velocities
-        vel = jnp.concatenate([ego_vel, drones_vel], axis=0)
-        pos += vel * self.dt / params.frequency
+        vel = jnp.concatenate([ego_vel[None], drones_vel], axis=0)
+        pos += vel * self.dt
 
         # Sample observation
         true_distance, noisy_distance = self._sample_observation(pos, vel, obs_key)
-
         filtered_dist = filtered_dist * (1.0 - params.iir_filter) + noisy_distance * (params.iir_filter)
 
         is_out_of_time = step >= params.max_steps
@@ -268,7 +270,7 @@ class DroneGym(GymnaxEnv):
         # reward = 0
         is_outside = jnp.any(jnp.abs(pos) > params.plot_range)
         is_at_target = (true_distance <= 1).squeeze()
-        reward = jnp.where(is_at_target, 100, reward)
+        reward = jnp.where(is_at_target, params.max_steps - step, reward)
         # If reached the target, rotate vector pointing to goal pos by 90 degrees
         # rotated_goal = jnp.array([-pos[1, 0], pos[1, 1]])
         # pos = pos.at[1].set(rotated_goal * is_at_target + pos[1] * (1 - is_at_target))
@@ -276,7 +278,8 @@ class DroneGym(GymnaxEnv):
         done = is_outside | is_out_of_time | (true_distance < 1).squeeze()
 
         if params.obstacle:
-            hit_obstacle = jnp.linalg.norm(pos[0]) <= params.obstacle_size
+            dist_to_obstacle = jnp.linalg.norm(pos[0] - jnp.array(params.obstacle_pos[: params.n_dim]))
+            hit_obstacle = dist_to_obstacle <= params.obstacle_size
             done |= hit_obstacle
 
         state = OrderedDict(
@@ -358,7 +361,8 @@ class DroneGym(GymnaxEnv):
         initial_state = self.initial_state(k1)
         pos, vel = initial_state["pos"], initial_state["vel"]
         obs, _ = self._sample_observation(pos, vel, k2)
-        obs = jnp.where(params.include_pos_in_obs, jnp.append(pos[0], obs), obs)
+        if self.params.include_pos_in_obs:
+            obs = jnp.append(pos[0], obs)
         return obs, initial_state
 
 
