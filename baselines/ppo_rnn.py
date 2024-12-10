@@ -48,7 +48,7 @@ class PPOParams(LoggableConfig):
     MODEL: str = "CTRNN"
     NUM_UNITS: int = 128
     meta_rl: bool = True
-    act_dist_name: str = "beta"
+    act_dist_name: str = "normal"
     log_norms: bool = True
 
     # Training Settings

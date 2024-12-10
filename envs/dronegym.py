@@ -77,6 +77,7 @@ class EnvParams:
     obstacle: bool = True
     obstacle_pos: Tuple[float, float, float] = (0.0, 0.0, 0.0)
     obstacle_size: float = 0.5
+    failed_penalty: float = -100
 
 
 # class EnvState
@@ -292,9 +293,9 @@ class DroneGym(GymnaxEnv):
             hit_obstacle = dist_to_obstacle <= params.obstacle_size
             done |= hit_obstacle
             failed |= hit_obstacle
-            
-        reward = jnp.where(failed, -10, reward)
-            
+
+        reward = jnp.where(failed, params.failed_penalty, reward)
+
         state = OrderedDict(
             {
                 "step": step + 1,
