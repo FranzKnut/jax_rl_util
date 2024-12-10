@@ -31,7 +31,7 @@ warnings.simplefilter(action="ignore", category=FutureWarning)
 DISABLE_JIT = False
 # jax.config.update("jax_disable_jit", True)
 jax.config.update("jax_debug_nans", True)
-jax.config.update("jax_enable_x64", True)
+# jax.config.update("jax_enable_x64", True)
 os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
 os.environ["XLA_FLAGS"] = "--xla_gpu_triton_gemm_any=true"
 
@@ -46,7 +46,7 @@ class PPOParams(LoggableConfig):
     debug: int = 0
     seed: int = -1
     MODEL: str = "CTRNN"
-    NUM_UNITS: int = 128
+    NUM_UNITS: int = 256
     meta_rl: bool = True
     act_dist_name: str = "normal"
     log_norms: bool = True
@@ -55,7 +55,7 @@ class PPOParams(LoggableConfig):
     episodes: int = 100000
     patience: int | None = 100
     eval_every: int = 1
-    eval_steps: int = 100
+    eval_steps: int = 1000
     eval_batch_size: int = 100
     collect_horizon: int = 20
     rollout_horizon: int = 10
@@ -64,13 +64,13 @@ class PPOParams(LoggableConfig):
     updates_per_batch: int = 4
 
     # Optimization settings
-    LR: float = 1e-3
+    LR: float = 1e-4
     gamma: float = 0.99
     gae_lambda: float = 0.95
     clip_eps: float = 0.2
-    ent_coef: float = 1e-2
+    ent_coef: float = 1e-4
     vf_coef: float = 0.5
-    gradient_clip: float | None = 1.0
+    gradient_clip: float | None = 0.5
     anneal_lr: bool = False
 
     # Env settings

@@ -43,7 +43,7 @@ class EnvParams:
     """
 
     frequency: int = 30
-    max_steps: int = 100
+    max_steps: int = 1000
     action_mode: int = 0  # 0 = acc, 1 = vel
 
     # velocity parameters for ego drone
@@ -77,7 +77,7 @@ class EnvParams:
     obstacle: bool = True
     obstacle_pos: Tuple[float, float, float] = (0.0, 0.0, 0.0)
     obstacle_size: float = 0.5
-    failed_penalty: float = -100
+    failed_penalty: float = -10
 
 
 # class EnvState
