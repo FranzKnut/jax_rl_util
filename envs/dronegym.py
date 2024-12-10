@@ -47,7 +47,7 @@ class EnvParams:
     action_mode: int = 0  # 0 = acc, 1 = vel
 
     # velocity parameters for ego drone
-    action_scale: float = 0.1
+    action_scale: float = 1
 
     # initial_velocity_stddev: float = 0.1
     ego_change_velocity_stddev: float = 0.005
