@@ -42,36 +42,25 @@ class EnvParams:
         steps (int): Number of steps in the environment.
     """
 
-    # frequency: int = 30
+    plot_range: int = 10
     max_steps: int = 1000
     action_mode: int = 0  # 0 = acc, 1 = vel
 
     # velocity parameters for ego drone
     action_scale: float = 1
 
-    # initial_velocity_stddev: float = 0.1
-    ego_change_velocity_stddev: float = 0.005
-
     # velocity parameters for other drones
     change_velocity_stddev: float = 0
 
     # distance measurement noise
-    noise_stddev: float = 0.1
-    noise_color: int = 0
+    noise_stddev: float = 0.2
 
     # initial position distribution for other drones
     initial_pos_stddev: float = 2.0
     initial_vel_stddev: float = 0.5
-    iir_filter: float = 0.2
-    noise_iir_value: float = 0
-    goto_stddev: float = 25.0
-
-    n_drones: int = 1
-    n_dim: int = 2
-    plot_range: int = 10
+    noise_iir_value: float = 0  # FIXME: Noises other than white noise need a state
 
     # Difficulties
-    include_pos_in_obs: bool = False
     obstacle: bool = True
     obstacle_size: float = 0.5
     failed_penalty: float = -100
@@ -105,7 +94,7 @@ class DroneGym(GymnaxEnv):
 
     def __init__(
         self,
-        include_pos_in_obs: bool = False,
+        include_pos_in_obs: bool = True,
         n_drones: int = 1,
         n_dim: int = 2,
         starting_pos_ego=(5.0, 0.0, 0.0),
@@ -130,13 +119,13 @@ class DroneGym(GymnaxEnv):
 
     def action_space(self, params: EnvParams):
         """Action space of the environment."""
-        lim = jnp.ones(params.n_dim)
-        return gymnax.environments.spaces.Box(-lim, lim, shape=(params.n_dim,))
+        lim = jnp.ones(self.n_dim)
+        return gymnax.environments.spaces.Box(-lim, lim, shape=(self.n_dim,))
 
     def observation_space(self, params: EnvParams):
         """Observation space of the environment."""
         return gymnax.environments.spaces.Box(
-            -params.plot_range, params.plot_range, shape=2 + (params.n_dim if params.include_pos_in_obs else 0)
+            -params.plot_range, params.plot_range, shape=2 + (self.n_dim if self.include_pos_in_obs else 0)
         )
 
     def state_space(self, params):
@@ -238,7 +227,7 @@ class DroneGym(GymnaxEnv):
         ego_vel = vel[0]
 
         # Random movement for other drones
-        drones_acc = jrandom.normal(drone_key, [params.n_drones, params.n_dim]) * params.change_velocity_stddev
+        drones_acc = jrandom.normal(drone_key, [self.n_drones, self.n_dim]) * params.change_velocity_stddev
         drones_vel = vel[1:] + drones_acc
 
         # controlled movement for ego drone
@@ -296,7 +285,7 @@ class DroneGym(GymnaxEnv):
         failed = is_outside
 
         if params.obstacle:
-            dist_to_obstacle = jnp.linalg.norm(pos[0] - jnp.array(self.obstacle_pos[: params.n_dim]))
+            dist_to_obstacle = jnp.linalg.norm(pos[0] - jnp.array(self.obstacle_pos[: self.n_dim]))
             hit_obstacle = dist_to_obstacle <= params.obstacle_size
             done |= hit_obstacle
             failed |= hit_obstacle
@@ -414,7 +403,8 @@ def run_dronegym(args, out_file: str = "data/dronegym_output.csv"):
     """
     rng_key = jrandom.PRNGKey(0)
     dronegym = DroneGym()
-    state = dronegym.initial_state(rng_key, EnvParams(args))
+    params = EnvParams(args)
+    state = dronegym.initial_state(rng_key, params)
 
     with open(out_file, "w", newline="") as csvfile:
         # Output file
@@ -434,8 +424,8 @@ def run_dronegym(args, out_file: str = "data/dronegym_output.csv"):
             if step % 1000 == 0:  # just to print some progress
                 print("step: {:3d}".format(step))
             rng_key, step_key = jrandom.split(rng_key)
-            action = jrandom.normal(step_key, [dronegym.params.n_dim]) * dronegym.params.change_velocity_stddev
-            action = jnp.zeros(dronegym.params.n_dim)
+            action = jrandom.normal(step_key, [dronegym.n_dim]) * params.change_velocity_stddev
+            action = jnp.zeros(dronegym.n_dim)
             obs, state, _, _, info = dronegym.step(step_key, state, action)
 
             data_drones_pos.append(info["data_drones_pos"])

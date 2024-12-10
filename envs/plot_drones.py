@@ -44,11 +44,12 @@ def plotly_drone_pos(fig, data_drones_pos, name):
 
 def plot_drones(args: EnvParams, data, plot_which="all", show_aux=False):
     """Plot the drone positions and distances."""
+    n_dim = data["pos"].shape[-1]
     # Make subplots
-    fig, axes = plt.subplots(2 if args.n_dim == 3 else 1, 2 if (args.n_dim == 3) or show_aux else 1)
+    fig, axes = plt.subplots(2 if n_dim == 3 else 1, 2 if (n_dim == 3) or show_aux else 1)
 
     if isinstance(axes, Iterable):
-        ax0 = axes[0] if args.n_dim == 2 else axes[0, 0]
+        ax0 = axes[0] if n_dim == 2 else axes[0, 0]
     else:
         ax0 = axes
     ax0.set_aspect("equal", adjustable="box")
@@ -93,7 +94,7 @@ def plot_drones(args: EnvParams, data, plot_which="all", show_aux=False):
         circle = plt.Circle((0, 0), args.obstacle_size, color="grey", fill="grey")
         ax0.add_artist(circle)
 
-    if args.n_dim == 3:
+    if n_dim == 3:
         ax1, ax2 = axes[0, 1], axes[1, 0]
         plot_drone_pos(ax1, data_ego_pos[..., 2], data_goals_pos[..., 1], args.plot_range)
         ax1.set_xlabel("Z position [m]")
@@ -106,7 +107,7 @@ def plot_drones(args: EnvParams, data, plot_which="all", show_aux=False):
         # time axis
         steps = data["pos"].shape[0]
         data_time = np.linspace(0, (steps - 1) / args.frequency, num=steps)
-        ax3 = axes[-1] if args.n_dim == 2 else axes[-1, -1]
+        ax3 = axes[-1] if n_dim == 2 else axes[-1, -1]
 
         plot_distances(
             args,
@@ -142,13 +143,13 @@ def plot_distances(args: EnvParams, ax, data_time, data: dict, data_ego_vel=None
         None
     """
     for name, distance in data.items():
-        for i in range(args.n_drones):
+        for i in range(distance.shape[-2]):
             ax.plot(data_time, distance[i], label=name + " drone {:d}".format(i))
 
     if data_ego_vel is not None:
         ax.plot(data_time, data_ego_vel[:, 0], color="green")
         ax.plot(data_time, data_ego_vel[:, 1], color="orange")
-        if args.n_dim == 3:
+        if data_ego_vel.shape[-1] == 3:
             ax.plot(data_time, data_ego_vel[:, 2], color="yellow")
     ax.set_ylim([0, args.plot_range])
     ax.set_xlabel("time [s]")
