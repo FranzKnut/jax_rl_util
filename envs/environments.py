@@ -28,6 +28,7 @@ from jax import numpy as jnp
 
 from . import *  # noqa
 from .dronegym import DroneGym
+from .dronegym import EnvParams as DroneGymParams
 from .env_util import make_obs_mask
 from .wrappers import (
     EpisodeWrapper,
@@ -190,7 +191,7 @@ def make_env(
             eval_env, _ = gymnax.make(env_name, **params.init_kwargs)
             eval_env = GymnaxBraxWrapper(eval_env, params.env_kwargs)
         elif "dronegym" in env_name.lower():
-            eval_env = DroneGym()
+            eval_env = DroneGym(DroneGymParams(**params.init_kwargs))
             eval_env = GymnaxBraxWrapper(eval_env, params.env_kwargs)
         elif env_name in popjym.registration.REGISTERED_ENVS:
             eval_env, _ = popjym.make(env_name)

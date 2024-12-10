@@ -42,7 +42,7 @@ class EnvParams:
         steps (int): Number of steps in the environment.
     """
 
-    frequency: int = 30
+    # frequency: int = 30
     max_steps: int = 1000
     action_mode: int = 0  # 0 = acc, 1 = vel
 
@@ -68,14 +68,11 @@ class EnvParams:
 
     n_drones: int = 1
     n_dim: int = 2
-    starting_pos_ego: Tuple[float, float, float] = (5.0, 0.0, 0.0)
-    starting_pos_goal: Tuple[float, float, float] = (-5.0, 0.0, 0.0)
     plot_range: int = 10
 
     # Difficulties
     include_pos_in_obs: bool = False
     obstacle: bool = True
-    obstacle_pos: Tuple[float, float, float] = (0.0, 0.0, 0.0)
     obstacle_size: float = 0.5
     failed_penalty: float = -100
     solved_reward: float = 100
@@ -106,22 +103,30 @@ class DroneGym(GymnaxEnv):
         """Default params."""
         return EnvParams()
 
-    def __init__(self, params: EnvParams = EnvParams()):
-        """Initialize the DroneGym object.
-
-        Arguments:
-        ---------
-        params: A `DroneGymParams` object containing the parameters for the environment.
-        """
+    def __init__(
+        self,
+        include_pos_in_obs: bool = False,
+        n_drones: int = 1,
+        n_dim: int = 2,
+        starting_pos_ego=(5.0, 0.0, 0.0),
+        starting_pos_goal=(-5.0, 0.0, 0.0),
+        obstacle_pos=(0.0, 0.0, 0.0),
+        fps=30,
+        noise_color=0,
+    ):
+        """Initialize the DroneGym object."""
         # initialize empty arrays
         self._step = 0
-        assert params.n_dim in [2, 3], "Only 2D and 3D is supported"
-        self.params = params
-        self.dt = 1 / params.frequency
+        assert n_dim in [2, 3], "Only 2D and 3D is supported"
+        self.n_drones = n_drones
+        self.n_dim = n_dim
+        self.include_pos_in_obs = include_pos_in_obs
+        self.noise_color = noise_color
+        self.dt = 1 / fps
         # initialize ego and other drones
-        self.starting_pos_ego = jnp.array(params.starting_pos_ego)[: params.n_dim]
-        self.starting_pos_goal = jnp.array(params.starting_pos_goal)[: params.n_dim]
-        self.obstacle_pos = jnp.array(params.obstacle_pos)[: params.n_dim]
+        self.starting_pos_ego = jnp.array(starting_pos_ego)[:n_dim]
+        self.starting_pos_goal = jnp.array(starting_pos_goal)[:n_dim]
+        self.obstacle_pos = jnp.array(obstacle_pos)[:n_dim]
 
     def action_space(self, params: EnvParams):
         """Action space of the environment."""
@@ -138,12 +143,13 @@ class DroneGym(GymnaxEnv):
         """State space of the environment."""
         raise NotImplementedError
 
-    def initial_state(self, rng_key):
+    def initial_state(self, rng_key, params: EnvParams):
         """Generate the initial state of the environment.
 
         Arguments:
         ---------
         rng_key: The random number generator key.
+        params: EnvParams object.
 
         Returns:
         -------
@@ -152,15 +158,14 @@ class DroneGym(GymnaxEnv):
         k_pos, k_step = jrandom.split(rng_key)
         initial_pos = jnp.concatenate(
             [
-                self.starting_pos_ego[None]
-                + self.params.initial_pos_stddev * jrandom.normal(k_pos, [1, self.params.n_dim]),
+                self.starting_pos_ego[None] + params.initial_pos_stddev * jrandom.normal(k_pos, [1, self.n_dim]),
                 self.starting_pos_goal[None],
             ],
             axis=0,
         )
         initial_vel = jnp.concatenate(
             [
-                self.params.initial_vel_stddev * jrandom.normal(k_pos, [self.params.n_drones, self.params.n_dim]),
+                params.initial_vel_stddev * jrandom.normal(k_pos, [self.n_drones, self.n_dim]),
                 jnp.zeros_like(self.starting_pos_goal[None]),
             ],
             axis=0,
@@ -172,39 +177,40 @@ class DroneGym(GymnaxEnv):
                 "step": 0,
                 "pos": initial_pos,
                 "vel": initial_vel,
-                "goto": jnp.zeros([self.params.n_drones, self.params.n_dim]),
+                "goto": jnp.zeros([self.n_drones, self.n_dim]),
                 "reached_goal": False,
                 "filtered_dist": true_distance,
                 "rng": k_step,
             }
         )
 
-    def apply_noise(self, distance, rng_key):
+    def apply_noise(self, distance, rng_key, params: EnvParams):
         """Apply noise to the given distance.
 
         Arguments:
         ---------
         distance: The distance to which noise is applied.
         rng_key: The random number generator key.
+        params: EnvParams object
 
         Returns:
         -------
         The distance with noise applied.
         """
-        if self.params.noise_color == 0:  # use white noise
-            return distance + self.params.noise_stddev * jrandom.normal(rng_key)
-        elif self.params.noise_color == 2:  # use pink noise A
+        if self.noise_color == 0:  # use white noise
+            return distance + params.noise_stddev * jrandom.normal(rng_key)
+        elif self.noise_color == 2:  # use pink noise A
             k1, k2 = jrandom.split(rng_key)
-            rand_value = self.params.noise_stddev * jrandom.normal(k1)
-            self.params.noise_iir_value = 0.99 * self.params.noise_iir_value + 0.01 * rand_value
-            rand_value = self.params.noise_stddev * jrandom.normal(k2)
-            return distance + (self.params.noise_iir_value + rand_value / 100) * 12  # add distance noise
-        elif self.params.noise_color == 3:  # use pink noise B
+            rand_value = params.noise_stddev * jrandom.normal(k1)
+            params.noise_iir_value = 0.99 * params.noise_iir_value + 0.01 * rand_value
+            rand_value = params.noise_stddev * jrandom.normal(k2)
+            return distance + (params.noise_iir_value + rand_value / 100) * 12  # add distance noise
+        elif self.noise_color == 3:  # use pink noise B
             k1, k2 = jrandom.split(rng_key)
-            rand_value = self.params.noise_stddev * jrandom.normal(k1)
-            self.params.noise_iir_value = 0.995 * self.params.noise_iir_value + 0.005 * rand_value
-            rand_value = self.params.noise_stddev * jrandom.normal(k2)
-            return distance + (self.params.noise_iir_value + rand_value / 30) * 19.7  # add distance noise
+            rand_value = params.noise_stddev * jrandom.normal(k1)
+            params.noise_iir_value = 0.995 * params.noise_iir_value + 0.005 * rand_value
+            rand_value = params.noise_stddev * jrandom.normal(k2)
+            return distance + (params.noise_iir_value + rand_value / 30) * 19.7  # add distance noise
         else:
             assert False, "Invalid noise option!"
 
@@ -264,7 +270,7 @@ class DroneGym(GymnaxEnv):
         pos += vel * self.dt
 
         # Sample observation
-        obs, dists = self._sample_observation(pos, vel, obs_key)
+        obs, dists = self._sample_observation(pos, vel, obs_key, params)
         (
             goal_distance,
             noisy_goal_dist,
@@ -290,7 +296,7 @@ class DroneGym(GymnaxEnv):
         failed = is_outside
 
         if params.obstacle:
-            dist_to_obstacle = jnp.linalg.norm(pos[0] - jnp.array(params.obstacle_pos[: params.n_dim]))
+            dist_to_obstacle = jnp.linalg.norm(pos[0] - jnp.array(self.obstacle_pos[: params.n_dim]))
             hit_obstacle = dist_to_obstacle <= params.obstacle_size
             done |= hit_obstacle
             failed |= hit_obstacle
@@ -324,7 +330,7 @@ class DroneGym(GymnaxEnv):
             },
         )
 
-    def _sample_observation(self, pos, vel, rng_key):
+    def _sample_observation(self, pos, vel, rng_key, params: EnvParams):
         """Sample an observation from the environment.
 
         Arguments:
@@ -332,6 +338,7 @@ class DroneGym(GymnaxEnv):
         pos: The positions of the drones.
         vel: The velocities of the drones.
         rng_key: The random number generator key.
+        params: EnvParams.
 
         Returns:
         -------
@@ -339,13 +346,13 @@ class DroneGym(GymnaxEnv):
           true distance to drone 0, and other relevant information.
         """
         obstacle_distance = jnp.linalg.norm(pos[0] - self.obstacle_pos)
-        noisy_obstacle_dist = self.apply_noise(obstacle_distance, rng_key)
+        noisy_obstacle_dist = self.apply_noise(obstacle_distance, rng_key, params)
 
         goal_distance = jnp.linalg.norm(pos[0] - pos[1:], axis=-1)
-        noisy_goal_dist = self.apply_noise(goal_distance, rng_key)
+        noisy_goal_dist = self.apply_noise(goal_distance, rng_key, params)
 
         obs = jnp.concatenate(jnp.array([noisy_obstacle_dist[None], noisy_goal_dist]))
-        if self.params.include_pos_in_obs:
+        if self.include_pos_in_obs:
             obs = jnp.append(pos[0], obs)
 
         return (
@@ -381,9 +388,9 @@ class DroneGym(GymnaxEnv):
         - state: The initial state of the environment.
         """
         k1, k2 = jrandom.split(rng_key)
-        initial_state = self.initial_state(k1)
+        initial_state = self.initial_state(k1, params)
         pos, vel = initial_state["pos"], initial_state["vel"]
-        obs, _ = self._sample_observation(pos, vel, k2)
+        obs, _ = self._sample_observation(pos, vel, k2, params)
         return obs, initial_state
 
 
@@ -406,8 +413,8 @@ def run_dronegym(args, out_file: str = "data/dronegym_output.csv"):
         - data_filtered_distance: Array of filtered distances between ego drone and other drones.
     """
     rng_key = jrandom.PRNGKey(0)
-    dronegym = DroneGym(EnvParams(args))
-    state = dronegym.initial_state(rng_key)
+    dronegym = DroneGym()
+    state = dronegym.initial_state(rng_key, EnvParams(args))
 
     with open(out_file, "w", newline="") as csvfile:
         # Output file
