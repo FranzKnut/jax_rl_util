@@ -93,7 +93,7 @@ def collect_rollouts(config: RolloutConfig, save_rollouts: bool = True, verbose:
         return (_state, _hidden, _rng), (prev_state, action)
 
     # Make output directory
-    output_dir = os.path.join(config.output_dir, backend, config.env_config.env_name + "_with_pos")
+    output_dir = os.path.join(config.output_dir, backend, config.env_config.env_name)
     os.makedirs(output_dir, exist_ok=True)
     total_reward = 0
     total_num_eps = 0

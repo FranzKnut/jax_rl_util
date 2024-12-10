@@ -53,7 +53,7 @@ def plot_drones(args: EnvParams, data, plot_which="all", show_aux=False):
         ax0 = axes
     ax0.set_aspect("equal", adjustable="box")
 
-    ep_ends = np.where(np.any(data["done"], axis=0), np.argmax(data["done"], axis=0), -1)
+    ep_ends = np.where(np.any(data["done"], axis=0), np.argmax(data["done"], axis=0) + 1, -1)
 
     ep_rewards = np.cumsum(data["reward"], axis=0)[ep_ends, np.arange(len(ep_ends))]
     idx_best = np.argmax(ep_rewards)
@@ -253,13 +253,15 @@ def plot_drone_eval(ax, eval_output, gym_params: EnvParams):
     ax.legend()
 
 
-def plot_from_file(file="data/ppo_best_trajectory.npz", args_file="data/ppo_env_params.pkl", plot_which="best"):
+def plot_from_file(
+    file="data/dronegym/ppo_best_trajectory.npz", args_file="data/dronegym/ppo_env_params.pkl", plot_which="best"
+):
     """Plot the evaluation results from a file.
 
     Args:
     ----
-        file (str, optional): The file to load the evaluation results from. Defaults to "data/ppo_best_trajectory.npz".
-        args_file (str, optional): The file to load the gym parameters from. Defaults to "data/ppo_env_params.pkl".
+        file (str, optional): The file to load the evaluation results from. Defaults to "data/dronegym/ppo_best_trajectory.npz".
+        args_file (str, optional): The file to load the gym parameters from. Defaults to "data/dronegym/ppo_env_params.pkl".
         plot_which (str, optional): Which episode to plot. Defaults to "best".
 
     Returns:
@@ -273,6 +275,8 @@ def plot_from_file(file="data/ppo_best_trajectory.npz", args_file="data/ppo_env_
     else:
         params = EnvParams()
 
+    # Traces are saved with batch as leading dimension. Swap to make it time major.
+    data = {k: np.swapaxes(d, 0, 1) for k, d in data.items()}
     fig = plot_drones(params, data)
 
     os.makedirs("plots", exist_ok=True)
@@ -282,9 +286,11 @@ def plot_from_file(file="data/ppo_best_trajectory.npz", args_file="data/ppo_env_
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(prog="sim", description="simulate random drone movements and distance changes")
     parser.add_argument(
-        "-f", "--file", type=pathlib.Path, default="data/ppo_best_trajectory.npz", help="output file name"
+        "-f", "--file", type=pathlib.Path, default="data/dronegym/ppo_best_trajectory.npz", help="output file name"
     )
-    parser.add_argument("--args_file", type=pathlib.Path, default="data/ppo_env_params.pkl", help="output file name")
+    parser.add_argument(
+        "--args_file", type=pathlib.Path, default="data/dronegym/ppo_env_params.pkl", help="output file name"
+    )
     args = parser.parse_args()
 
     plot_from_file(args.file, args.args_file, "best")

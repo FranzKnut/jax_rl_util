@@ -31,7 +31,7 @@ warnings.simplefilter(action="ignore", category=FutureWarning)
 DISABLE_JIT = False
 # jax.config.update("jax_disable_jit", True)
 jax.config.update("jax_debug_nans", True)
-# jax.config.update("jax_enable_x64", True)
+jax.config.update("jax_enable_x64", True)
 os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
 os.environ["XLA_FLAGS"] = "--xla_gpu_triton_gemm_any=true"
 
@@ -46,29 +46,29 @@ class PPOParams(LoggableConfig):
     debug: int = 0
     seed: int = -1
     MODEL: str = "CTRNN"
-    NUM_UNITS: int = 16
+    NUM_UNITS: int = 128
     meta_rl: bool = True
-    act_dist_name: str = "normal"
-    log_norms: bool = False
+    act_dist_name: str = "beta"
+    log_norms: bool = True
 
     # Training Settings
     episodes: int = 100000
     patience: int | None = 100
     eval_every: int = 1
-    eval_steps: int = 1000
-    eval_batch_size: int = 10
+    eval_steps: int = 100
+    eval_batch_size: int = 100
     collect_horizon: int = 20
     rollout_horizon: int = 10
-    train_batch_size: int = 256
+    train_batch_size: int = 128
     update_steps: int = 32
     updates_per_batch: int = 4
 
     # Optimization settings
-    LR: float = 1e-2
+    LR: float = 1e-3
     gamma: float = 0.99
     gae_lambda: float = 0.95
     clip_eps: float = 0.2
-    ent_coef: float = 0e-3
+    ent_coef: float = 1e-2
     vf_coef: float = 0.5
     gradient_clip: float | None = 1.0
     anneal_lr: bool = False
@@ -134,7 +134,7 @@ class CTRNN(nn.Module):
         y = jnp.concatenate([ins, h], axis=-1)
         u = dense(y)
         act = jnp.tanh(u)
-        dh = (act - h) / tau
+        dh = (act - h) / (1 + jax.nn.softplus(tau))
         out = jax.tree.map(lambda a, b: a + b * self.config.dt, h, dh)
         return out, out
 
@@ -438,8 +438,6 @@ def make_train(config: PPOParams, logger: DummyLogger):
                 ac_in = (x, _env_state.done[None, :])
                 next_hstate, pi, value = network.apply(params, prev_hstate, ac_in)
                 action = pi.sample(seed=_rng)
-                if env_info["act_clip"]:
-                    action = jnp.clip(action, *action_clip)
                 log_prob = pi.log_prob(action)
                 value, action, log_prob = (
                     value.squeeze(0),
@@ -481,9 +479,7 @@ def make_train(config: PPOParams, logger: DummyLogger):
             runner_state, traj_batch = jax.lax.scan(_env_step, runner_state, None, config.eval_steps)
 
             # For episodes that are done early, get the first occurence of done
-            ep_until = jnp.where(
-                traj_batch.done.any(axis=0), traj_batch.done.argmax(axis=0), traj_batch.done.shape[0]
-            )
+            ep_until = jnp.where(traj_batch.done.any(axis=0), traj_batch.done.argmax(axis=0), traj_batch.done.shape[0])
             # Compute cumsum and get value corresponding to end of episode per batch.
             ep_rewards = traj_batch.reward.cumsum(axis=0)[ep_until, jnp.arange(ep_until.shape[-1])]
             return ep_rewards.mean(), traj_batch
@@ -597,7 +593,7 @@ def make_train(config: PPOParams, logger: DummyLogger):
             def _update_epoch(update_state, unused):
                 (train_state, rng) = update_state
 
-                def _update_minbatch(train_state, batch: tuple[Transition, jax.Array, jax.Array]):
+                def _update_minbatch(train_state: TrainState, batch: tuple[Transition, jax.Array, jax.Array]):
                     def _loss_fn(params):
                         transition, _gae, _val = batch
                         _init_hstate = jax.tree.map(lambda a: a[0], transition.hidden)  # T=0, B, H
@@ -628,7 +624,8 @@ def make_train(config: PPOParams, logger: DummyLogger):
                         # value_loss = 0.5 * value_losses.mean()
 
                         # CALCULATE ACTOR LOSS
-                        diff = jnp.clip(log_prob - transition.log_prob, max=50)  # avoids some NaNs!
+                        diff = log_prob - transition.log_prob
+                        # diff = jnp.clip(diff, max=50)  # HACK avoids some NaNs!
                         ratio = jnp.exp(diff)
                         if config.normalize_gae:
                             _gae = (_gae - _gae.mean()) / (_gae.std() + 1e-8)
@@ -689,7 +686,7 @@ def make_train(config: PPOParams, logger: DummyLogger):
         )
 
         steps_since_best = 0
-        trajectories = None
+        trajectories: Transition = None
         try:
             for i in range(config.episodes):
                 with jax.disable_jit(DISABLE_JIT):
@@ -726,19 +723,23 @@ def make_train(config: PPOParams, logger: DummyLogger):
         finally:
             if record_best_eval_episode and trajectories is not None:
                 # Save last episode data for plotting.
-                os.makedirs("data", exist_ok=True)
+                # Swap axes to batch major
+                trajectories = jax.tree.map(lambda x: jnp.swapaxes(x, 0, 1), trajectories)
+
+                out_dir = f"data/{config.env_params.env_name}"
+                os.makedirs(out_dir, exist_ok=True)
                 data = {
-                    "time": np.arange(trajectories[0].shape[0]),
+                    "obs": trajectories.obs,
                     "action": trajectories.action,
                     "reward": trajectories.reward,
-                    "done": trajectories.done,
+                    "done": trajectories.next_done,
                     **trajectories.info,
                     **trajectories.state,
                 }
-                np.savez("data/ppo_best_trajectory.npz", **data)
+                np.savez(f"{out_dir}/ppo_best_trajectory.npz", **data)
                 env_params = getattr(env, "params")
                 if env_params:
-                    with open("data/ppo_env_params.pkl", "wb") as f:
+                    with open(f"{out_dir}/ppo_env_params.pkl", "wb") as f:
                         pickle.dump(env_params, f)
         return logger["best_eval_reward"]
 
@@ -754,7 +755,8 @@ def train_and_eval(config: PPOParams, logger=DummyLogger()):
 
         if config.env_params.env_name == "dronegym":
             # CUSTOM Plotting
-            plot_from_file("data/ppo_best_trajectory.npz", "data/ppo_env_params.pkl", "best")
+            out_dir = f"data/{config.env_params.env_name}"
+            plot_from_file(f"{out_dir}/ppo_best_trajectory.npz", f"{out_dir}/ppo_env_params.pkl", "best")
             logger.log_img("best_trajectory", plt.gcf())
         return result
     except Exception as e:

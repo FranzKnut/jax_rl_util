@@ -43,11 +43,11 @@ class EnvParams:
     """
 
     frequency: int = 30
-    max_steps: int = 1000
-    action_mode: int = 1  # 0 = acc, 1 = vel
+    max_steps: int = 100
+    action_mode: int = 0  # 0 = acc, 1 = vel
 
     # velocity parameters for ego drone
-    action_scale: float = 10
+    action_scale: float = 0.1
 
     # initial_velocity_stddev: float = 0.1
     ego_change_velocity_stddev: float = 0.005
@@ -60,7 +60,7 @@ class EnvParams:
     noise_color: int = 0
 
     # initial position distribution for other drones
-    initial_pos_stddev: float = 2.5
+    initial_pos_stddev: float = 2.0
     initial_vel_stddev: float = 0.5
     iir_filter: float = 0.2
     noise_iir_value: float = 0
@@ -73,7 +73,7 @@ class EnvParams:
     plot_range: int = 10
 
     # Difficulties
-    include_pos_in_obs: bool = True
+    include_pos_in_obs: bool = False
     obstacle: bool = True
     obstacle_pos: Tuple[float, float, float] = (0.0, 0.0, 0.0)
     obstacle_size: float = 0.5
@@ -119,6 +119,7 @@ class DroneGym(GymnaxEnv):
         # initialize ego and other drones
         self.starting_pos_ego = jnp.array(params.starting_pos_ego)[: params.n_dim]
         self.starting_pos_goal = jnp.array(params.starting_pos_goal)[: params.n_dim]
+        self.obstacle_pos = jnp.array(params.obstacle_pos)[: params.n_dim]
 
     def action_space(self, params: EnvParams):
         """Action space of the environment."""
@@ -128,7 +129,7 @@ class DroneGym(GymnaxEnv):
     def observation_space(self, params: EnvParams):
         """Observation space of the environment."""
         return gymnax.environments.spaces.Box(
-            -params.plot_range, params.plot_range, shape=(3 if params.include_pos_in_obs else 1,)
+            -params.plot_range, params.plot_range, shape=2 + (params.n_dim if params.include_pos_in_obs else 0)
         )
 
     def state_space(self, params):
@@ -170,6 +171,7 @@ class DroneGym(GymnaxEnv):
                 "pos": initial_pos,
                 "vel": initial_vel,
                 "goto": jnp.zeros([self.params.n_drones, self.params.n_dim]),
+                "reached_goal": False,
                 "filtered_dist": true_distance,
                 "rng": k_step,
             }
@@ -223,7 +225,7 @@ class DroneGym(GymnaxEnv):
         - info: Additional information about the step.
         """
         # perform ego and other drone movement for next step
-        step, pos, vel, goto, filtered_dist, key = state.values()
+        step, pos, vel, goto, reached_goal, filtered_dist, key = state.values()
         ego_key, obs_key, drone_key, next_key = jrandom.split(key, 4)
         ego_vel = vel[0]
 
@@ -260,43 +262,50 @@ class DroneGym(GymnaxEnv):
         pos += vel * self.dt
 
         # Sample observation
-        true_distance, noisy_distance = self._sample_observation(pos, vel, obs_key)
-        filtered_dist = filtered_dist * (1.0 - params.iir_filter) + noisy_distance * (params.iir_filter)
+        obs, dists = self._sample_observation(pos, vel, obs_key)
+        (
+            goal_distance,
+            noisy_goal_dist,
+            obstacle_distance,  # true distance to drone 0
+            noisy_obstacle_dist,  # noisy distance to drone 0
+        ) = dists
 
+        # filtered_dist = filtered_dist * (1.0 - params.iir_filter) + noisy_distance * (params.iir_filter)
         is_out_of_time = step >= params.max_steps
 
         # Reward when target is reached
-        reward = 0.1 / jnp.max(jnp.array([1, true_distance.squeeze()])) ** 2
+        reward = 0.1 / jnp.max(jnp.array([1, noisy_goal_dist.squeeze()])) ** 2
         # reward = 0
         is_outside = jnp.any(jnp.abs(pos) > params.plot_range)
-        is_at_target = (true_distance <= 1).squeeze()
-        reward = jnp.where(is_at_target, params.max_steps - step, reward)
+        is_at_target = (goal_distance <= 1).squeeze()
+        reward = jnp.where(is_at_target & ~reached_goal, params.max_steps - step, reward)
+
         # If reached the target, rotate vector pointing to goal pos by 90 degrees
         # rotated_goal = jnp.array([-pos[1, 0], pos[1, 1]])
         # pos = pos.at[1].set(rotated_goal * is_at_target + pos[1] * (1 - is_at_target))
 
-        done = is_outside | is_out_of_time | (true_distance < 1).squeeze()
+        done = is_outside | is_out_of_time
+        failed = is_outside
 
         if params.obstacle:
             dist_to_obstacle = jnp.linalg.norm(pos[0] - jnp.array(params.obstacle_pos[: params.n_dim]))
             hit_obstacle = dist_to_obstacle <= params.obstacle_size
             done |= hit_obstacle
-
+            failed |= hit_obstacle
+            
+        reward = jnp.where(failed, -10, reward)
+            
         state = OrderedDict(
             {
                 "step": step + 1,
                 "pos": pos,
                 "vel": vel,
                 "goto": goto,
+                "reached_goal": reached_goal | is_at_target,
                 "filtered_dist": filtered_dist,
                 "rng": next_key,
             }
         )
-
-        obs = true_distance
-        if params.include_pos_in_obs:
-            obs = jnp.append(pos[0], obs)
-
         return (
             obs,
             state,
@@ -306,9 +315,10 @@ class DroneGym(GymnaxEnv):
                 "data_ego_pos": state["pos"][0],
                 "data_ego_vel": state["vel"][0],
                 "data_drones_pos": state["pos"][1:],
-                "data_true_distance": true_distance,
-                "data_noisy_distance": noisy_distance,
-                "data_filtered_distance": filtered_dist,
+                "data_true_distance_goal": goal_distance,
+                "data_noisy_distance_goal": noisy_goal_dist,
+                "data_true_distance_obst": obstacle_distance,
+                "data_noisy_distance_obst": noisy_obstacle_dist,
             },
         )
 
@@ -326,20 +336,31 @@ class DroneGym(GymnaxEnv):
         - An observation tuple containing the ego drone velocity, ego drone position, noisy distance to drone 0,
           true distance to drone 0, and other relevant information.
         """
-        difference = pos[0] - pos[1:]
-        true_distance = jnp.linalg.norm(difference, axis=-1)
-        noisy_distance = self.apply_noise(true_distance, rng_key)
+        obstacle_distance = jnp.linalg.norm(pos[0] - self.obstacle_pos)
+        noisy_obstacle_dist = self.apply_noise(obstacle_distance, rng_key)
+
+        goal_distance = jnp.linalg.norm(pos[0] - pos[1:], axis=-1)
+        noisy_goal_dist = self.apply_noise(goal_distance, rng_key)
+
+        obs = jnp.concatenate(jnp.array([noisy_obstacle_dist[None], noisy_goal_dist]))
+        if self.params.include_pos_in_obs:
+            obs = jnp.append(pos[0], obs)
 
         return (
-            true_distance,  # true distance to drone 0
-            noisy_distance,  # noisy distance to drone 0
-            # ego.get_distance(drones[0]), # distance to drone 0 (including simulated distance measurement noise)
-            # ego.position[0], # ego drone x ground-truth position
-            # ego.position[1], # ego drone y ground-truth position
-            # ego.position[2], # ego drone z ground-truth position
-            # drones[0].position[0], # drone 0 x ground-truth position
-            # drones[0].position[1], # drone 0 y ground-truth position
-            # drones[0].position[2], # drone 0 z ground-truth position
+            obs,
+            (
+                goal_distance,
+                noisy_goal_dist,
+                obstacle_distance,  # true distance to drone 0
+                noisy_obstacle_dist,  # noisy distance to drone 0
+                # ego.get_distance(drones[0]), # distance to drone 0 (including simulated distance measurement noise)
+                # ego.position[0], # ego drone x ground-truth position
+                # ego.position[1], # ego drone y ground-truth position
+                # ego.position[2], # ego drone z ground-truth position
+                # drones[0].position[0], # drone 0 x ground-truth position
+                # drones[0].position[1], # drone 0 y ground-truth position
+                # drones[0].position[2], # drone 0 z ground-truth position
+            ),
         )
 
     def reset_env(self, rng_key, params: EnvParams = None):
@@ -361,8 +382,6 @@ class DroneGym(GymnaxEnv):
         initial_state = self.initial_state(k1)
         pos, vel = initial_state["pos"], initial_state["vel"]
         obs, _ = self._sample_observation(pos, vel, k2)
-        if self.params.include_pos_in_obs:
-            obs = jnp.append(pos[0], obs)
         return obs, initial_state
 
 
