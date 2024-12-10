@@ -57,9 +57,9 @@ class PPOParams(LoggableConfig):
     eval_every: int = 1
     eval_steps: int = 1000
     eval_batch_size: int = 100
-    collect_horizon: int = 20
-    rollout_horizon: int = 10
-    train_batch_size: int = 128
+    collect_horizon: int = 100
+    rollout_horizon: int = 50
+    train_batch_size: int = 256
     update_steps: int = 32
     updates_per_batch: int = 4
 
@@ -67,15 +67,15 @@ class PPOParams(LoggableConfig):
     LR: float = 1e-4
     gamma: float = 0.99
     gae_lambda: float = 0.95
-    clip_eps: float = 0.2
-    ent_coef: float = 1e-4
+    clip_eps: float = 0.1
+    ent_coef: float = 0e-5
     vf_coef: float = 0.5
     gradient_clip: float | None = 0.5
     anneal_lr: bool = False
 
     # Env settings
     env_params: EnvironmentConfig = field(
-        default_factory=lambda: EnvironmentConfig(env_name="dronegym", batch_size=512)
+        default_factory=lambda: EnvironmentConfig(env_name="dronegym", batch_size=1024)
     )
     dt: float = 1.0
     normalize_obs: bool = False
@@ -625,7 +625,7 @@ def make_train(config: PPOParams, logger: DummyLogger):
 
                         # CALCULATE ACTOR LOSS
                         diff = log_prob - transition.log_prob
-                        # diff = jnp.clip(diff, max=50)  # HACK avoids some NaNs!
+                        diff = jnp.clip(diff, max=10)  # HACK avoids some NaNs!
                         ratio = jnp.exp(diff)
                         if config.normalize_gae:
                             _gae = (_gae - _gae.mean()) / (_gae.std() + 1e-8)

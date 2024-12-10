@@ -56,7 +56,7 @@ class EnvParams:
     change_velocity_stddev: float = 0
 
     # distance measurement noise
-    noise_stddev: float = 0.15
+    noise_stddev: float = 0.1
     noise_color: int = 0
 
     # initial position distribution for other drones
@@ -77,7 +77,8 @@ class EnvParams:
     obstacle: bool = True
     obstacle_pos: Tuple[float, float, float] = (0.0, 0.0, 0.0)
     obstacle_size: float = 0.5
-    failed_penalty: float = -10
+    failed_penalty: float = -100
+    solved_reward: float = 100
 
 
 # class EnvState
@@ -279,7 +280,7 @@ class DroneGym(GymnaxEnv):
         # reward = 0
         is_outside = jnp.any(jnp.abs(pos) > params.plot_range)
         is_at_target = (goal_distance <= 1).squeeze()
-        reward = jnp.where(is_at_target & ~reached_goal, params.max_steps - step, reward)
+        reward = jnp.where(is_at_target & ~reached_goal, params.solved_reward, reward)
 
         # If reached the target, rotate vector pointing to goal pos by 90 degrees
         # rotated_goal = jnp.array([-pos[1, 0], pos[1, 1]])

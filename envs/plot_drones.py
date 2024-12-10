@@ -53,7 +53,8 @@ def plot_drones(args: EnvParams, data, plot_which="all", show_aux=False):
         ax0 = axes
     ax0.set_aspect("equal", adjustable="box")
 
-    ep_ends = np.where(np.any(data["done"], axis=0), np.argmax(data["done"], axis=0), -1)
+    ep_ends = np.where(np.any(data["done"], axis=0), np.argmax(data["done"], axis=0) + 1, -1)
+    ep_ends = np.clip(ep_ends, a_min=None, a_max=data["done"].shape[0] - 1)
 
     ep_rewards = np.cumsum(data["reward"], axis=0)[ep_ends, np.arange(len(ep_ends))]
     idx_best = np.argmax(ep_rewards)
