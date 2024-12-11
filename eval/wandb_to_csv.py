@@ -8,7 +8,9 @@ import wandb
 
 api = wandb.Api()
 
-PROJECTS = ["brax_imitation"]
+# PROJECTS = ["brax_imitation"]
+PROJECTS = ["RTRRL", "neurips24", "gymnax_new", "brax_new", "AC_brax", "AC_gymnax", "PPO_Gymnax"]
+
 SWEEPS = None  # None for all sweeps
 
 
@@ -19,8 +21,7 @@ def get_runs_for_config(project, filters={}):
 
     summaries = []
     for run in runs:
-        # .summary contains the output keys/values for metrics like accuracy.
-        #  We call ._json_dict to omit large files
+        
         env_name = run.config["env_name"] if "env_name" in run.config else run.config["env_params"]["env_name"]
 
         summaries.append(
@@ -30,19 +31,9 @@ def get_runs_for_config(project, filters={}):
                 "config": {k: v for k, v in run.config.items() if not k.startswith("_")},
                 "Sweep": run.sweep.id if run.sweep is not None else "none",
                 "created_at": pd.to_datetime(run.created_at),
-                **run.summary._json_dict,
+                **run.summary._json_dict,  # .summary contains the output keys/values for metrics like accuracy. We call ._json_dict to omit large files
             }
         )
-
-        # env_names.append(env_name)
-        # # .config contains the hyperparameters.
-        # #  We remove special values that start with _.
-        # config_list.append()
-
-        # # .name is the human-readable name of the run.
-        # name_list.append(run.name)
-        # sweep_list.append(run.sweep.id)
-        # created_at_list.append(run.created_at)
 
     return pd.DataFrame(summaries)
 

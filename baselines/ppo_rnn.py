@@ -17,12 +17,12 @@ import optax
 import simple_parsing
 import tensorflow_probability.substrates.jax as tfp
 from brax.training.acme import running_statistics
-from envs.plot_drones import plot_from_file
 from flax.linen.initializers import constant, orthogonal
 from flax.training.train_state import TrainState
 from matplotlib import pyplot as plt
 
 from jax_rl_util.envs.environments import EnvironmentConfig, make_env, print_env_info
+from jax_rl_util.envs.plot_drones import plot_from_file
 from jax_rl_util.envs.wrappers import VmapWrapper
 from jax_rl_util.util.logging_util import DummyLogger, LoggableConfig, log_norms, with_logger
 
@@ -45,8 +45,8 @@ class PPOParams(LoggableConfig):
     logging: str = "aim"
     debug: int = 0
     seed: int = -1
-    MODEL: str = "CTRNN"
-    NUM_UNITS: int = 256
+    MODEL: str = "LRU"
+    NUM_UNITS: int = 32
     meta_rl: bool = True
     act_dist_name: str = "normal"
     log_norms: bool = True
@@ -59,7 +59,7 @@ class PPOParams(LoggableConfig):
     eval_batch_size: int = 100
     collect_horizon: int = 100
     rollout_horizon: int = 50
-    train_batch_size: int = 256
+    train_batch_size: int = 32
     update_steps: int = 32
     updates_per_batch: int = 4
 
@@ -342,9 +342,10 @@ def make_train(config: PPOParams, logger: DummyLogger):
     env, env_info, eval_env = make_env(config.env_params, make_eval=True)
     eval_env = VmapWrapper(eval_env, config.eval_batch_size)
     _discrete = env_info["discrete"]
-    action_clip = jnp.array(env_info["act_clip"])
-    # action_clip = jnp.nextafter(action_clip, action_clip.mean(axis=0))
-    action_clip = (1 - 1e-4) * action_clip
+    if env_info["act_clip"]:
+        action_clip = jnp.array(env_info["act_clip"])
+        # action_clip = jnp.nextafter(action_clip, action_clip.mean(axis=0))
+        action_clip = (1 - 1e-4) * action_clip
 
     print_env_info(env_info)
 
@@ -546,7 +547,7 @@ def make_train(config: PPOParams, logger: DummyLogger):
 
             # initial_hstate = runner_state[-2]
             runner_state, traj_batch = jax.lax.scan(_env_step, runner_state, None, config.collect_horizon)
-            train_state, env_state, _normalizer_state, last_act, hstate, rng = runner_state
+            train_state, env_state, _normalizer_state, re_action, hstate, rng = runner_state
 
             # UPDATE NORMALIZER
             if config.normalize_obs:
@@ -556,7 +557,6 @@ def make_train(config: PPOParams, logger: DummyLogger):
             # Compute the last value
             x = normalize(env_state.obs, _normalizer_state)
             if config.meta_rl:
-                re_action = jax.nn.one_hot(last_act, env.action_size) if _discrete else last_act
                 x = jnp.concatenate([x, re_action, env_state.reward], axis=-1)
             ac_in = (x[None], env_state.done[None, :])
             _, _, _last_val = network.apply(train_state.params, hstate, ac_in)
@@ -641,7 +641,7 @@ def make_train(config: PPOParams, logger: DummyLogger):
                         loss_actor = -jnp.minimum(loss_actor1, loss_actor2).mean()
                         total_loss = loss_actor + config.vf_coef * value_loss
 
-                        if config.act_dist_name == "normal":
+                        if not _discrete and config.act_dist_name == "normal":
                             entropy = pi.distribution.entropy().mean()
                         else:
                             entropy = pi.entropy().mean()
@@ -672,7 +672,7 @@ def make_train(config: PPOParams, logger: DummyLogger):
 
             update_state = (train_state, rng)
             update_state, loss_info = jax.lax.scan(_update_epoch, update_state, None, config.updates_per_batch)
-            runner_state = (update_state[0], env_state, _normalizer_state, last_act, hstate, update_state[-1])
+            runner_state = (update_state[0], env_state, _normalizer_state, re_action, hstate, update_state[-1])
             return runner_state, loss_info
 
         rng, _rng = jax.random.split(rng)
