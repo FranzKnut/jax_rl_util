@@ -44,16 +44,12 @@ class EnvParams:
 
     plot_range: int = 10
     max_steps: int = 1000
-    action_mode: int = 0  # 0 = acc, 1 = vel
-
-    # velocity parameters for ego drone
-    action_scale: float = 1
 
     # velocity parameters for other drones
     change_velocity_stddev: float = 0
 
     # distance measurement noise
-    noise_stddev: float = 0.2
+    noise_stddev: float = 0.1
 
     # initial position distribution for other drones
     initial_pos_stddev: float = 2.0
@@ -63,8 +59,7 @@ class EnvParams:
     # Difficulties
     obstacle: bool = True
     obstacle_size: float = 0.5
-    failed_penalty: float = -100
-    solved_reward: float = 100
+    failed_penalty: float = 0
 
 
 # class EnvState
@@ -94,7 +89,7 @@ class DroneGym(GymnaxEnv):
 
     def __init__(
         self,
-        include_pos_in_obs: bool = True,
+        include_pos_in_obs: bool = False,
         n_drones: int = 1,
         n_dim: int = 2,
         starting_pos_ego=(5.0, 0.0, 0.0),
@@ -102,6 +97,8 @@ class DroneGym(GymnaxEnv):
         obstacle_pos=(0.0, 0.0, 0.0),
         fps=30,
         noise_color=0,
+        action_mode: int = 0,  # 0 = acc, 1 = vel
+        action_scale: float = 1,
     ):
         """Initialize the DroneGym object."""
         # initialize empty arrays
@@ -111,6 +108,8 @@ class DroneGym(GymnaxEnv):
         self.n_dim = n_dim
         self.include_pos_in_obs = include_pos_in_obs
         self.noise_color = noise_color
+        self.action_mode = action_mode
+        self.action_scale = action_scale
         self.dt = 1 / fps
         # initialize ego and other drones
         self.starting_pos_ego = jnp.array(starting_pos_ego)[:n_dim]
@@ -245,10 +244,10 @@ class DroneGym(GymnaxEnv):
         #         self.velocity[2] -= self.position[2] / lim_factor
 
         # controlled_movement_b
-        if params.action_mode == 0:
-            ego_vel += action * params.action_scale
-        elif params.action_mode == 1:
-            ego_vel = action * params.action_scale
+        if self.action_mode == 0:
+            ego_vel += action * self.action_scale
+        elif self.action_mode == 1:
+            ego_vel = action * self.action_scale
         else:
             raise ValueError("Unknown action_mode")
         # goto = ego_vel + jnp.where(step % 10 == 0, jrandom.normal(ego_key, [params.n_dim]) * params.goto_stddev, goto)
@@ -271,11 +270,11 @@ class DroneGym(GymnaxEnv):
         is_out_of_time = step >= params.max_steps
 
         # Reward when target is reached
-        reward = 0.1 / jnp.max(jnp.array([1, noisy_goal_dist.squeeze()])) ** 2
+        reward = 1 / jnp.max(jnp.array([1, goal_distance.squeeze()])) ** 3
         # reward = 0
         is_outside = jnp.any(jnp.abs(pos) > params.plot_range)
         is_at_target = (goal_distance <= 1).squeeze()
-        reward = jnp.where(is_at_target & ~reached_goal, params.solved_reward, reward)
+        # reward = jnp.where(is_at_target, params.solved_reward, reward)
 
         # If reached the target, rotate vector pointing to goal pos by 90 degrees
         # rotated_goal = jnp.array([-pos[1, 0], pos[1, 1]])

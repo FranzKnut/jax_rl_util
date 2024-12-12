@@ -30,7 +30,7 @@ warnings.simplefilter(action="ignore", category=FutureWarning)
 
 DISABLE_JIT = False
 # jax.config.update("jax_disable_jit", True)
-jax.config.update("jax_debug_nans", True)
+# jax.config.update("jax_debug_nans", True)
 # jax.config.update("jax_enable_x64", True)
 os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
 os.environ["XLA_FLAGS"] = "--xla_gpu_triton_gemm_any=true"
@@ -45,40 +45,44 @@ class PPOParams(LoggableConfig):
     logging: str = "aim"
     debug: int = 0
     seed: int = -1
-    MODEL: str = "LRU"
-    NUM_UNITS: int = 32
+    MODEL: str = "GRU"
+    NUM_UNITS: int = 64
     meta_rl: bool = True
     act_dist_name: str = "normal"
-    log_norms: bool = True
+    log_norms: bool = False
 
     # Training Settings
     episodes: int = 100000
     patience: int | None = 100
-    eval_every: int = 1
+    eval_every: int = 10
     eval_steps: int = 1000
     eval_batch_size: int = 100
     collect_horizon: int = 100
-    rollout_horizon: int = 50
-    train_batch_size: int = 32
+    rollout_horizon: int = 20
+    train_batch_size: int = 256
     update_steps: int = 32
     updates_per_batch: int = 4
 
     # Optimization settings
-    LR: float = 1e-4
+    LR: float = 3e-4
     gamma: float = 0.99
     gae_lambda: float = 0.95
-    clip_eps: float = 0.1
-    ent_coef: float = 0e-5
+    clip_eps: float = 0.2
+    ent_coef: float = 0e-4
     vf_coef: float = 0.5
-    gradient_clip: float | None = 0.5
+    gradient_clip: float | None = 1.0
     anneal_lr: bool = False
 
     # Env settings
     env_params: EnvironmentConfig = field(
-        default_factory=lambda: EnvironmentConfig(env_name="dronegym", batch_size=1024)
+        default_factory=lambda: EnvironmentConfig(
+            env_name="dronegym",
+            batch_size=512,
+            init_kwargs={"action_mode": 1, "action_scale": 1, "include_pos_in_obs": True},
+        )
     )
     dt: float = 1.0
-    normalize_obs: bool = False
+    normalize_obs: bool = True
     normalize_gae: bool = True
 
 
@@ -624,8 +628,9 @@ def make_train(config: PPOParams, logger: DummyLogger):
                         # value_loss = 0.5 * value_losses.mean()
 
                         # CALCULATE ACTOR LOSS
-                        diff = log_prob - transition.log_prob
-                        diff = jnp.clip(diff, max=10)  # HACK avoids some NaNs!
+                        # Cumsum of log_probs since they depend on previous actions
+                        diff = log_prob.cumsum(axis=0) - transition.log_prob.cumsum(axis=0)
+                        # diff = jnp.clip(diff, max=10)  # HACK avoids some NaNs!
                         ratio = jnp.exp(diff)
                         if config.normalize_gae:
                             _gae = (_gae - _gae.mean()) / (_gae.std() + 1e-8)
