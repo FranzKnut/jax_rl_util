@@ -50,6 +50,7 @@ class PPOParams(LoggableConfig):
     meta_rl: bool = True
     act_dist_name: str = "normal"
     log_norms: bool = False
+    record_best_eval_episode: bool = False
 
     # Training Settings
     episodes: int = 100000
@@ -352,7 +353,7 @@ def make_train(config: PPOParams, logger: DummyLogger):
 
     print_env_info(env_info)
 
-    def train(rng, record_best_eval_episode=False):
+    def train(rng):
         # INIT NETWORK
         network = ActorCriticRNN(env.action_size, discrete=_discrete, config=config, action_limits=env_info["act_clip"])
         rng, _rng = jax.random.split(rng)
@@ -725,7 +726,7 @@ def make_train(config: PPOParams, logger: DummyLogger):
         except KeyboardInterrupt:
             print("Interrupted by user, Finalizing...")
         finally:
-            if record_best_eval_episode and trajectories is not None:
+            if config.record_best_eval_episode and trajectories is not None:
                 # Save last episode data for plotting.
                 # Swap axes to batch major
                 trajectories = jax.tree.map(lambda x: jnp.swapaxes(x, 0, 1), trajectories)
@@ -755,7 +756,7 @@ def train_and_eval(config: PPOParams, logger=DummyLogger()):
     rng = jax.random.PRNGKey(config.seed)
     logger["best_eval_reward"] = -np.inf
     try:
-        result = make_train(config, logger)(rng, record_best_eval_episode=True)
+        result = make_train(config, logger)(rng)
 
         if config.env_params.env_name == "dronegym":
             # CUSTOM Plotting
@@ -770,6 +771,7 @@ def train_and_eval(config: PPOParams, logger=DummyLogger()):
 
 
 if __name__ == "__main__":
-    params: PPOParams = simple_parsing.parse(PPOParams)
+    config_path = "config/ppo.yaml" if os.path.exists("config/ppo.yaml") else None
+    params: PPOParams = simple_parsing.parse(PPOParams, config_path=config_path)
     best_reward = with_logger(train_and_eval, params, run_name=params.env_params.env_name)
     print(f"Best eval reward: {best_reward:.2f}")
