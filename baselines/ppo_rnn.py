@@ -76,9 +76,8 @@ class PPOParams(LoggableConfig):
     # Env settings
     env_params: EnvironmentConfig = field(
         default_factory=lambda: EnvironmentConfig(
-            env_name="dronegym",
+            env_name="Acrobot-v1",
             batch_size=512,
-            init_kwargs={"action_mode": 1, "action_scale": 1, "include_pos_in_obs": True},
         )
     )
     dt: float = 1.0
