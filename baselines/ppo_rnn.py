@@ -297,22 +297,24 @@ class ActorCriticRNN(nn.Module):
     def __call__(self, hidden, x):
         """Compute embedding from GRU and then actor and critic MLPs."""
         obs, dones = x
-        embedding = nn.Dense(self.config.NUM_UNITS, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(obs)
+        embedding = nn.Dense(
+            self.config.NUM_UNITS, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0), name="emb"
+        )(obs)
         embedding = nn.relu(embedding)
 
         rnn_in = (embedding, dones)
         hidden, embedding = globals()[self.config.MODEL](self.config)(hidden, rnn_in)
 
-        actor_mean = nn.Dense(self.config.NUM_UNITS, kernel_init=orthogonal(2), bias_init=constant(0.0))(embedding)
+        actor_mean = nn.Dense(self.config.NUM_UNITS, kernel_init=orthogonal(2), bias_init=constant(0.0), name="actor0")(embedding)
         actor_mean = nn.relu(actor_mean)
         action_dim = self.action_dim if self.discrete else self.action_dim * 2
-        actor_mean = nn.Dense(action_dim, kernel_init=orthogonal(0.01), bias_init=constant(0.0))(actor_mean)
+        actor_mean = nn.Dense(action_dim, kernel_init=orthogonal(0.01), bias_init=constant(0.0), name="actor1")(actor_mean)
 
         pi = self.dist(actor_mean)
 
-        critic = nn.Dense(self.config.NUM_UNITS, kernel_init=orthogonal(2), bias_init=constant(0.0))(embedding)
+        critic = nn.Dense(self.config.NUM_UNITS, kernel_init=orthogonal(2), bias_init=constant(0.0), name="critic0")(embedding)
         critic = nn.relu(critic)
-        critic = nn.Dense(1, kernel_init=orthogonal(1.0), bias_init=constant(0.0))(critic)
+        critic = nn.Dense(1, kernel_init=orthogonal(1.0), bias_init=constant(0.0), name="critic1")(critic)
 
         return hidden, pi, jnp.squeeze(critic, axis=-1)
 
