@@ -30,7 +30,7 @@ warnings.simplefilter(action="ignore", category=FutureWarning)
 
 DISABLE_JIT = False
 # jax.config.update("jax_disable_jit", True)
-# jax.config.update("jax_debug_nans", True)
+jax.config.update("jax_debug_nans", True)
 # jax.config.update("jax_enable_x64", True)
 os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
 os.environ["XLA_FLAGS"] = "--xla_gpu_triton_gemm_any=true"
@@ -58,8 +58,8 @@ class PPOParams(LoggableConfig):
     eval_every: int = 10
     eval_steps: int = 1000
     eval_batch_size: int = 100
-    collect_horizon: int = 100
-    rollout_horizon: int = 20
+    collect_horizon: int = 20
+    rollout_horizon: int = 10
     train_batch_size: int = 256
     update_steps: int = 32
     updates_per_batch: int = 4
@@ -69,7 +69,7 @@ class PPOParams(LoggableConfig):
     gamma: float = 0.99
     gae_lambda: float = 0.95
     clip_eps: float = 0.2
-    ent_coef: float = 0e-4
+    ent_coef: float = 0.0
     vf_coef: float = 0.5
     gradient_clip: float | None = 1.0
     anneal_lr: bool = False
@@ -630,7 +630,7 @@ def make_train(config: PPOParams, logger: DummyLogger):
                         # CALCULATE ACTOR LOSS
                         # Cumsum of log_probs since they depend on previous actions
                         diff = log_prob.cumsum(axis=0) - transition.log_prob.cumsum(axis=0)
-                        # diff = jnp.clip(diff, max=10)  # HACK avoids some NaNs!
+                        diff = jnp.clip(diff, max=10)  # HACK avoids some NaNs!
                         ratio = jnp.exp(diff)
                         if config.normalize_gae:
                             _gae = (_gae - _gae.mean()) / (_gae.std() + 1e-8)
