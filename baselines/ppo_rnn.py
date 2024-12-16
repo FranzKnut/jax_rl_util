@@ -47,7 +47,7 @@ class PPOParams(LoggableConfig):
     seed: int = -1
     MODEL: str = "GRU"
     NUM_UNITS: int = 64
-    meta_rl: bool = True
+    meta_rl: bool = False
     act_dist_name: str = "normal"
     log_norms: bool = False
     record_best_eval_episode: bool = False
@@ -377,6 +377,7 @@ def make_train(config: PPOParams, logger: DummyLogger):
 
         network_params = network.init(_rng, init_hstate, init_x)
 
+        # TODO: Use optimizers.py
         if config.anneal_lr:
             linear_schedule = optax.linear_schedule(config.LR, 0.0, config.episodes * config.update_steps)
             tx = optax.chain(

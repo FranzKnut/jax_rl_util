@@ -317,9 +317,11 @@ class WandbLogger(DummyLogger):
     def __setitem__(self, key, value):
         """Log scalar for wandb."""
         wandb.run.summary[key] = value
+        self.flush()
 
     def __getitem__(self, key):
         """Get value from aim run."""
+        self.flush()
         return wandb.run.summary[key]
 
     @override
