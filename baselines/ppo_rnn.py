@@ -305,14 +305,20 @@ class ActorCriticRNN(nn.Module):
         rnn_in = (embedding, dones)
         hidden, embedding = globals()[self.config.MODEL](self.config)(hidden, rnn_in)
 
-        actor_mean = nn.Dense(self.config.NUM_UNITS, kernel_init=orthogonal(2), bias_init=constant(0.0), name="actor0")(embedding)
+        actor_mean = nn.Dense(self.config.NUM_UNITS, kernel_init=orthogonal(2), bias_init=constant(0.0), name="actor0")(
+            embedding
+        )
         actor_mean = nn.relu(actor_mean)
         action_dim = self.action_dim if self.discrete else self.action_dim * 2
-        actor_mean = nn.Dense(action_dim, kernel_init=orthogonal(0.01), bias_init=constant(0.0), name="actor1")(actor_mean)
+        actor_mean = nn.Dense(action_dim, kernel_init=orthogonal(0.01), bias_init=constant(0.0), name="actor1")(
+            actor_mean
+        )
 
         pi = self.dist(actor_mean)
 
-        critic = nn.Dense(self.config.NUM_UNITS, kernel_init=orthogonal(2), bias_init=constant(0.0), name="critic0")(embedding)
+        critic = nn.Dense(self.config.NUM_UNITS, kernel_init=orthogonal(2), bias_init=constant(0.0), name="critic0")(
+            embedding
+        )
         critic = nn.relu(critic)
         critic = nn.Dense(1, kernel_init=orthogonal(1.0), bias_init=constant(0.0), name="critic1")(critic)
 
@@ -729,21 +735,29 @@ def make_train(config: PPOParams, logger: DummyLogger):
             print("Interrupted by user, Finalizing...")
         finally:
             if config.record_best_eval_episode and trajectories is not None:
-                # Save last episode data for plotting.
-                # Swap axes to batch major
-                trajectories = jax.tree.map(lambda x: jnp.swapaxes(x, 0, 1), trajectories)
+
+                def _prep_ep(t):
+                    # Swap axes to batch major
+                    t = jax.tree.map(lambda x: jnp.swapaxes(x, 0, 1), t)
+
+                    return {
+                        "obs": t.obs,
+                        "action": t.action,
+                        "reward": t.reward,
+                        "done": t.next_done,
+                        **t.info,
+                        **t.state,
+                    }
 
                 out_dir = f"data/{config.env_params.env_name}"
                 os.makedirs(out_dir, exist_ok=True)
-                data = {
-                    "obs": trajectories.obs,
-                    "action": trajectories.action,
-                    "reward": trajectories.reward,
-                    "done": trajectories.next_done,
-                    **trajectories.info,
-                    **trajectories.state,
-                }
-                np.savez(f"{out_dir}/ppo_best_trajectory.npz", **data)
+                # Save last episode data for plotting.
+                np.savez(f"{out_dir}/ppo_last_trajectory.npz", **_prep_ep(_traj))
+
+                # Save best episode data for plotting.
+                np.savez(f"{out_dir}/ppo_best_trajectory.npz", **_prep_ep(trajectories))
+
+                _prep_ep(trajectories)
                 env_params = getattr(env, "params")
                 if env_params:
                     with open(f"{out_dir}/ppo_env_params.pkl", "wb") as f:
@@ -763,9 +777,12 @@ def train_and_eval(config: PPOParams, logger=DummyLogger()):
         if config.env_params.env_name == "dronegym":
             # CUSTOM Plotting
             out_dir = f"data/{config.env_params.env_name}"
-            plot_from_file(f"{out_dir}/ppo_best_trajectory.npz", f"{out_dir}/ppo_env_params.pkl", "best")
-            logger.log_img("best_trajectory", plt.gcf())
-        return result
+            plot_from_file(f"{out_dir}/ppo_best_trajectory.npz", f"{out_dir}/ppo_env_params.pkl")
+            logger.log_img("trajectories", plt.gcf(), caption="Total reward: {:.2f}".format(logger["best_eval_reward"]))
+            plot_from_file(f"{out_dir}/ppo_last_trajectory.npz", f"{out_dir}/ppo_env_params.pkl")
+            logger.log_img("trajectories", plt.gcf(), caption=f"Total reward: {result:.2f}")
+
+        return logger["best_eval_reward"]
     except Exception as e:
         raise e
     finally:

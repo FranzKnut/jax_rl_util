@@ -256,7 +256,7 @@ def plot_drone_eval(ax, eval_output, gym_params: EnvParams):
 
 
 def plot_from_file(
-    file="data/dronegym/ppo_best_trajectory.npz", args_file="data/dronegym/ppo_env_params.pkl", plot_which="best"
+    file="data/dronegym/ppo_best_trajectory.npz", args_file="data/dronegym/ppo_env_params.pkl"
 ):
     """Plot the evaluation results from a file.
 
@@ -264,7 +264,6 @@ def plot_from_file(
     ----
         file (str, optional): The file to load the evaluation results from. Defaults to "data/dronegym/ppo_best_trajectory.npz".
         args_file (str, optional): The file to load the gym parameters from. Defaults to "data/dronegym/ppo_env_params.pkl".
-        plot_which (str, optional): Which episode to plot. Defaults to "best".
 
     Returns:
     -------
@@ -283,6 +282,7 @@ def plot_from_file(
 
     os.makedirs("plots", exist_ok=True)
     plt.savefig("plots/drone_sim.png")
+    return fig
 
 
 if __name__ == "__main__":
