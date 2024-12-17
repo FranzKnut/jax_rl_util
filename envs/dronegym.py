@@ -5,7 +5,6 @@ import argparse
 import csv
 import pathlib
 from collections import OrderedDict
-from typing import Tuple
 
 import gymnax
 import gymnax.environments.spaces
@@ -57,7 +56,6 @@ class EnvParams:
     noise_iir_value: float = 0  # FIXME: Noises other than white noise need a state
 
     # Difficulties
-    obstacle: bool = True
     obstacle_size: float = 0.5
     failed_penalty: float = 0
 
@@ -99,6 +97,7 @@ class DroneGym(GymnaxEnv):
         noise_color=0,
         action_mode: int = 0,  # 0 = acc, 1 = vel
         action_scale: float = 1,
+        obstacle: bool = True,
     ):
         """Initialize the DroneGym object."""
         # initialize empty arrays
@@ -110,6 +109,7 @@ class DroneGym(GymnaxEnv):
         self.noise_color = noise_color
         self.action_mode = action_mode
         self.action_scale = action_scale
+        self.obstacle = obstacle
         self.dt = 1 / fps
         # initialize ego and other drones
         self.starting_pos_ego = jnp.array(starting_pos_ego)[:n_dim]
@@ -283,7 +283,7 @@ class DroneGym(GymnaxEnv):
         done = is_outside | is_out_of_time
         failed = is_outside
 
-        if params.obstacle:
+        if self.obstacle:
             dist_to_obstacle = jnp.linalg.norm(pos[0] - jnp.array(self.obstacle_pos[: self.n_dim]))
             hit_obstacle = dist_to_obstacle <= params.obstacle_size
             done |= hit_obstacle

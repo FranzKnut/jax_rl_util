@@ -66,12 +66,12 @@ class PPOParams(LoggableConfig):
 
     # Optimization settings
     LR: float = 3e-4
-    gamma: float = 0.99
+    gamma: float = 0.9
     gae_lambda: float = 0.95
     clip_eps: float = 0.2
     ent_coef: float = 0.0
     vf_coef: float = 0.5
-    gradient_clip: float | None = 1.0
+    gradient_clip: float | None = 0.5
     anneal_lr: bool = False
 
     # Env settings
@@ -238,8 +238,9 @@ class ActorCriticRNN(nn.Module):
     discrete: bool
     config: PPOParams
     action_limits: jnp.ndarray = None
+    log_std_limits: jnp.ndarray = (-20, 2)
 
-    def dist(self, model_out, log_std_min=0.01, log_std_max=None):
+    def dist(self, model_out):
         """Split the output of the actor into mean and std.
 
         Applies squashing to the normal distribution
@@ -279,19 +280,13 @@ class ActorCriticRNN(nn.Module):
                 mean = model_out[..., : model_out.shape[-1] // 2]
                 std = model_out[..., model_out.shape[-1] // 2 :]
 
-                # if log_std_max is not None:
-                #     # Squashed Gaussian taken from SAC
-                #     # https://spinningup.openai.com/en/latest/algorithms/sac.html#id1
-                #     std = jnp.tanh(std)
-                #     std = log_std_min + 0.5 * (log_std_max - log_std_min) * (std + 1)
-                # elif log_std_min is not None:
-                #     std = jnp.clip(std, min=log_std_min)
-                dist = tfp.distributions.Normal(mean, jax.nn.softplus(std) + log_std_min)
-                if not self.action_limits:
-                    return dist
-                else:
-                    tranforms = [scaling_transform, tfp.bijectors.Sigmoid()]
-                    return tfp.distributions.TransformedDistribution(dist, tfp.bijectors.Chain(tranforms))
+                std = jnp.clip(std, *self.log_std_limits)
+                return tfp.distributions.Normal(mean, jnp.exp(std))
+                # if not self.action_limits:
+                #     return dist
+                # else:
+                #     tranforms = [scaling_transform, tfp.bijectors.Sigmoid()]
+                #     return tfp.distributions.TransformedDistribution(dist, tfp.bijectors.Chain(tranforms))
 
     @nn.compact
     def __call__(self, hidden, x):
@@ -362,6 +357,17 @@ def make_train(config: PPOParams, logger: DummyLogger):
     print_env_info(env_info)
 
     def train(rng):
+        """Train Actor and Critic.
+
+        Parameters
+        ----------
+        rng : PRNGKey
+            jax random key
+
+        Returns
+        -------
+            Average eval reward of last validation epoch
+        """
         # INIT NETWORK
         network = ActorCriticRNN(env.action_size, discrete=_discrete, config=config, action_limits=env_info["act_clip"])
         rng, _rng = jax.random.split(rng)
@@ -452,6 +458,8 @@ def make_train(config: PPOParams, logger: DummyLogger):
                 ac_in = (x, _env_state.done[None, :])
                 next_hstate, pi, value = network.apply(params, prev_hstate, ac_in)
                 action = pi.sample(seed=_rng)
+                if env_info["act_clip"]:
+                    action = jnp.clip(action, *action_clip)
                 log_prob = pi.log_prob(action)
                 value, action, log_prob = (
                     value.squeeze(0),
@@ -537,7 +545,7 @@ def make_train(config: PPOParams, logger: DummyLogger):
                     value=value,
                     reward=next_env_state.reward,
                     prev_reward=env_state.reward,
-                    log_prob=log_prob.mean(axis=-1) if not _discrete else log_prob,
+                    log_prob=log_prob.sum(axis=-1) if not _discrete else log_prob,
                     obs=env_state.obs,
                     # next_obs= # next_env_state.obs,
                     hidden=prev_hstate,
@@ -625,7 +633,7 @@ def make_train(config: PPOParams, logger: DummyLogger):
                             action = transition.action
                         log_prob = pi.log_prob(action)
                         if not _discrete:
-                            log_prob = log_prob.mean(axis=-1)
+                            log_prob = log_prob.sum(axis=-1)
 
                         # CALCULATE VALUE LOSS
                         value_pred_clipped = transition.value + (_values - transition.value).clip(
@@ -634,11 +642,10 @@ def make_train(config: PPOParams, logger: DummyLogger):
                         value_losses = jnp.square(_val - _values)
                         value_losses_clipped = jnp.square(_val - value_pred_clipped)
                         value_loss = 0.5 * jnp.maximum(value_losses, value_losses_clipped).mean()
-                        # value_loss = 0.5 * value_losses.mean()
 
                         # CALCULATE ACTOR LOSS
                         # Cumsum of log_probs since they depend on previous actions
-                        diff = log_prob.cumsum(axis=0) - transition.log_prob.cumsum(axis=0)
+                        diff = log_prob - transition.log_prob
                         diff = jnp.clip(diff, max=10)  # HACK avoids some NaNs!
                         ratio = jnp.exp(diff)
                         if config.normalize_gae:
@@ -655,7 +662,7 @@ def make_train(config: PPOParams, logger: DummyLogger):
                         loss_actor = -jnp.minimum(loss_actor1, loss_actor2).mean()
                         total_loss = loss_actor + config.vf_coef * value_loss
 
-                        if not _discrete and config.act_dist_name == "normal":
+                        if hasattr(pi, "distribution"):
                             entropy = pi.distribution.entropy().mean()
                         else:
                             entropy = pi.entropy().mean()
@@ -763,7 +770,7 @@ def make_train(config: PPOParams, logger: DummyLogger):
                 if env_params:
                     with open(f"{out_dir}/ppo_env_params.pkl", "wb") as f:
                         pickle.dump(env_params, f)
-        return logger["best_eval_reward"]
+        return eval_reward
 
     return train
 
@@ -778,10 +785,14 @@ def train_and_eval(config: PPOParams, logger=DummyLogger()):
         if config.env_params.env_name == "dronegym":
             # CUSTOM Plotting
             out_dir = f"data/{config.env_params.env_name}"
+            # Plot best trajectory
             plot_from_file(f"{out_dir}/ppo_best_trajectory.npz", f"{out_dir}/ppo_env_params.pkl")
-            logger.log_img("trajectories", plt.gcf(), caption="Total reward: {:.2f}".format(logger["best_eval_reward"]))
+            logger.log_img(
+                "best_trajectories", plt.gcf(), caption="Total reward: {:.2f}".format(logger["best_eval_reward"])
+            )
+            # Plot last trajectory
             plot_from_file(f"{out_dir}/ppo_last_trajectory.npz", f"{out_dir}/ppo_env_params.pkl")
-            logger.log_img("trajectories", plt.gcf(), caption=f"Total reward: {result:.2f}")
+            logger.log_img("last_trajectories", plt.gcf(), caption=f"Total reward: {result:.2f}")
 
         return logger["best_eval_reward"]
     except Exception as e:

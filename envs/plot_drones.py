@@ -90,9 +90,10 @@ def plot_drones(args: EnvParams, data, plot_which="all", show_aux=False):
         ax0.add_artist(circle)
         # ax.plot(data_drones_x[0], data_drones_y[0], "bx")
 
-    if args.obstacle:
-        circle = plt.Circle((0, 0), args.obstacle_size, color="grey", fill="grey")
-        ax0.add_artist(circle)
+    # if args.obstacle:
+    # Plot Obstacle
+    circle = plt.Circle((0, 0), args.obstacle_size, color="grey", fill="grey")
+    ax0.add_artist(circle)
 
     if n_dim == 3:
         ax1, ax2 = axes[0, 1], axes[1, 0]
@@ -255,9 +256,7 @@ def plot_drone_eval(ax, eval_output, gym_params: EnvParams):
     ax.legend()
 
 
-def plot_from_file(
-    file="data/dronegym/ppo_best_trajectory.npz", args_file="data/dronegym/ppo_env_params.pkl"
-):
+def plot_from_file(file="data/dronegym/ppo_best_trajectory.npz", args_file="data/dronegym/ppo_env_params.pkl"):
     """Plot the evaluation results from a file.
 
     Args:
