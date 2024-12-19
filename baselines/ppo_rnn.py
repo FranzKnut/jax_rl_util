@@ -41,12 +41,12 @@ class PPOParams(LoggableConfig):
     """Parameters for PPO."""
 
     # General settings
-    project_name: str | None = "PPO RNN"
+    project_name: str | None = "RTRRL"
     logging: str = "aim"
     debug: int = 0
     seed: int = -1
-    MODEL: str = "GRU"
-    NUM_UNITS: int = 64
+    MODEL: str = "LRU"
+    NUM_UNITS: int = 32
     meta_rl: bool = False
     act_dist_name: str = "normal"
     log_norms: bool = False
@@ -57,7 +57,7 @@ class PPOParams(LoggableConfig):
     patience: int | None = 100
     eval_every: int = 10
     eval_steps: int = 1000
-    eval_batch_size: int = 100
+    eval_batch_size: int = 10
     collect_horizon: int = 20
     rollout_horizon: int = 10
     train_batch_size: int = 256
@@ -77,7 +77,7 @@ class PPOParams(LoggableConfig):
     # Env settings
     env_params: EnvironmentConfig = field(
         default_factory=lambda: EnvironmentConfig(
-            env_name="Acrobot-v1",
+            env_name="UmbrellaChain-bsuite",
             batch_size=512,
         )
     )
@@ -501,10 +501,11 @@ def make_train(config: PPOParams, logger: DummyLogger):
             runner_state, traj_batch = jax.lax.scan(_env_step, runner_state, None, config.eval_steps)
 
             # For episodes that are done early, get the first occurence of done
-            ep_until = jnp.where(traj_batch.done.any(axis=0), traj_batch.done.argmax(axis=0), traj_batch.done.shape[0])
+            # ep_until = jnp.where(traj_batch.done.any(axis=0), traj_batch.done.argmax(axis=0), traj_batch.done.shape[0])
             # Compute cumsum and get value corresponding to end of episode per batch.
-            ep_rewards = traj_batch.reward.cumsum(axis=0)[ep_until, jnp.arange(ep_until.shape[-1])]
-            return ep_rewards.mean(), traj_batch
+            # ep_rewards = traj_batch.reward.cumsum(axis=0)[ep_until, jnp.arange(ep_until.shape[-1])].mean()
+            mean_reward = jnp.sum(traj_batch.reward) / jnp.max(jnp.array([jnp.sum(traj_batch.done), 1]))
+            return mean_reward, traj_batch
 
         # TRAIN LOOP
         @jax.jit
