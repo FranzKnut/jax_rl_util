@@ -41,7 +41,7 @@ class PPOParams(LoggableConfig):
     """Parameters for PPO."""
 
     # General settings
-    project_name: str | None = "RTRRL"
+    project_name: str | None = "PPO RNN"
     logging: str = "aim"
     debug: int = 0
     seed: int = -1
@@ -55,7 +55,7 @@ class PPOParams(LoggableConfig):
     # Training Settings
     episodes: int = 100000
     patience: int | None = 100
-    eval_every: int = 10
+    eval_every: int | None = 10
     eval_steps: int = 1000
     eval_batch_size: int = 10
     collect_horizon: int = 20
@@ -713,7 +713,7 @@ def make_train(config: PPOParams, logger: DummyLogger):
             for i in range(config.episodes):
                 with jax.disable_jit(DISABLE_JIT):
                     runner_state, loggables = jax.lax.scan(update_step, runner_state, None, config.update_steps)
-                if i % config.eval_every == 0:
+                if config.eval_every and i % config.eval_every == 0:
                     eval_reward, _traj = eval_model(runner_state[0].params, runner_state[2])
 
                     timestep = runner_state[0].step  # * config.collect_horizon * config.env_params.batch_size
@@ -771,7 +771,7 @@ def make_train(config: PPOParams, logger: DummyLogger):
                 if env_params:
                     with open(f"{out_dir}/ppo_env_params.pkl", "wb") as f:
                         pickle.dump(env_params, f)
-        return eval_reward
+        return eval_reward if config.eval_every else None
 
     return train
 

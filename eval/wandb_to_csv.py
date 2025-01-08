@@ -4,24 +4,25 @@ import os
 
 import pandas as pd
 
+from tqdm import tqdm
 import wandb
 
 api = wandb.Api()
 
 # PROJECTS = ["brax_imitation"]
-PROJECTS = ["RTRRL", "neurips24", "gymnax_new", "brax_new", "AC_brax", "AC_gymnax", "PPO_Gymnax"]
+# PROJECTS = ["RTRRL", "neurips24", "gymnax_new", "brax_new", "AC_brax", "AC_gymnax", "PPO_Gymnax"]
+PROJECTS = ["RTRRL"]
 
-SWEEPS = None  # None for all sweeps
+SWEEPS = None # None for all sweeps
 
 
 def get_runs_for_config(project, filters={}):
     """Get all runs for a config."""
     # Project is specified by <entity/project-name>
-    runs = api.runs(project, filters=filters)
-
+    runs = api.runs(project, filters=filters, per_page=100)
+    print("Found", len(runs), "runs")
     summaries = []
-    for run in runs:
-        
+    for run in tqdm(runs):
         env_name = run.config["env_name"] if "env_name" in run.config else run.config["env_params"]["env_name"]
 
         summaries.append(
@@ -49,7 +50,7 @@ if __name__ == "__main__":
             sweep_runs = get_runs_for_config(p)
             all_dfs.append(sweep_runs)
         else:
-            all_sweeps = {s.id: s.name for s in _p.sweeps()}  # if s.name[:2] in ["32"]}
+            all_sweeps = {s.id: s.name for s in _p.sweeps() if s.id in SWEEPS}
             for s in all_sweeps.keys():
                 print(all_sweeps[s])
                 filters = {
@@ -63,6 +64,5 @@ if __name__ == "__main__":
     print("downloaded:")
     print(df_out)
     # Save to csv
-    print(df_out)
     os.makedirs("eval/data", exist_ok=True)
     df_out.to_csv("eval/data/wandb_runs.csv")

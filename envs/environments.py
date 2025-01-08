@@ -29,6 +29,7 @@ from jax import numpy as jnp
 from . import *  # noqa
 from .dronegym import DroneGym
 from .dronegym import EnvParams as DroneGymParams
+from .tribead import TriangleJax
 from .env_util import make_obs_mask
 from .wrappers import (
     EpisodeWrapper,
@@ -158,14 +159,13 @@ def make_env(
     elif "dronegym" in env_name.lower():
         env = DroneGym()
         env = GymnaxBraxWrapper(env, params.env_kwargs)
+    elif "tribead" in env_name.lower():
+        env = TriangleJax(**params.init_kwargs)
+        env = GymnaxBraxWrapper(env, params.env_kwargs)
+    elif env_name.startswith("brax-") or env_name in brax.envs._envs:
+        # Create entrypoint for brax env
+        env = brax.envs.get_environment(env_name=env_name.replace("brax-", ""), **params.env_kwargs)
     else:
-        if env_name.startswith("brax-") or env_name in brax.envs._envs:
-            # Create entrypoint for brax env
-            entry_point = partial(
-                brax.envs.get_environment, env_name=env_name.replace("brax-", ""), **params.env_kwargs
-            )
-            if env_name not in gym.envs.registry:
-                gym.register(env_name, entry_point=entry_point, order_enforce=False)
         # Create a gym environment wrapped with vmap, AutoReset, and Episode wrappers
         env = gym.make(env_name, disable_env_checker=debug < 3, **params.init_kwargs)
 
@@ -193,13 +193,18 @@ def make_env(
         elif "dronegym" in env_name.lower():
             eval_env = DroneGym(**params.init_kwargs)
             eval_env = GymnaxBraxWrapper(eval_env, params.env_kwargs)
+        elif "tribead" in env_name.lower():
+            eval_env = TriangleJax(**params.init_kwargs)
+            eval_env = GymnaxBraxWrapper(eval_env, params.env_kwargs)
         elif env_name in popjym.registration.REGISTERED_ENVS:
             eval_env, _ = popjym.make(env_name)
             eval_env = PopJymBraxWrapper(eval_env, params.env_kwargs)
+        elif env_name.startswith("brax-") or env_name in brax.envs._envs:
+            # Create entrypoint for brax env
+            eval_env = brax.envs.get_environment(env_name=env_name.replace("brax-", ""), **params.env_kwargs)
         else:
             eval_env = gym.make(env_name, disable_env_checker=getattr(params, "debug", 0) < 3, **params.init_kwargs)
-            if not env_name.startswith("brax"):
-                eval_env = GymBraxWrapper(eval_env, params.env_kwargs)
+            eval_env = GymBraxWrapper(eval_env, params.env_kwargs)
 
         eval_env = EpisodeWrapper(eval_env, params.max_ep_length, action_repeat=1)
         eval_env = FlatObsBraxWrapper(eval_env)
