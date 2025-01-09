@@ -230,6 +230,7 @@ class EfficientAutoResetWrapper(Wrapper):
             state.info.update(steps=steps)
         state = state.replace(done=jnp.zeros_like(state.done))
         state = self.env.step(state, action)
+        reward = state.reward
 
         def where_done(x, y):
             done = state.done
@@ -239,7 +240,7 @@ class EfficientAutoResetWrapper(Wrapper):
 
         pipeline_state = jax.jax.tree.map(where_done, state.info["first_pipeline_state"], state.pipeline_state)
         obs = where_done(state.info["first_obs"], state.obs)
-        return state.replace(pipeline_state=pipeline_state, obs=obs)
+        return state.replace(pipeline_state=pipeline_state, obs=obs, reward=reward)
 
 
 class GymJaxWrapper(Wrapper):

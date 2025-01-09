@@ -49,36 +49,23 @@ class EnvParams:
 
     # distance measurement noise
     noise_stddev: float = 0.1
+    noise_iir_value: float = 0  # FIXME: Noises other than white noise need a state
 
     # initial position distribution for other drones
-    initial_pos_stddev: float = 2.0
-    initial_vel_stddev: float = 0.5
-    noise_iir_value: float = 0  # FIXME: Noises other than white noise need a state
+    initial_pos_max: float = 2.0
+    initial_vel_stddev: float = 1.0
 
     # Difficulties
     obstacle_size: float = 0.5
-    failed_penalty: float = 0
+    solved_reward: float = 10
+    failed_penalty: float = -10
 
 
 # class EnvState
 
 
 class DroneGym(GymnaxEnv):
-    """A gym environment for drone simulations.
-
-    Parameters
-    ----------
-    - params: A `DroneGymParams` object containing the parameters for the environment.
-
-    Methods
-    -------
-    - __init__(self, params: DroneGymParams): Initializes the DroneGym object.
-    - initial_state(self, rng_key): Generates the initial state of the environment.
-    - apply_noise(self, distance, rng_key): Applies noise to the given distance.
-    - step(self, rng_key, state, action=None): Performs a step in the environment.
-    - _sample_observation(self, pos, vel, rng_key): Samples an observation from the environment.
-    - reset(self, rng_key): Resets the environment to its initial state.
-    """
+    """Gym environment for drone simulations."""
 
     @property
     def default_params(self):
@@ -143,17 +130,23 @@ class DroneGym(GymnaxEnv):
         -------
         - An `OrderedDict` representing the initial state of the environment.
         """
-        k_pos, k_step = jrandom.split(rng_key)
+        k_pos, k_vel, k_step = jrandom.split(rng_key, 3)
         initial_pos = jnp.concatenate(
             [
-                self.starting_pos_ego[None] + params.initial_pos_stddev * jrandom.normal(k_pos, [1, self.n_dim]),
+                self.starting_pos_ego[None]
+                + jrandom.uniform(
+                    k_pos,
+                    [1, self.n_dim],
+                    minval=-params.initial_pos_max,
+                    maxval=params.initial_pos_max,
+                ),
                 self.starting_pos_goal[None],
             ],
             axis=0,
         )
         initial_vel = jnp.concatenate(
             [
-                params.initial_vel_stddev * jrandom.normal(k_pos, [self.n_drones, self.n_dim]),
+                params.initial_vel_stddev * jrandom.normal(k_vel, [self.n_drones, self.n_dim]),
                 jnp.zeros_like(self.starting_pos_goal[None]),
             ],
             axis=0,
@@ -270,11 +263,11 @@ class DroneGym(GymnaxEnv):
         is_out_of_time = step >= params.max_steps
 
         # Reward when target is reached
-        reward = 1 / jnp.max(jnp.array([1, goal_distance.squeeze()])) ** 3
+        reward = 0.1 / jnp.max(jnp.array([1, noisy_goal_dist.squeeze()])) ** 2
         # reward = 0
         is_outside = jnp.any(jnp.abs(pos) > params.plot_range)
         is_at_target = (goal_distance <= 1).squeeze()
-        # reward = jnp.where(is_at_target, params.solved_reward, reward)
+        reward = jnp.where(is_at_target & ~reached_goal, params.solved_reward, reward)
 
         # If reached the target, rotate vector pointing to goal pos by 90 degrees
         # rotated_goal = jnp.array([-pos[1, 0], pos[1, 1]])

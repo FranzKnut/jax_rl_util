@@ -45,8 +45,8 @@ class PPOParams(LoggableConfig):
     logging: str = "aim"
     debug: int = 0
     seed: int = -1
-    MODEL: str = "LRU"
-    NUM_UNITS: int = 32
+    MODEL: str = "CTRNN"
+    NUM_UNITS: int = 256
     meta_rl: bool = False
     act_dist_name: str = "normal"
     log_norms: bool = False
@@ -238,7 +238,7 @@ class ActorCriticRNN(nn.Module):
     discrete: bool
     config: PPOParams
     action_limits: jnp.ndarray = None
-    log_std_limits: jnp.ndarray = (-20, 2)
+    log_std_min: jnp.ndarray = 0.001
 
     def dist(self, model_out):
         """Split the output of the actor into mean and std.
@@ -279,18 +279,22 @@ class ActorCriticRNN(nn.Module):
             else:
                 mean = model_out[..., : model_out.shape[-1] // 2]
                 std = model_out[..., model_out.shape[-1] // 2 :]
-
-                std = jnp.clip(std, *self.log_std_limits)
-                return tfp.distributions.Normal(mean, jnp.exp(std))
-                # if not self.action_limits:
-                #     return dist
-                # else:
-                #     tranforms = [scaling_transform, tfp.bijectors.Sigmoid()]
-                #     return tfp.distributions.TransformedDistribution(dist, tfp.bijectors.Chain(tranforms))
+                #     # Squashed Gaussian taken from SAC
+                #     # https://spinningup.openai.com/en/latest/algorithms/sac.html#id1
+                #     std = jnp.tanh(std)
+                #     std = log_std_min + 0.5 * (log_std_max - log_std_min) * (std + 1)
+                # elif log_std_min is not None:
+                #     std = jnp.clip(std, min=log_std_min)
+                dist = tfp.distributions.Normal(mean, jax.nn.softplus(std) + self.log_std_min)
+                if not self.action_limits:
+                    return dist
+                else:
+                    tranforms = [scaling_transform, tfp.bijectors.Sigmoid()]
+                    return tfp.distributions.TransformedDistribution(dist, tfp.bijectors.Chain(tranforms))
 
     @nn.compact
     def __call__(self, hidden, x):
-        """Compute embedding from GRU and then actor and critic MLPs."""
+        """Compute embedding from RNN and then actor and critic MLPs."""
         obs, dones = x
         embedding = nn.Dense(
             self.config.NUM_UNITS, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0), name="emb"
@@ -327,8 +331,8 @@ class ActorCriticRNN(nn.Module):
 class Transition(NamedTuple):
     """A transition used in batch updates."""
 
+    prev_done: jnp.ndarray
     done: jnp.ndarray
-    next_done: jnp.ndarray
     action: jnp.ndarray
     prev_action: jnp.ndarray
     value: jnp.ndarray
@@ -472,8 +476,8 @@ def make_train(config: PPOParams, logger: DummyLogger):
                 next_env_state = eval_env.step(_env_state, action)
 
                 transition = Transition(
-                    done=_env_state.done,
-                    next_done=next_env_state.done,
+                    prev_done=_env_state.done,
+                    done=next_env_state.done,
                     action=action,
                     prev_action=last_act,
                     value=value,
@@ -501,10 +505,10 @@ def make_train(config: PPOParams, logger: DummyLogger):
             runner_state, traj_batch = jax.lax.scan(_env_step, runner_state, None, config.eval_steps)
 
             # For episodes that are done early, get the first occurence of done
-            # ep_until = jnp.where(traj_batch.done.any(axis=0), traj_batch.done.argmax(axis=0), traj_batch.done.shape[0])
+            ep_until = jnp.where(traj_batch.done.any(axis=0), traj_batch.done.argmax(axis=0), traj_batch.done.shape[0])
             # Compute cumsum and get value corresponding to end of episode per batch.
-            # ep_rewards = traj_batch.reward.cumsum(axis=0)[ep_until, jnp.arange(ep_until.shape[-1])].mean()
-            mean_reward = jnp.sum(traj_batch.reward) / jnp.max(jnp.array([jnp.sum(traj_batch.done), 1]))
+            mean_reward = traj_batch.reward.cumsum(axis=0)[ep_until, jnp.arange(ep_until.shape[-1])].mean()
+            # mean_reward = jnp.sum(traj_batch.reward) / jnp.max(jnp.array([jnp.sum(traj_batch.done), 1]))
             return mean_reward, traj_batch
 
         # TRAIN LOOP
@@ -539,14 +543,14 @@ def make_train(config: PPOParams, logger: DummyLogger):
                 next_env_state = next_env_state.replace(obs=normalize(next_env_state.obs, _normalizer_state))
 
                 transition = Transition(
-                    done=env_state.done,
-                    next_done=next_env_state.done,
+                    prev_done=env_state.done,
+                    done=next_env_state.done,
                     action=action,
                     prev_action=last_act,
                     value=value,
                     reward=next_env_state.reward,
                     prev_reward=env_state.reward,
-                    log_prob=log_prob.sum(axis=-1) if not _discrete else log_prob,
+                    log_prob=log_prob.mean(axis=-1) if not _discrete else log_prob,
                     obs=env_state.obs,
                     # next_obs= # next_env_state.obs,
                     hidden=prev_hstate,
@@ -589,7 +593,7 @@ def make_train(config: PPOParams, logger: DummyLogger):
                 def _get_advantages(carry, _batch: tuple[Transition, jax.Array]):
                     gae, next_value = carry
                     _transition, _value = _batch
-                    next_done, reward = _transition.next_done, _transition.reward.squeeze()
+                    next_done, reward = _transition.done, _transition.reward.squeeze()
                     delta = reward + config.gamma * next_value * (1 - next_done) - _value
                     gae = delta + config.gamma * config.gae_lambda * (1 - next_done) * gae
                     return (gae, _value), gae
@@ -626,7 +630,7 @@ def make_train(config: PPOParams, logger: DummyLogger):
                                 [x, transition.prev_action, transition.prev_reward.reshape((*x.shape[:2], 1))],
                                 axis=-1,
                             )
-                        _, pi, _values = network.apply(params, _init_hstate, (x, transition.done))
+                        _, pi, _values = network.apply(params, _init_hstate, (x, transition.prev_done))
 
                         if env_info["act_clip"]:
                             action = jnp.clip(transition.action, *action_clip)
@@ -634,7 +638,7 @@ def make_train(config: PPOParams, logger: DummyLogger):
                             action = transition.action
                         log_prob = pi.log_prob(action)
                         if not _discrete:
-                            log_prob = log_prob.sum(axis=-1)
+                            log_prob = log_prob.mean(axis=-1)
 
                         # CALCULATE VALUE LOSS
                         value_pred_clipped = transition.value + (_values - transition.value).clip(
@@ -645,7 +649,6 @@ def make_train(config: PPOParams, logger: DummyLogger):
                         value_loss = 0.5 * jnp.maximum(value_losses, value_losses_clipped).mean()
 
                         # CALCULATE ACTOR LOSS
-                        # Cumsum of log_probs since they depend on previous actions
                         diff = log_prob - transition.log_prob
                         diff = jnp.clip(diff, max=10)  # HACK avoids some NaNs!
                         ratio = jnp.exp(diff)
@@ -753,7 +756,7 @@ def make_train(config: PPOParams, logger: DummyLogger):
                         "obs": t.obs,
                         "action": t.action,
                         "reward": t.reward,
-                        "done": t.next_done,
+                        "done": t.done,
                         **t.info,
                         **t.state,
                     }
@@ -761,15 +764,15 @@ def make_train(config: PPOParams, logger: DummyLogger):
                 out_dir = f"data/{config.env_params.env_name}"
                 os.makedirs(out_dir, exist_ok=True)
                 # Save last episode data for plotting.
-                np.savez(f"{out_dir}/ppo_last_trajectory.npz", **_prep_ep(_traj))
+                np.savez(f"{out_dir}/ppo_last_trajectory_{str(config.seed)}.npz", **_prep_ep(_traj))
 
                 # Save best episode data for plotting.
-                np.savez(f"{out_dir}/ppo_best_trajectory.npz", **_prep_ep(trajectories))
+                np.savez(f"{out_dir}/ppo_best_trajectory_{str(config.seed)}.npz", **_prep_ep(trajectories))
 
                 _prep_ep(trajectories)
                 env_params = getattr(env, "params")
                 if env_params:
-                    with open(f"{out_dir}/ppo_env_params.pkl", "wb") as f:
+                    with open(f"{out_dir}/ppo_env_params_{str(config.seed)}.pkl", "wb") as f:
                         pickle.dump(env_params, f)
         return eval_reward if config.eval_every else None
 
@@ -787,12 +790,12 @@ def train_and_eval(config: PPOParams, logger=DummyLogger()):
             # CUSTOM Plotting
             out_dir = f"data/{config.env_params.env_name}"
             # Plot best trajectory
-            plot_from_file(f"{out_dir}/ppo_best_trajectory.npz", f"{out_dir}/ppo_env_params.pkl")
+            plot_from_file(f"{out_dir}/ppo_best_trajectory_{str(config.seed)}.npz", f"{out_dir}/ppo_env_params_{str(config.seed)}.pkl")
             logger.log_img(
                 "best_trajectories", plt.gcf(), caption="Total reward: {:.2f}".format(logger["best_eval_reward"])
             )
             # Plot last trajectory
-            plot_from_file(f"{out_dir}/ppo_last_trajectory.npz", f"{out_dir}/ppo_env_params.pkl")
+            plot_from_file(f"{out_dir}/ppo_last_trajectory_{str(config.seed)}.npz", f"{out_dir}/ppo_env_params_{str(config.seed)}.pkl")
             logger.log_img("last_trajectories", plt.gcf(), caption=f"Total reward: {result:.2f}")
 
         return logger["best_eval_reward"]

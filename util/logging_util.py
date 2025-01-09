@@ -2,7 +2,6 @@
 
 import collections
 import contextlib
-from math import pi
 import os
 import traceback
 from argparse import Namespace
@@ -13,24 +12,12 @@ from typing import Callable
 import jax
 import jax.numpy as jnp
 import jax.tree_util as jtu
-from matplotlib import pyplot as plt
 import numpy as np
 import simple_parsing
 from jax.tree_util import tree_reduce
+from matplotlib import pyplot as plt
 from PIL import Image
 from typing_extensions import override
-
-
-class ExceptionPrinter(contextlib.AbstractContextManager):
-    """Hacky way to print exceptions in wandb agent."""
-
-    def __enter__(self):  # noqa
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb):  # noqa
-        if exc_type is not None:
-            traceback.print_exception(exc_type, exc_val, exc_tb)
-        return False
 
 
 @dataclass
@@ -280,11 +267,7 @@ class AimLogger(DummyLogger):
         else:
             _img = np.array(img, dtype=np.uint8)
         self.log(
-            {
-                name: aim.Image(
-                    Image.fromarray(_img, mode=pil_mode), caption=caption, format=format
-                )
-            },
+            {name: aim.Image(Image.fromarray(_img, mode=pil_mode), caption=caption, format=format)},
             step=step,
         )
 
@@ -376,6 +359,18 @@ class WandbLogger(DummyLogger):
     def log_video(self, name, frames, step=None, fps=30, caption=""):
         """Log a video to wandb."""
         wandb.log({name: wandb.Video(frames, fps=fps, caption=caption)}, step=step)
+
+
+class ExceptionPrinter(contextlib.AbstractContextManager):
+    """Ensures that exceptions are logged from wandb agents."""
+
+    def __enter__(self):  # noqa
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):  # noqa
+        if exc_type is not None:
+            traceback.print_exception(exc_type, exc_val, exc_tb)
+        return False
 
 
 def wandb_wrapper(project_name, func: Callable | dict[str, Callable], hparams: LoggableConfig):
