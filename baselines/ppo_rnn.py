@@ -7,6 +7,7 @@ import warnings
 from dataclasses import dataclass, field
 from typing import Dict, NamedTuple, Sequence
 
+import distrax
 import flashbax as fbx
 import flax.linen as nn
 import jax
@@ -45,8 +46,8 @@ class PPOParams(LoggableConfig):
     logging: str = "aim"
     debug: int = 0
     seed: int = -1
-    MODEL: str = "CTRNN"
-    NUM_UNITS: int = 256
+    MODEL: str = "LRU"
+    NUM_UNITS: int = 64
     meta_rl: bool = False
     act_dist_name: str = "normal"
     log_norms: bool = False
@@ -60,24 +61,24 @@ class PPOParams(LoggableConfig):
     eval_batch_size: int = 10
     collect_horizon: int = 20
     rollout_horizon: int = 10
-    train_batch_size: int = 256
-    update_steps: int = 32
+    train_batch_size: int = 32
+    update_steps: int = 10
     updates_per_batch: int = 4
 
     # Optimization settings
     LR: float = 3e-4
-    gamma: float = 0.9
+    gamma: float = 0.99
     gae_lambda: float = 0.95
     clip_eps: float = 0.2
-    ent_coef: float = 0.0
+    ent_coef: float = 1e-5
     vf_coef: float = 0.5
-    gradient_clip: float | None = 0.5
+    gradient_clip: float | None = None
     anneal_lr: bool = False
 
     # Env settings
     env_params: EnvironmentConfig = field(
         default_factory=lambda: EnvironmentConfig(
-            env_name="UmbrellaChain-bsuite",
+            env_name="MemoryChain-bsuite",
             batch_size=512,
         )
     )
@@ -184,15 +185,20 @@ class LRU(nn.Module):
 
     config: PPOParams
     d_hidden: int = 64
+    num_layers: int = 1
 
     @nn.compact
     def __call__(self, carry, x):
         """Apply the module."""
+        from models.seq_models import MultiLayerRNN
+
         from jax_rtrl.models.lru import OnlineLRULayer
 
         x = jax.tree.map(lambda a: jnp.swapaxes(a, 0, 1), x)
         ins, resets = x
-        carry, out = jax.vmap(OnlineLRULayer(self.config.NUM_UNITS, self.d_hidden))(carry, ins, resets)
+        model = OnlineLRULayer(self.config.NUM_UNITS, self.d_hidden)
+        # model = MultiLayerRNN([self.config.NUM_UNITS] * self.num_layers, OnlineLRULayer, {"d_hidden": self.d_hidden})
+        carry, out = jax.vmap(model)(carry, ins, resets=resets)
         return carry, jnp.swapaxes(out, 0, 1)
 
     def initialize_carry(self, rng, input_shape):
@@ -200,6 +206,7 @@ class LRU(nn.Module):
         batch_size = input_shape[0:1] if len(input_shape) > 1 else ()
         hidden_init = jnp.zeros((*batch_size, self.d_hidden), dtype=jnp.complex64)
         return hidden_init
+        return [hidden_init] * self.num_layers
 
 
 class MLP(nn.Module):
@@ -277,15 +284,17 @@ class ActorCriticRNN(nn.Module):
 
                 return NormalTanhDistribution(event_size=self.action_dim).create_dist(model_out)
             else:
-                mean = model_out[..., : model_out.shape[-1] // 2]
-                std = model_out[..., model_out.shape[-1] // 2 :]
+                mean = model_out
+                # mean = model_out[..., : model_out.shape[-1] // 2]
+                # std = model_out[..., model_out.shape[-1] // 2 :]
                 #     # Squashed Gaussian taken from SAC
                 #     # https://spinningup.openai.com/en/latest/algorithms/sac.html#id1
                 #     std = jnp.tanh(std)
                 #     std = log_std_min + 0.5 * (log_std_max - log_std_min) * (std + 1)
                 # elif log_std_min is not None:
-                #     std = jnp.clip(std, min=log_std_min)
-                dist = tfp.distributions.Normal(mean, jax.nn.softplus(std) + self.log_std_min)
+                #     std = jnp.clip(std, min=log_std_min
+                log_std = self.param("log_std", nn.initializers.ones, (self.action_dim,))
+                dist = distrax.LogStddevNormal(mean, log_std)
                 if not self.action_limits:
                     return dist
                 else:
@@ -308,7 +317,7 @@ class ActorCriticRNN(nn.Module):
             embedding
         )
         actor_mean = nn.relu(actor_mean)
-        action_dim = self.action_dim if self.discrete else self.action_dim * 2
+        action_dim = self.action_dim if self.discrete or self.config.act_dist_name == "normal" else self.action_dim * 2
         actor_mean = nn.Dense(action_dim, kernel_init=orthogonal(0.01), bias_init=constant(0.0), name="actor1")(
             actor_mean
         )
@@ -650,7 +659,7 @@ def make_train(config: PPOParams, logger: DummyLogger):
 
                         # CALCULATE ACTOR LOSS
                         diff = log_prob - transition.log_prob
-                        diff = jnp.clip(diff, max=10)  # HACK avoids some NaNs!
+                        # diff = jnp.clip(diff, max=10)  # HACK avoids some NaNs!
                         ratio = jnp.exp(diff)
                         if config.normalize_gae:
                             _gae = (_gae - _gae.mean()) / (_gae.std() + 1e-8)
@@ -790,12 +799,18 @@ def train_and_eval(config: PPOParams, logger=DummyLogger()):
             # CUSTOM Plotting
             out_dir = f"data/{config.env_params.env_name}"
             # Plot best trajectory
-            plot_from_file(f"{out_dir}/ppo_best_trajectory_{str(config.seed)}.npz", f"{out_dir}/ppo_env_params_{str(config.seed)}.pkl")
+            plot_from_file(
+                f"{out_dir}/ppo_best_trajectory_{str(config.seed)}.npz",
+                f"{out_dir}/ppo_env_params_{str(config.seed)}.pkl",
+            )
             logger.log_img(
                 "best_trajectories", plt.gcf(), caption="Total reward: {:.2f}".format(logger["best_eval_reward"])
             )
             # Plot last trajectory
-            plot_from_file(f"{out_dir}/ppo_last_trajectory_{str(config.seed)}.npz", f"{out_dir}/ppo_env_params_{str(config.seed)}.pkl")
+            plot_from_file(
+                f"{out_dir}/ppo_last_trajectory_{str(config.seed)}.npz",
+                f"{out_dir}/ppo_env_params_{str(config.seed)}.pkl",
+            )
             logger.log_img("last_trajectories", plt.gcf(), caption=f"Total reward: {result:.2f}")
 
         return logger["best_eval_reward"]

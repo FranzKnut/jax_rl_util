@@ -28,9 +28,8 @@ from jax import numpy as jnp
 
 from . import *  # noqa
 from .dronegym import DroneGym
-from .dronegym import EnvParams as DroneGymParams
-from .tribead import TriangleJax
 from .env_util import make_obs_mask
+from .tribead import TriangleJax
 from .wrappers import (
     EpisodeWrapper,
     FlatObsBraxWrapper,

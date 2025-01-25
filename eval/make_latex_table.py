@@ -16,7 +16,7 @@ SWEEPS = ["olx8u5gy", "bkngzbt9"]
 # df = df[df["Sweep"].isin(SWEEPS)]
 
 # COLUMNS PRESENT IN DF ARE OVERWRITTEN!
-df = pull_fields(df, FIELDS)
+df = pull_fields(df)
 df[FIELDS] = df[FIELDS].fillna("none")
 df[FIELDS] = df[FIELDS].apply(lambda r: r.str.replace("_", " ") if r.dtype == "object" else r)
 df.columns = df.columns.str.replace("_", " ")

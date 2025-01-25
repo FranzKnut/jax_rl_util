@@ -2,59 +2,31 @@
 
 from dataclasses import dataclass, field, replace
 from functools import partial
+from typing import Any, Callable, Optional, Union
 
+import jax
+import jax.numpy as jnp
+import jax.tree_util as jtu
 import optax
+from optax._src import base, wrappers
 
 
 @dataclass(frozen=True)
 class OptimizerConfig:
-    """Class representing the parameters for an optimizer.
+    """Class representing the parameters for an optimizer."""
 
-    Attributes
-    ----------
-        opt_name (str): The name of the optimizer.
-        learning_rate (float): The learning rate for the optimizer.
-        kwargs (dict): Additional keyword arguments for the optimizer.
-        decay_type (str): The type of decay for the learning rate.
-        lr_kwargs (dict): Additional keyword arguments for the learning rate decay.
-        weight_decay (float): The weight decay for the optimizer.
-        gradient_clip (float): The value to clip the gradients.
-        multi_step (int): number of steps to accumulate.
-        reduce_on_plateau (bool): Reduce learning rate on plateau.
-    """
-
-    opt_name: str = "adam"
-    learning_rate: float = 1e-3
-    kwargs: dict = field(default_factory=dict, hash=False)
-    decay_type: str | None = None
-    lr_kwargs: dict = field(default_factory=dict, hash=False)
-    weight_decay: float = 0.0
-    gradient_clip: float | None = None
-    multi_step: int | None = None
-    reduce_on_plateau: bool = False
-
-
-def label_subtrees(params, subtrees):
-    """Make Prefix subtree.
-
-    Parameters
-    ----------
-    params : tree
-        A nested dict of parameters.
-    subtrees : list of subtree names
-        List of subtree names to replace.
-
-    Returns
-    -------
-    tree
-        A subtree with the same structure as params,
-        but with the name matching subtrees replaced by their name.
-    """
-    for k, v in params.items():
-        if k in subtrees:
-            return k
-        else:
-            return label_subtrees(v, subtrees)
+    # fmt: off
+    opt_name: str = "sgd"                                       # opt_name (str): The name of the optimizer.
+    learning_rate: float = 1e-3                                 # learning_rate (float): The learning rate for the optimizer.
+    kwargs: dict = field(default_factory=dict, hash=False)      # kwargs (dict): Additional keyword arguments for the optimizer.
+    lr_decay_type: str | None = None                            # decay_type (str): The type of decay for the learning rate.
+    lr_kwargs: dict = field(default_factory=dict, hash=False)   # lr_kwargs (dict): Additional keyword arguments for the learning rate decay.
+    reg_type: str | None = None                                 # reg_type (str): The type of weight regularization.
+    weight_decay: float = 0.0                                   # weight_decay (float): The strenght of weight regularization.
+    gradient_clip: float | None = None                          # gradient_clip (float): The value to clip the gradients.
+    multi_step: int | None = None                               # multi_step (int): number of steps to accumulate.
+    reduce_on_plateau: bool = False                             # reduce_on_plateau (bool): Reduce learning rate on plateau.
+    # fmt: on
 
 
 def make_optimizer(config=OptimizerConfig(), direction="min") -> optax.GradientTransformation:
@@ -91,7 +63,7 @@ def make_optimizer(config=OptimizerConfig(), direction="min") -> optax.GradientT
     else:
         weight_decay = -weight_decay
 
-    if config.decay_type == "cosine_warmup":
+    if config.lr_decay_type == "cosine_warmup":
         """Args:
             init_value: Initial value for the scalar to be annealed.
             peak_value: Peak value for scalar to be annealed at end of warmup.
@@ -114,7 +86,7 @@ def make_optimizer(config=OptimizerConfig(), direction="min") -> optax.GradientT
             warmup_steps=config.lr_kwargs["warmup_steps"],
         )
 
-    elif config.decay_type == "warmup":
+    elif config.lr_decay_type == "warmup":
         """Schedule with linear transition from ``init_value`` to ``end_value``.
 
         Args:
@@ -137,7 +109,7 @@ def make_optimizer(config=OptimizerConfig(), direction="min") -> optax.GradientT
             end_value=learning_rate,
             transition_steps=config.lr_kwargs["warmup_steps"],
         )
-    elif config.decay_type == "cosine":
+    elif config.lr_decay_type == "cosine":
         """Args:
             init_value: An initial value for the learning rate.
             decay_steps: Positive integer - the number of steps for which to apply
@@ -153,7 +125,7 @@ def make_optimizer(config=OptimizerConfig(), direction="min") -> optax.GradientT
         learning_rate = optax.cosine_decay_schedule(
             learning_rate, decay_steps=config.lr_kwargs["decay_steps"], alpha=config.lr_kwargs.get("alpha", 0)
         )
-    elif config.decay_type == "exponential":
+    elif config.lr_decay_type == "exponential":
         """Args:
             init_value: the initial learning rate.
             transition_steps: must be positive. See optax docs for decay computation.
@@ -173,8 +145,8 @@ def make_optimizer(config=OptimizerConfig(), direction="min") -> optax.GradientT
             config.lr_kwargs.get("staircase", False),
             config.lr_kwargs.get("end_value", None),
         )
-    elif config.decay_type is not None:
-        raise ValueError(f"Decay type {config.decay_type} unknown.")
+    elif config.lr_decay_type is not None:
+        raise ValueError(f"Decay type {config.lr_decay_type} unknown.")
 
     if weight_decay and config.opt_name in ["adam"]:
         print(f"WARNING: Weight decay not supported for {config.opt_name}, use adamw.")
@@ -182,10 +154,16 @@ def make_optimizer(config=OptimizerConfig(), direction="min") -> optax.GradientT
     @optax.inject_hyperparams
     def _make_opt(learning_rate):
         _opt = getattr(optax, config.opt_name)
+
+        reg_types = {
+            "l2": optax.add_decayed_weights(weight_decay),
+            "l1": add_decayed_weights_l1(weight_decay),
+        }
+
         # Create optimizer from optax chain
         optimizer = optax.chain(
             # Weight decay
-            optax.add_decayed_weights(weight_decay)
+            reg_types.get(config.reg_type, optax.identity())
             if config.opt_name not in ["adam", "adamw"]
             else optax.identity(),  # , mask=decay_mask
             # Gradient clipping
@@ -209,6 +187,61 @@ def make_optimizer(config=OptimizerConfig(), direction="min") -> optax.GradientT
         return optimizer
 
     return _make_opt(learning_rate)
+
+
+def add_decayed_weights_l1(
+    weight_decay: Union[float, jax.Array] = 0.0, mask: Optional[Union[Any, Callable[[base.Params], Any]]] = None
+) -> base.GradientTransformation:
+    """Add the derivative of L1 loss of the params scaled by `weight_decay`.
+
+    More precisely, this will add sign(p) for each entry p.
+
+    Args:
+      weight_decay: A scalar weight decay rate.
+      mask: A tree with same structure as (or a prefix of) the params PyTree,
+        or a Callable that returns such a pytree given the params/updates.
+        The leaves should be booleans, `True` for leaves/subtrees you want to
+        apply the transformation to, and `False` for those you want to skip.
+
+    Returns:
+      A `GradientTransformation` object.
+    """
+
+    def update_fn(updates, state, params):
+        if params is None:
+            raise ValueError(base.NO_PARAMS_MSG)
+        additions = jtu.tree_map(lambda p: jnp.sign(p), params)
+        updates = jtu.tree_map(lambda g, p: g + weight_decay * p, updates, additions)
+        return updates, state
+
+    # If mask is not `None`, apply mask to the gradient transformation.
+    # E.g. it is common to skip weight decay on bias units and batch stats.
+    if mask is not None:
+        return wrappers.masked(base.GradientTransformation(base.init_empty_state, update_fn), mask)
+    return base.GradientTransformation(base.init_empty_state, update_fn)
+
+
+def label_subtrees(params, subtrees):
+    """Make Prefix subtree.
+
+    Parameters
+    ----------
+    params : tree
+        A nested dict of parameters.
+    subtrees : list of subtree names
+        List of subtree names to replace.
+
+    Returns
+    -------
+    tree
+        A subtree with the same structure as params,
+        but with the name matching subtrees replaced by their name.
+    """
+    for k, v in params.items():
+        if k in subtrees:
+            return k
+        else:
+            return label_subtrees(v, subtrees)
 
 
 def make_multi_transform(configs: dict, label_fn: callable = None):
@@ -257,13 +290,13 @@ def map_nested_fn(fn):
     return map_fn
 
 
-def make_optimizer_for_model(model_name: str, config: OptimizerConfig, no_decay_lr_factor=1.0):
+def make_optimizer_for_model(model_name: str, config=OptimizerConfig(), no_decay_lr_factor=1.0):
     """Make optax optimizer for given model name and config."""
     if "s5" in model_name:
         no_decay_params = ["B", "Lambda_re", "Lambda_im", "log_step", "norm"]
     elif "lru" in model_name:
         no_decay_params = ["B_re", "B_im", "nu_log", "theta_log", "gamma_log"]
-    elif model_name in ["rflo", "bptt"]:
+    elif model_name in ["ctrnn", "rflo", "bptt"]:
         no_decay_params = ["W", "tau"]
     else:
         return make_optimizer(config)
