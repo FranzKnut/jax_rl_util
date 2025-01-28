@@ -102,6 +102,8 @@ def render_frames(_env: gym.Env, states: list, start_idx: int = None, end_idx: i
 
     frames = []
     for _state in states:
+        if len(_state.q.shape) >=2:
+            _state = jax.tree.map(lambda x: x[0], _state)
         frames.append(render_gym(_env, _state))
 
     if isinstance(_env.unwrapped, GymnaxBraxWrapper):

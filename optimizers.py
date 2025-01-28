@@ -164,7 +164,7 @@ def make_optimizer(config=OptimizerConfig(), direction="min") -> optax.GradientT
         optimizer = optax.chain(
             # Weight decay
             reg_types.get(config.reg_type, optax.identity())
-            if config.opt_name not in ["adam", "adamw"]
+            if config.opt_name not in ["adamw"]
             else optax.identity(),  # , mask=decay_mask
             # Gradient clipping
             optax.clip_by_global_norm(config.gradient_clip) if config.gradient_clip else optax.identity(),
