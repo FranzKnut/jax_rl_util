@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from typing import Dict, NamedTuple, Sequence
 
 import distrax
+from envs.env_util import compute_avg_reward
 import flashbax as fbx
 import flax.linen as nn
 import jax
@@ -512,12 +513,7 @@ def make_train(config: PPOParams, logger: DummyLogger):
                 return runner_state, transition
 
             runner_state, traj_batch = jax.lax.scan(_env_step, runner_state, None, config.eval_steps)
-
-            # For episodes that are done early, get the first occurence of done
-            ep_until = jnp.where(traj_batch.done.any(axis=0), traj_batch.done.argmax(axis=0), traj_batch.done.shape[0])
-            # Compute cumsum and get value corresponding to end of episode per batch.
-            mean_reward = traj_batch.reward.cumsum(axis=0)[ep_until, jnp.arange(ep_until.shape[-1])].mean()
-            # mean_reward = jnp.sum(traj_batch.reward) / jnp.max(jnp.array([jnp.sum(traj_batch.done), 1]))
+            mean_reward = compute_avg_reward(traj_batch)
             return mean_reward, traj_batch
 
         # TRAIN LOOP

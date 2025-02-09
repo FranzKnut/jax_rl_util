@@ -16,7 +16,6 @@
 """Wrappers to support Brax and Gymnax training."""
 
 from dataclasses import dataclass, field
-from functools import partial
 from typing import Iterable
 
 import brax

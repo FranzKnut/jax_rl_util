@@ -148,8 +148,8 @@ def make_optimizer(config=OptimizerConfig(), direction="min") -> optax.GradientT
     elif config.lr_decay_type is not None:
         raise ValueError(f"Decay type {config.lr_decay_type} unknown.")
 
-    if weight_decay and config.opt_name in ["adam"]:
-        print(f"WARNING: Weight decay not supported for {config.opt_name}, use adamw.")
+    if weight_decay == "l2" and config.opt_name in ["adam"]:
+        print(f"WARNING: Weight decay incorrect for {config.opt_name}, consider using adamw.")
 
     @optax.inject_hyperparams
     def _make_opt(learning_rate):

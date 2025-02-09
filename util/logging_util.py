@@ -14,7 +14,6 @@ import jax.numpy as jnp
 import jax.tree_util as jtu
 import numpy as np
 import simple_parsing
-from jax.tree_util import tree_reduce
 from matplotlib import pyplot as plt
 from PIL import Image
 from typing_extensions import override
@@ -463,12 +462,12 @@ def leaf_norms(tree):
     """Return Dict of leaf names and their norms."""
     flattened, _ = jtu.tree_flatten_with_path(tree)
     flattened = {jtu.keystr(k): v for k, v in flattened}
-    return {k: tree_reduce(lambda x, y: x + jnp.linalg.norm(y), v, initializer=0) for k, v in flattened.items()}
+    return {k: jax.tree.reduce(lambda x, y: x + jnp.linalg.norm(y), v, initializer=0) for k, v in flattened.items()}
 
 
 def tree_norm(tree, **kwargs):
     """Sum of the norm of all elements in the tree."""
-    return tree_reduce(lambda x, y: x + jnp.linalg.norm(y, **kwargs), tree, initializer=0)
+    return jax.tree.reduce(lambda x, y: x + jnp.linalg.norm(y, **kwargs), tree, initializer=0)
 
 
 def calc_norms(norm_params: dict = {}, leaf_norm_params: dict = {}):

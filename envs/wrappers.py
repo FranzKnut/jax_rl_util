@@ -298,7 +298,7 @@ class RandomizedAutoResetWrapper(Wrapper):
         reset_key, step_key = jrandom.split(rng)
         state = self.env.reset(reset_key)
         state.info["rng"] = step_key
-        return state
+        return state.replace(done=jnp.ones_like(state.done, dtype=state.done.dtype))
 
     def step(self, state: State, action: jnp.ndarray) -> State:
         """Resample new initial state for all parallel envs."""

@@ -2,10 +2,20 @@
 
 from typing import Iterable
 
+import brax.envs
 import gymnasium as gym
 import jax
 import numpy as np
 from jax import numpy as jnp
+
+
+def compute_avg_reward(states: brax.envs.State):
+    """Compute the average reward per episode from a batch of trajectories."""
+    # For episodes that are done early, get the first occurence of done
+    ep_until = jnp.where(states.done.any(axis=0), states.done.argmax(axis=0), states.done.shape[0])
+    # Compute cumsum and get value corresponding to end of episode per batch.
+    # mean_reward = jnp.sum(traj_batch.reward) / jnp.max(jnp.array([jnp.sum(traj_batch.done), 1]))
+    return states.reward.cumsum(axis=0)[ep_until, jnp.arange(ep_until.shape[-1])].mean()
 
 
 def render_brax(env, states, render_steps=100, render_start=0, camera=None):
@@ -102,7 +112,7 @@ def render_frames(_env: gym.Env, states: list, start_idx: int = None, end_idx: i
 
     frames = []
     for _state in states:
-        if len(_state.q.shape) >=2:
+        if len(_state.q.shape) >= 2:
             _state = jax.tree.map(lambda x: x[0], _state)
         frames.append(render_gym(_env, _state))
 
