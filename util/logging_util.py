@@ -7,25 +7,27 @@ import traceback
 from argparse import Namespace
 from dataclasses import asdict, dataclass, replace
 from operator import attrgetter
-from typing import Callable
+from typing import Callable, Literal
 
 import jax
 import jax.numpy as jnp
 import jax.tree_util as jtu
 import numpy as np
 import simple_parsing
+from jax.tree_util import tree_reduce
 from matplotlib import pyplot as plt
 from PIL import Image
 from typing_extensions import override
 
 
 @dataclass
-class LoggableConfig(simple_parsing.Serializable, decode_into_subclasses=True):
-    """Base configuration for experiments logged to wandb or aim."""
+class LoggableConfig(simple_parsing.Serializable):
+    """Base class for loggable configuration dataclasses."""
 
-    logging: str | None = "aim"
-    repo: str | None = None  # Used for entity in wandb
-    project_name: str | None = "default"
+    decode_into_subclasses = True
+    logging: Literal["wandb", "aim"] | None = "aim"
+    repo: str | None = "datenvorsprung"
+    project_name: str | None = "DCM"
     debug: bool | int = False
     log_code: bool = False
 
@@ -102,7 +104,11 @@ class DummyLogger(dict, object):
         pass
 
     def log_img(self, name, img, step=None, caption="", pil_mode="RGB"):
-        """Log an image to wandb."""
+        """Log an image."""
+
+    def log_figure(self, name, fig, step=None):
+        """Log a figure."""
+        self.log({name: fig}, step=step)
 
     def log_video(self, name: str, frames, step: int = None, fps=4, **kwargs):
         """Save a video given as array.
@@ -174,12 +180,17 @@ class AimLogger(DummyLogger):
         return "AimLogger"
 
     @override
-    def __init__(self, name, repo=None, hparams=None, run_name="", run_hash=None):
+    def __init__(self, hparams: LoggableConfig, run_name: str | None = None, run_hash=None):
         """Create aim run."""
         global aim
         import aim
 
-        self.run = aim.Run(experiment=name, repo=repo, run_hash=run_hash, log_system_params=True)
+        self.run = aim.Run(
+            experiment=hparams.project_name,
+            repo=hparams.repo,
+            run_hash=run_hash,
+            log_system_params=True,
+        )
         self.run_artifacts_dir = os.path.join("artifacts/aim", self.run.hash)
         self.run.set_artifacts_uri("file:///" + self.run_artifacts_dir)
         hparams = hparams or {}
@@ -230,8 +241,8 @@ class AimLogger(DummyLogger):
         return self.run[key]
 
     @override
-    def report_successful_finish(self, all_param_norms=None, x_vals=None):
-        """Make lineplots for param norms and block until all metrics are logged."""
+    def finalize(self, ret_code: int = 0, all_param_norms=None, x_vals=None):
+        """Finalize the Run."""
         if all_param_norms:
             import plotly.express as px
 
@@ -243,12 +254,8 @@ class AimLogger(DummyLogger):
                     if v
                 }
             )
-
-        self.run.report_successful_finish(block=True)
-
-    @override
-    def finalize(self, _=None):
-        """Finalize the Run."""
+        if ret_code == 0:
+            self.run.report_successful_finish()
         self.run.finalize()
 
     @override
@@ -261,14 +268,19 @@ class AimLogger(DummyLogger):
     def log_img(self, name, img, step=None, caption="", pil_mode="RGB", format="png"):
         """Log an image to wandb."""
         if isinstance(img, plt.Figure):
-            _img = fig_to_array(img)
-            pil_mode = "RGBA"
-        else:
-            _img = np.array(img, dtype=np.uint8)
+            img = img
         self.log(
-            {name: aim.Image(Image.fromarray(_img, mode=pil_mode), caption=caption, format=format)},
+            {
+                name: aim.Image(
+                    Image.fromarray(np.asarray(img, dtype=np.uint8), mode=pil_mode), caption=caption, format=format
+                )
+            },
             step=step,
         )
+
+    def log_figure(self, name, fig, step=None):
+        """Log a figure to aim."""
+        self.log({name: aim.Figure(fig)}, step=step)
 
     @override
     def log_video(self, name, frames, step=None, fps=30, caption=""):
@@ -285,26 +297,60 @@ class AimLogger(DummyLogger):
 class WandbLogger(DummyLogger):
     """Wandb-like interface for aim."""
 
+    def __init__(self, hparams: LoggableConfig, run_name: str | None = None):
+        """Make WandbLogger.
+
+        Parameters
+        ----------
+        hparams : LoggableConfig
+            Configuration for the run.
+        run_name : str | None, optional
+            Name for the run in wandb.
+        """
+        global wandb
+        import wandb
+
+        self.run = wandb.init(
+            name=run_name,
+            project=hparams.project_name,
+            config=hparams,
+            entity=hparams.repo,
+            mode="disabled" if hparams.debug else "online",
+            dir="logs/wandb/",
+            save_code=False,
+        )
+
+        # HACK: Backward compatibility
+        self.run.config["optimizer_config"]["lr_decay_type"] = self.run.config["optimizer_config"]["decay_type"]
+        del self.run.config["optimizer_config"]["decay_type"]
+
+        # If called by wandb.agent,
+        # this config will be set by Sweep Controller
+        self.hparams = hparams.from_dict(
+            update_nested_dict(hparams.to_dict(), self.run.config),
+            drop_extra_fields=False,
+        )
+        if hparams.log_code:
+            self.run.log_code()
+
     @override
     def log(self, metrics, step=None, context=None):
         """Log metrics to wandb."""
-        wandb.log(metrics, step=step)
+        self.run.log(metrics, step=step)
 
     def log_dist(self, values: dict, step=None, context=None):
         """Log the given distribution with wandb."""
         # TODO: allow sequences.Distributions
         values = {k: wandb.Histogram(v) for k, v in values.items()}
-        wandb.log(values, step=step)
+        self.run.log(values, step=step)
 
     def __setitem__(self, key, value):
         """Log scalar for wandb."""
-        wandb.run.summary[key] = value
-        self.flush()
+        self.run.summary[key] = value
 
     def __getitem__(self, key):
         """Get value from aim run."""
-        self.flush()
-        return wandb.run.summary[key]
+        return self.run.summary[key]
 
     @override
     def flush(self):
@@ -312,11 +358,11 @@ class WandbLogger(DummyLogger):
         wandb.Api().flush()
 
     @override
-    def finalize(self, all_param_norms: dict = None, x_vals=None):
+    def finalize(self, ret_code: int, all_param_norms: dict = None, x_vals=None):
         """Make lineplots for all items in all_param_norms."""
         if all_param_norms:
             all_param_norms = tree_stack(all_param_norms)
-            wandb.log(
+            self.run.log(
                 {
                     f"Params/{k}": wandb.plot.line_series(
                         xs=x_vals,
@@ -327,6 +373,7 @@ class WandbLogger(DummyLogger):
                     for k, v in all_param_norms.items()
                 }
             )
+        self.run.finish(ret_code)
 
     @override
     def log_params(self, params_dict):
@@ -337,14 +384,14 @@ class WandbLogger(DummyLogger):
         params_dict : dict
             Dict of hyperparameters.
         """
-        wandb.run.config.update(params_dict, allow_val_change=True)
+        self.run.config.update(params_dict, allow_val_change=True)
 
     @override
     def log_model(self, name, path):
         """Upload a file to wandb."""
         artifact = wandb.Artifact(name.replace("/", "-"), "model")
         artifact.add_dir(path)
-        wandb.log_artifact(artifact)
+        self.run.log_artifact(artifact)
 
     @override
     def log_img(self, name, img, step=None, caption="", pil_mode="RGB", format=None):
@@ -357,11 +404,11 @@ class WandbLogger(DummyLogger):
     @override
     def log_video(self, name, frames, step=None, fps=30, caption=""):
         """Log a video to wandb."""
-        wandb.log({name: wandb.Video(frames, fps=fps, caption=caption)}, step=step)
+        self.run.log({name: wandb.Video(frames, fps=fps, caption=caption)}, step=step)
 
 
 class ExceptionPrinter(contextlib.AbstractContextManager):
-    """Ensures that exceptions are logged from wandb agents."""
+    """Hacky way to print exceptions in wandb agent."""
 
     def __enter__(self):  # noqa
         return self
@@ -370,49 +417,6 @@ class ExceptionPrinter(contextlib.AbstractContextManager):
         if exc_type is not None:
             traceback.print_exception(exc_type, exc_val, exc_tb)
         return False
-
-
-def wandb_wrapper(project_name, func: Callable | dict[str, Callable], hparams: LoggableConfig):
-    """Init wandb and evaluate function.
-
-    Parameters
-    ----------
-    project_name : str
-        Name of the project
-    func : Callable | dict[str, Callable]
-        Function to evaluate, if dict, pick function by project_name.
-    hparams : LoggableConfig
-        Hyperparameters for the run.
-        Will be updated by wandb.config if called by wandb.agent.
-    """
-    global wandb
-    import wandb
-
-    logger = WandbLogger()
-
-    with (
-        wandb.init(
-            project=project_name,
-            config=hparams,
-            mode="disabled" if hparams.debug else "online",
-            dir="logs/",
-            save_code=False,
-            entity=hparams.repo,
-        ),
-        ExceptionPrinter(),
-    ):
-        # If called by wandb.agent,
-        # this config will be set by Sweep Controller
-        hparams = hparams.from_dict(
-            update_nested_dict(hparams.to_dict(), wandb.config),
-            drop_extra_fields=False,
-        )
-        if hparams.log_code:
-            wandb.run.log_code()
-
-        if isinstance(func, dict):
-            func = func[project_name]
-        return func(hparams, logger=logger)
 
 
 def with_logger(
@@ -438,36 +442,36 @@ def with_logger(
         Result of the function
     """
     if hparams.logging == "wandb":
-
-        def pick_fun_and_run(_hparams, logger):
-            return func(_hparams, logger=logger)
-
-        # Getting the function is done inside after wandb.init to get sweep config first.
-        return wandb_wrapper(hparams.project_name, pick_fun_and_run, hparams)
-
+        logger: WandbLogger = WandbLogger(hparams, run_name)
+        hparams = logger.hparams  # Potentially get the replaced hparams for the sweep
     elif hparams.logging == "aim":
-        # Get the function if it is a dict
-        if isinstance(func, dict):
-            func = func[hparams.project_name]
-        logger = AimLogger(hparams.project_name, repo=hparams.repo, hparams=hparams, run_name=run_name)
-        try:
-            return func(hparams, logger=logger)
-        finally:
-            logger.finalize()
+        logger = AimLogger(hparams, run_name=run_name)
     else:
-        return func(hparams)
+        print("No logger specified, using DummyLogger")
+        logger = DummyLogger()
+
+    # Run the function with the logger
+    try:
+        ret_code = 0
+        return func(hparams, logger=logger)
+    except BaseException as e:
+        traceback.print_exception(e)
+        ret_code = 1
+        raise e
+    finally:
+        logger.finalize(ret_code)
 
 
 def leaf_norms(tree):
     """Return Dict of leaf names and their norms."""
     flattened, _ = jtu.tree_flatten_with_path(tree)
     flattened = {jtu.keystr(k): v for k, v in flattened}
-    return {k: jax.tree.reduce(lambda x, y: x + jnp.linalg.norm(y), v, initializer=0) for k, v in flattened.items()}
+    return {k: tree_reduce(lambda x, y: x + jnp.linalg.norm(y), v, initializer=0) for k, v in flattened.items()}
 
 
 def tree_norm(tree, **kwargs):
     """Sum of the norm of all elements in the tree."""
-    return jax.tree.reduce(lambda x, y: x + jnp.linalg.norm(y, **kwargs), tree, initializer=0)
+    return tree_reduce(lambda x, y: x + jnp.linalg.norm(y, **kwargs), tree, initializer=0)
 
 
 def calc_norms(norm_params: dict = {}, leaf_norm_params: dict = {}):
@@ -496,14 +500,3 @@ def deep_replace(obj, /, **kwargs):
             k = prefix
         obj = replace(obj, **{k: v})
     return obj
-
-
-def fig_to_array(fig: plt.Figure):
-    """Convert matplotlib figure to numpy array."""
-    fig.canvas.draw()
-    return np.array(fig.canvas.renderer.buffer_rgba(), dtype=np.uint8)
-
-
-# .reshape(
-#         fig.canvas.get_width_height()[::-1] + (4,)
-#     )
