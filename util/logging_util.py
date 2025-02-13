@@ -26,7 +26,7 @@ class LoggableConfig(simple_parsing.Serializable):
 
     decode_into_subclasses = True
     logging: Literal["wandb", "aim", None] = "aim"
-    repo: str | None = "datenvorsprung"
+    repo: str | None = None
     project_name: str | None = "DCM"
     debug: bool | int = False
     log_code: bool = False
