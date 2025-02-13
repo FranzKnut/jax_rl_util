@@ -25,7 +25,7 @@ class LoggableConfig(simple_parsing.Serializable):
     """Base class for loggable configuration dataclasses."""
 
     decode_into_subclasses = True
-    logging: Literal["wandb", "aim"] | None = "aim"
+    logging: Literal["wandb", "aim", None] = "aim"
     repo: str | None = "datenvorsprung"
     project_name: str | None = "DCM"
     debug: bool | int = False
@@ -321,8 +321,9 @@ class WandbLogger(DummyLogger):
         )
 
         # HACK: Backward compatibility
-        self.run.config["optimizer_config"]["lr_decay_type"] = self.run.config["optimizer_config"]["decay_type"]
-        del self.run.config["optimizer_config"]["decay_type"]
+        if "decay_type" in self.run.config["optimizer_config"]:
+            self.run.config["optimizer_config"]["lr_decay_type"] = self.run.config["optimizer_config"]["decay_type"]
+            del self.run.config["optimizer_config"]["decay_type"]
 
         # If called by wandb.agent,
         # this config will be set by Sweep Controller
