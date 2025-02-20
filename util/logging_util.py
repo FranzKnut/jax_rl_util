@@ -321,7 +321,7 @@ class WandbLogger(DummyLogger):
         )
 
         # HACK: Backward compatibility
-        if "decay_type" in self.run.config["optimizer_config"]:
+        if "decay_type" in self.run.config.get("optimizer_config", {}):
             self.run.config["optimizer_config"]["lr_decay_type"] = self.run.config["optimizer_config"]["decay_type"]
             del self.run.config["optimizer_config"]["decay_type"]
 
