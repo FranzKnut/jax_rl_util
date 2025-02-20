@@ -10,8 +10,7 @@ import simple_parsing
 from baselines.brax_baselines import load_brax_model
 from envs.environments import EnvironmentConfig, make_env, print_env_info
 
-BRAX_ENVS_POS_DIMS = {"ant": 2, "halfcheetah": 1, "humanoid": 2}
-
+from envs import BRAX_ENVS_POS_DIMS
 
 @dataclass
 class RolloutConfig:
