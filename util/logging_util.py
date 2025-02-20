@@ -404,8 +404,22 @@ class WandbLogger(DummyLogger):
 
     @override
     def log_video(self, name, frames, step=None, fps=30, caption=""):
-        """Log a video to wandb."""
-        self.run.log({name: wandb.Video(frames, fps=fps, caption=caption)}, step=step)
+        """Log a video to wandb.
+
+        Parameters
+        ----------
+        name : str
+            Name of the logged object.
+        frames : array
+            dimension are (frames, height, width, channels)
+        step : int, optional
+            Step number, by default framework will use global step.
+        fps : int, optional
+            FPS for the video, by default 30
+        caption : str, optional
+            Caption for the video, by default
+        """
+        self.run.log({name: wandb.Video(frames.transpose(0, 3, 1, 2), fps=fps, caption=caption)}, step=step)
 
 
 class ExceptionPrinter(contextlib.AbstractContextManager):
