@@ -265,15 +265,16 @@ def make_multi_transform(configs: dict, label_fn: callable = None):
     return optax.multi_transform(optimizers, label_fn)
 
 
-def get_current_lrs(opt_state, opt_config: OptimizerConfig):
+def get_current_lrs(opt_state, opt_config: OptimizerConfig | None = None):
     """Get current learning rate from optimizer state."""
     lrs = {}
+    _reduce_on_plateau = False if opt_config is None else opt_config.reduce_on_plateau
     if hasattr(opt_state, "inner_states"):
         for k, s in opt_state.inner_states.items():
-            reduce_on_plateau_lr = s[0][3][3].scale if opt_config.reduce_on_plateau else 1
+            reduce_on_plateau_lr = s[0][3][3].scale if _reduce_on_plateau else 1
             lrs["lr_" + k] = s[0][1]["learning_rate"] * reduce_on_plateau_lr
     else:
-        reduce_on_plateau_lr = opt_state[3][3].scale if opt_config.reduce_on_plateau else 1
+        reduce_on_plateau_lr = opt_state[3][3].scale if _reduce_on_plateau else 1
         lrs["learning_rate"] = opt_state[1]["learning_rate"] * reduce_on_plateau_lr
     return lrs
 
