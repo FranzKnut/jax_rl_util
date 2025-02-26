@@ -196,12 +196,11 @@ class VmapWrapper(Wrapper):
     def __init__(self, env, batch_size: int = None):
         """Set batch size."""
         super().__init__(env)
-        self.batch_size = batch_size
+        self.batch_size = batch_size or 1
 
     def reset(self, rng: jnp.ndarray) -> State:
         """Split rng and vmap over reset."""
-        if self.batch_size is not None and len(rng.shape) == 1:
-            rng = jax.random.split(rng, self.batch_size)
+        rng = jax.random.split(rng, self.batch_size)
         return jax.vmap(self.env.reset)(rng)
 
     def step(self, state: State, action: jnp.ndarray) -> State:

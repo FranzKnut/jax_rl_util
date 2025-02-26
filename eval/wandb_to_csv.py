@@ -9,8 +9,8 @@ import wandb
 
 api = wandb.Api()
 
-# PROJECTS = ["brax_imitation"]
-PROJECTS = ["RTRRL", "neurips24", "gymnax_new", "brax_new", "AC_brax", "AC_gymnax", "PPO_Gymnax"]
+PROJECTS = ["brax_imitation"]
+# PROJECTS = ["RTRRL", "neurips24", "gymnax_new", "brax_new", "AC_brax", "AC_gymnax", "PPO_Gymnax"]
 # PROJECTS = ["RTRRL"]
 
 SWEEPS = None # None for all sweeps
