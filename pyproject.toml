@@ -11,14 +11,15 @@ packages = [
 ]
 
 [tool.poetry.dependencies]
-python = "^3.11"
-gymnasium = "^1.0.0"
-brax = "^0.11.0"
-gymnax = "^0.0.8"
-popjym = { git = "https://github.com/EdanToledo/popjym.git", branch = "main" }
+python         = ">=3.10,<4.0"
+gymnasium      = "^1.0.0"
+brax           = "^0.11.0"
+flashbax       = "^0.1.2"
+gymnax         = "^0.0.8"
+popjym         = { git = "https://github.com/EdanToledo/popjym.git", branch = "main" }
 simple-parsing = "^0.1.6"
 
 
 [build-system]
-requires = ["poetry-core"]
+requires      = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
