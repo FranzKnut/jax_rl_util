@@ -9,13 +9,13 @@ import numpy as np
 from jax import numpy as jnp
 
 
-def compute_avg_reward(states: brax.envs.State):
+def compute_agg_reward(states: brax.envs.State, agg_fn=jnp.mean):
     """Compute the average reward per episode from a batch of trajectories."""
     # For episodes that are done early, get the first occurence of done
     ep_until = jnp.where(states.done.any(axis=0), states.done.argmax(axis=0), states.done.shape[0])
     # Compute cumsum and get value corresponding to end of episode per batch.
     # mean_reward = jnp.sum(traj_batch.reward) / jnp.max(jnp.array([jnp.sum(traj_batch.done), 1]))
-    return states.reward.cumsum(axis=0)[ep_until, jnp.arange(ep_until.shape[-1])].mean()
+    return agg_fn(states.reward.cumsum(axis=0)[ep_until, jnp.arange(ep_until.shape[-1])])
 
 
 def render_brax(env, states, render_steps=100, render_start=0, camera=None):

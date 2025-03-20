@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from typing import Dict, NamedTuple, Sequence
 
 import distrax
-from envs.env_util import compute_avg_reward
+from envs.env_util import compute_agg_reward
 import flashbax as fbx
 import flax.linen as nn
 import jax
@@ -513,7 +513,7 @@ def make_train(config: PPOParams, logger: DummyLogger):
                 return runner_state, transition
 
             runner_state, traj_batch = jax.lax.scan(_env_step, runner_state, None, config.eval_steps)
-            mean_reward = compute_avg_reward(traj_batch)
+            mean_reward = compute_agg_reward(traj_batch)
             return mean_reward, traj_batch
 
         # TRAIN LOOP
