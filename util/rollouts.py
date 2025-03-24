@@ -76,8 +76,7 @@ def collect_rollouts(config: RolloutConfig, save_rollouts: bool = True, verbose:
         _rng, policy_key = jax.random.split(_rng)
         obs = prev_state.obs
         if not getattr(env, "_exclude_current_positions_from_observation", True):
-            dims = 2 if config.env_config.env_name in ["ant", "humanoid"] else 1
-            obs = obs[:, dims:]
+            obs = obs[:, BRAX_ENVS_POS_DIMS[config.env_config.env_name] :]
         if use_rnn:
             # Reset when done
             _hidden = jax.tree.map(

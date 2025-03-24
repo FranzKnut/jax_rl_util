@@ -3,9 +3,8 @@
 import os
 
 import pandas as pd
-
-from tqdm import tqdm
 import wandb
+from tqdm import tqdm
 
 api = wandb.Api()
 
