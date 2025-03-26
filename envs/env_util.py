@@ -7,6 +7,7 @@ import gymnasium as gym
 import jax
 import numpy as np
 from jax import numpy as jnp
+from typing_extensions import deprecated
 
 
 def compute_agg_reward(states: brax.envs.State, agg_fn=jnp.mean):
@@ -32,6 +33,7 @@ def render_brax(env, states, render_steps=100, render_start=0, camera=None):
     return image.render_array(env.sys, states_to_render, camera=camera)
 
 
+@deprecated("Deprecated for Brax Envs. Will be removed in the future.")
 def make_obs_mask(base_obs_size: int, obs_mask: Iterable[int] | str | int = None):
     """Get the observation mask from string description.
 

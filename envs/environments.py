@@ -70,7 +70,9 @@ def print_env_info(env_info):
     print("ENV:")
     print(f"obs_size:    {OBS_SIZE}")
     print(f"act_size:    {ACT_SIZE}" + (" (discrete)" if DISCRETE else " (continuous)"))
-    if len(obs_mask) < OBS_SIZE:
+    if isinstance(obs_mask, str):
+        print(f"obs_mask:    {obs_mask}")
+    elif len(obs_mask) < OBS_SIZE:
         print(f"obs_mask:    {obs_mask}")
     print(f"act_clip:    {act_clip}")
     # print(f'value_size: {VALUE_SIZE}')

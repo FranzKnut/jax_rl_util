@@ -2,14 +2,16 @@
 
 import importlib
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from functools import partial
 from typing import Iterable
 
+import brax
 import gymnasium as gym
 import gymnax
 import jax
 import numpy as np
+from brax.envs import Env as BraxEnv
 from brax.envs.base import State
 from jax import numpy as jnp
 from jax import random as jrandom
@@ -311,6 +313,10 @@ class RandomizedAutoResetWrapper(Wrapper):
         def _reset():
             reset_state = self.env.reset(_rng)
             reset_state.info["rng"] = rng
+            
+            if "full_obs" in state.info:
+                # For compatibility with POBraxWrapper
+                reset_state.info["full_obs"] = state.obs
             return reset_state
 
         state = jax.lax.cond(state.done, _reset, lambda: state)
@@ -396,29 +402,57 @@ class FlatObsBraxWrapper(Wrapper):
 
 
 class POBraxWrapper(Wrapper):
-    """Masks Observations in order to create an POMDP."""
+    """Masks Observations in order to create a POMDP."""
 
-    def __init__(self, env, obs_mask: Iterable[int]):
+    def __init__(self, env, obs_mask: Iterable[int] | str):
         """Set obs_mask."""
         super().__init__(env)
-        self.obs_mask = make_obs_mask(np.prod(env.observation_size), obs_mask)
+        self.full_obs_size = env.observation_size
+        if isinstance(obs_mask, str) and "q" in obs_mask:
+            self.obs_mask = obs_mask.split("+")
+            assert any([x in ["q", "qd"] for x in self.obs_mask]), (
+                "obs_mask must be of the form 'f(\+f)*' where f is a field in brax.base.State ('q' or 'qd')"
+            )
+            self.env: BraxEnv = env
+        else:
+            self.obs_mask = make_obs_mask(np.prod(env.observation_size), obs_mask)
+
+    def _get_obs(self, state: State):
+        """Get the observation from the brax state."""
+        obs = []
+        if isinstance(self.obs_mask, jax.Array):
+            return state.obs[..., self.obs_mask]
+        else:
+            # obs_mask Must be a list of strings
+            for f in self.obs_mask:
+                obs += [getattr(state.pipeline_state, f)]
+            return jnp.concatenate(obs, axis=-1)
 
     def reset(self, rng: jnp.ndarray) -> State:
         """Mask Observation."""
         state = self.env.reset(rng)
         state.info["full_obs"] = state.obs
-        return state.replace(obs=state.obs[..., self.obs_mask])
+        return state.replace(obs=self._get_obs(state))
 
     def step(self, state: State, action: jnp.ndarray) -> State:
         """Mask Observation."""
+        state = state.replace(obs=state.info.get("full_obs", state.obs))
         state = self.env.step(state, action)
-        return state.replace(obs=state.obs[..., self.obs_mask])
+        state.info["full_obs"] = state.obs
+        return state.replace(obs=self._get_obs(state))
 
     @property
     def observation_size(self):
         """Get the size of the masked Observation."""
-        return len(self.obs_mask)
-
+        if isinstance(self.obs_mask, jax.Array):
+            return len(self.obs_mask)
+        else:
+            obs_size = 0
+            if "q" in self.obs_mask:
+                obs_size += self.env.sys.q_size()
+            if "qd" in self.obs_mask:
+                obs_size += self.env.sys.qd_size()
+            return obs_size
     @property
     def action_size(self):
         """Get the size of the masked Observation."""
