@@ -477,10 +477,21 @@ def with_logger(
         logger.finalize(ret_code)
 
 
+def get_keystr(k):
+    """Even prettier key string."""
+
+    def _str(_k):
+        if hasattr(_k, "key"):
+            return _k.key
+        return str(_k)
+
+    return "/".join(map(_str, k))
+
+
 def leaf_norms(tree):
     """Return Dict of leaf names and their norms."""
     flattened, _ = jtu.tree_flatten_with_path(tree)
-    flattened = {jtu.keystr(k): v for k, v in flattened}
+    flattened = {get_keystr(k): v for k, v in flattened}
     return {k: tree_reduce(lambda x, y: x + jnp.linalg.norm(y), v, initializer=0) for k, v in flattened.items()}
 
 
@@ -499,8 +510,14 @@ def calc_norms(norm_params: dict = {}, leaf_norm_params: dict = {}):
 def log_norms(pytree):
     """Compute norms and leaf norms of given pytree."""
     flattened, _ = jtu.tree_flatten_with_path(pytree)
-    flattened = {jtu.keystr(k): v for k, v in flattened}
+    flattened = {get_keystr(k): v for k, v in flattened}
     return calc_norms(flattened)
+
+
+def flatten_params(params):
+    """Flatten the given params dictionary."""
+    flattened, _ = jtu.tree_flatten_with_path(params)
+    return {get_keystr(k): v for k, v in flattened}
 
 
 def deep_replace(obj, /, **kwargs):

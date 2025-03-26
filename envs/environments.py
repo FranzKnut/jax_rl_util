@@ -166,7 +166,7 @@ def make_env(
         # Create entrypoint for brax env
         env = brax.envs.get_environment(env_name=env_name.replace("brax-", ""), **params.env_kwargs)
     else:
-        # Create a gym environment wrapped with vmap, AutoReset, and Episode wrappers
+        # Create gym environment
         env = gym.make(env_name, disable_env_checker=debug < 3, **params.init_kwargs)
 
         if not (env_name.startswith("brax-") or env_name in brax.envs._envs):

@@ -114,11 +114,10 @@ class ContinuousCartPoleEnv(CartPoleEnv):
             done = done | (jnp.abs(theta) > self.theta_threshold_radians)
 
         reward = self.get_reward(state, action)
-
         return state, reward, done, False, {}
 
     def get_reward(self, state, action):
-        return 1
+        return 1.0
 
     @staticmethod
     def clip_theta(state):
@@ -165,7 +164,7 @@ class ContinuousCartPoleEnv(CartPoleEnv):
         state = self._reset(seed)
         self.state = state
 
-        return state, {"state": state}
+        return state, state
 
 
 class CartPoleSwingUp(ContinuousCartPoleEnv):
@@ -221,3 +220,7 @@ class CartPoleDampening(ContinuousCartPoleEnv):
 
     def is_terminated(self, state):
         return state[0] < -self.x_threshold or state[0] > self.x_threshold
+
+
+gymnasium.register(id="CartpoleContinuousJax-v0", entry_point=ContinuousCartPoleEnv, order_enforce=False)
+gymnasium.register(id="CartpoleContinuousJaxSwingUp-v0", entry_point=CartPoleSwingUp, order_enforce=False)

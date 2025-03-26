@@ -81,6 +81,7 @@ def render_frames(_env: gym.Env, states: list, start_idx: int = None, end_idx: i
     from envs.wrappers import GymnaxBraxWrapper
 
     # Define rendering function for specific envs
+    is_brax = _env.name.startswith("brax-") or _env.name in brax.envs._envs
     if isinstance(_env.unwrapped, GymnaxBraxWrapper):
         if _env.name in ["CartPole-v1", "MountainCarContinuous-v0", "MountainCar-v0", "Pendulum-v1", "Acrobot-v1"]:
             from gymnax.visualize.vis_gym import get_gym_state
@@ -99,7 +100,7 @@ def render_frames(_env: gym.Env, states: list, start_idx: int = None, end_idx: i
             print("Cannot render env: ", _env.name)
             return []
 
-    elif not hasattr(_env.unwrapped, "env"):  # is Braxenv
+    elif is_brax:
         from brax.io import image
 
         def render_gym(_env, _state):
@@ -110,11 +111,11 @@ def render_frames(_env: gym.Env, states: list, start_idx: int = None, end_idx: i
             _env.unwrapped.env.state = _state
             if _env.name == "Pendulum-v1":
                 _env.unwrapped.env.last_u = _state[-1]
-            return _env.render().transpose(2, 0, 1)
+            return _env.render()  # .transpose(2, 0, 1)
 
     frames = []
     for _state in states:
-        if len(_state.q.shape) >= 2:
+        if is_brax and len(_state.q.shape) >= 2:
             _state = jax.tree.map(lambda x: x[0], _state)
         frames.append(render_gym(_env, _state))
 

@@ -68,20 +68,20 @@ class GymBraxWrapper(Wrapper):
     def reset(self, rng: jnp.ndarray) -> State:
         """Make brax state from gym reset output."""
         reset_key, step_key = jrandom.split(rng)
-        obs, env_state = self.env.reset(reset_key)
-        state = State(env_state, obs, jnp.zeros(1), False)
+        obs, env_info = self.env.reset(reset_key)
+        state = State(obs, obs, jnp.zeros(1), jnp.zeros((), dtype=jnp.bool))
         state.info["rng"] = step_key
         return state
 
     def step(self, state: State, action: jnp.ndarray) -> State:
         """Make gymnax step and wrap in brax state."""
-        obs, gymnax_state, reward, done, _ = self.env.step(state.pipeline_state, action, self.params)
+        obs, reward, done, *_ = self.env.step(state.pipeline_state, action, self.params)
         # for k, v in state_gymnax[4].items():
         #     state.info[k] = v
         reward = jnp.array(reward, dtype=jnp.float32)
         if len(reward.shape) == 0:
             reward = jnp.expand_dims(reward, axis=0)
-        return state.replace(pipeline_state=gymnax_state, obs=obs, reward=reward, done=done)
+        return state.replace(pipeline_state=obs, obs=obs, reward=reward, done=done)
 
 
 class GymnaxBraxWrapper(Wrapper):
