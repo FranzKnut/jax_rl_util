@@ -532,3 +532,15 @@ def deep_replace(obj, /, **kwargs):
             k = prefix
         obj = replace(obj, **{k: v})
     return obj
+
+def count_combinations(config):
+    """Recursively counts the number of combinations in a nested sweep config."""
+    if isinstance(config, dict):
+        total = 1
+        for key, value in config.items():
+            total *= count_combinations(value)
+        return total
+    elif isinstance(config, list):
+        return len(config)
+    else:
+        return 1
