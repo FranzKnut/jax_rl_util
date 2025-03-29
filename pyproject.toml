@@ -1,14 +1,10 @@
 [tool.poetry]
-name = "jax-rl-util"
+name = "jax_rl_util"
 version = "0.1.0"
 description = ""
-authors = ["julian <julian.lemmel@tuwien.ac.at>"]
+authors = ["Julian Lemmel <julian.lemmel@tuwien.ac.at>"]
 readme = "README.md"
-packages = [
-    { include = "envs" },
-    { include = "util" },
-    { include = "baselines" },
-]
+packages = [{include = "jax_rl_util"}]
 
 [tool.poetry.dependencies]
 python         = ">=3.10,<4.0"
