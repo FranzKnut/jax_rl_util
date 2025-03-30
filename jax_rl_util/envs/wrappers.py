@@ -100,7 +100,7 @@ class GymnaxBraxWrapper(Wrapper):
         """Make brax state from gym reset output and insert env params."""
         reset_key, step_key = jrandom.split(rng)
         obs, env_state = self.env.reset(reset_key, self.params)
-        state = State(env_state, obs, jnp.zeros(1), False)
+        state = State(env_state, obs, jnp.zeros(1), jnp.zeros((), dtype=jnp.bool))
         state.info["rng"] = step_key
         return state
 

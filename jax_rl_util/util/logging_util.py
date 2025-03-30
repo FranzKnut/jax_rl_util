@@ -359,7 +359,7 @@ class WandbLogger(DummyLogger):
         wandb.Api().flush()
 
     @override
-    def finalize(self, ret_code: int, all_param_norms: dict = None, x_vals=None):
+    def finalize(self, ret_code: int = 0, all_param_norms: dict = None, x_vals=None):
         """Make lineplots for all items in all_param_norms."""
         if all_param_norms:
             all_param_norms = tree_stack(all_param_norms)

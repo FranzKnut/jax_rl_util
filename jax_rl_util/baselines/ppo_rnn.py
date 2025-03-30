@@ -23,6 +23,7 @@ from flax.linen.initializers import constant, orthogonal
 from flax.training.train_state import TrainState
 from matplotlib import pyplot as plt
 
+from envs.env_util import compute_avg_reward
 from jax_rl_util.envs.environments import EnvironmentConfig, make_env, print_env_info
 from jax_rl_util.envs.plot_drones import plot_from_file
 from jax_rl_util.envs.wrappers import VmapWrapper
@@ -191,14 +192,11 @@ class LRU(nn.Module):
     @nn.compact
     def __call__(self, carry, x):
         """Apply the module."""
-        from models.seq_models import MultiLayerRNN
-
         from jax_rtrl.models.lru import OnlineLRULayer
 
         x = jax.tree.map(lambda a: jnp.swapaxes(a, 0, 1), x)
         ins, resets = x
         model = OnlineLRULayer(self.config.NUM_UNITS, self.d_hidden)
-        # model = MultiLayerRNN([self.config.NUM_UNITS] * self.num_layers, OnlineLRULayer, {"d_hidden": self.d_hidden})
         carry, out = jax.vmap(model)(carry, ins, resets=resets)
         return carry, jnp.swapaxes(out, 0, 1)
 
@@ -207,7 +205,6 @@ class LRU(nn.Module):
         batch_size = input_shape[0:1] if len(input_shape) > 1 else ()
         hidden_init = jnp.zeros((*batch_size, self.d_hidden), dtype=jnp.complex64)
         return hidden_init
-        return [hidden_init] * self.num_layers
 
 
 class MLP(nn.Module):
