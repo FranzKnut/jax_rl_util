@@ -263,7 +263,7 @@ class DroneGym(GymnaxEnv):
         is_out_of_time = step >= params.max_steps
 
         # Reward when target is reached
-        reward = 0.1 / jnp.max(jnp.array([1, noisy_goal_dist.squeeze()])) ** 2
+        reward = 1 / jnp.max(jnp.array([1, goal_distance.squeeze()])) ** 2
         # reward = 0
         is_outside = jnp.any(jnp.abs(pos) > params.plot_range)
         is_at_target = (goal_distance <= 1).squeeze()
