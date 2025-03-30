@@ -12,7 +12,7 @@ api = wandb.Api()
 PROJECTS = ["RTRRL", "neurips24", "gymnax_new", "brax_new", "AC_brax", "AC_gymnax", "PPO_Gymnax"]
 # PROJECTS = ["RTRRL"]
 
-SWEEPS = None # None for all sweeps
+SWEEPS = None  # None for all sweeps
 
 
 def get_runs_for_config(project, filters={}):
@@ -63,5 +63,5 @@ if __name__ == "__main__":
     print("downloaded:")
     print(df_out)
     # Save to csv
-    os.makedirs("eval/data", exist_ok=True)
-    df_out.to_csv("eval/data/wandb_runs.csv")
+    os.makedirs("data", exist_ok=True)
+    df_out.to_csv("data/wandb_runs.csv")

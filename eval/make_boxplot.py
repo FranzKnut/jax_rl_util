@@ -12,7 +12,7 @@ VAL_FIELD = "best_eval"
 BY = ["agent_type", "obs_mask"]
 SPLIT_PLOTS_BY = "env_name"
 
-df = pd.read_csv("eval/data/wandb_runs.csv", index_col=0)
+df = pd.read_csv("data/wandb_runs.csv", index_col=0)
 df = df.dropna(subset=VAL_FIELD)
 
 # SWEEPS = ["olx8u5gy", "bkngzbt9"]
@@ -55,6 +55,6 @@ fig.tight_layout(w_pad=2)
 for ax in axes:
     ax.set_xlabel("")
 
-os.makedirs("eval/plots", exist_ok=True)
-plt.savefig("eval/plots/boxplot.pdf", transparent=True)
+os.makedirs("plots", exist_ok=True)
+plt.savefig("plots/boxplot.png", transparent=True)
 plt.show()

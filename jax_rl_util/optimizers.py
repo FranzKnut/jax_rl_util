@@ -16,7 +16,7 @@ class OptimizerConfig:
     """Class representing the parameters for an optimizer."""
 
     # fmt: off
-    opt_name: str = "sgd"                                       # opt_name (str): The name of the optimizer.
+    opt_name: str = "adam"                                       # opt_name (str): The name of the optimizer.
     learning_rate: float = 1e-3                                 # learning_rate (float): The learning rate for the optimizer.
     kwargs: dict = field(default_factory=dict, hash=False)      # kwargs (dict): Additional keyword arguments for the optimizer.
     lr_decay_type: str | None = None                            # decay_type (str): The type of decay for the learning rate.
