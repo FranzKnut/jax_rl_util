@@ -266,7 +266,7 @@ def get_current_lrs(opt_state, opt_config: OptimizerConfig | None = None):
     if hasattr(opt_state, "inner_states"):
         for k, s in opt_state.inner_states.items():
             reduce_on_plateau_lr = s[0][3][3].scale if _reduce_on_plateau else 1
-            lrs["lr_" + k] = s[0][1]["learning_rate"] * reduce_on_plateau_lr
+            lrs["LR/" + k] = s[0][1]["learning_rate"] * reduce_on_plateau_lr
     else:
         reduce_on_plateau_lr = opt_state[3][3].scale if _reduce_on_plateau else 1
         lrs["learning_rate"] = opt_state[1]["learning_rate"] * reduce_on_plateau_lr

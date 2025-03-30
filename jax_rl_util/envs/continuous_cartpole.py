@@ -114,7 +114,7 @@ class ContinuousCartPoleEnv(CartPoleEnv):
             done = done | (jnp.abs(theta) > self.theta_threshold_radians)
 
         reward = self.get_reward(state, action)
-        return state, reward, done, False, {}
+        return state, reward, done, jnp.zeros((), dtype=bool), {}
 
     def get_reward(self, state, action):
         return 1.0
