@@ -3,6 +3,7 @@
 import collections
 import contextlib
 import os
+from pprint import pprint
 import traceback
 from argparse import Namespace
 from dataclasses import asdict, dataclass, replace
@@ -180,7 +181,9 @@ class AimLogger(DummyLogger):
         return "AimLogger"
 
     @override
-    def __init__(self, hparams: LoggableConfig, run_name: str | None = None, run_hash=None):
+    def __init__(
+        self, hparams: LoggableConfig, run_name: str | None = None, run_hash=None
+    ):
         """Create aim run."""
         global aim
         import aim
@@ -210,7 +213,9 @@ class AimLogger(DummyLogger):
     def log(self, metrics: dict, step=None, context=None):
         """Loop over scalars and track them with aim."""
         for k, v in metrics.items():
-            self.run.track(v, name=k, epoch=None if step is None else int(step), context=context)
+            self.run.track(
+                v, name=k, epoch=None if step is None else int(step), context=context
+            )
 
     @override
     def log_params(self, params_dict):
@@ -227,7 +232,12 @@ class AimLogger(DummyLogger):
         """Log the given distribution with aim."""
         # TODO: allow sequences.Distributions
         for k, v in values.items():
-            self.run.track(aim.Distribution(v), name=k, epoch=None if step is None else int(step), context=context)
+            self.run.track(
+                aim.Distribution(v),
+                name=k,
+                epoch=None if step is None else int(step),
+                context=context,
+            )
 
     def __setitem__(self, key, value):
         """Log scalar for aim."""
@@ -249,7 +259,11 @@ class AimLogger(DummyLogger):
             all_param_norms = tree_stack(all_param_norms)
             self.log(
                 {
-                    f"Params/{k}": aim.Figure(px.line(x=x_vals, y=list(v.values()), title=k, labels=list(v.keys())))
+                    f"Params/{k}": aim.Figure(
+                        px.line(
+                            x=x_vals, y=list(v.values()), title=k, labels=list(v.keys())
+                        )
+                    )
                     for k, v in all_param_norms.items()
                     if v
                 }
@@ -272,7 +286,9 @@ class AimLogger(DummyLogger):
         self.log(
             {
                 name: aim.Image(
-                    Image.fromarray(np.asarray(img, dtype=np.uint8), mode=pil_mode), caption=caption, format=format
+                    Image.fromarray(np.asarray(img, dtype=np.uint8), mode=pil_mode),
+                    caption=caption,
+                    format=format,
                 )
             },
             step=step,
@@ -286,11 +302,19 @@ class AimLogger(DummyLogger):
     def log_video(self, name, frames, step=None, fps=30, caption=""):
         """Log a video to wandb."""
         file_name = name.replace("/", "_")
-        file_name = f"{file_name}_{step}.gif" if step is not None else f"{file_name}.gif"
+        file_name = (
+            f"{file_name}_{step}.gif" if step is not None else f"{file_name}.gif"
+        )
         file_name = os.path.join(self.run_artifacts_dir, file_name)
         images = [Image.fromarray(frames[i]) for i in range(len(frames))]
         os.makedirs(self.run_artifacts_dir, exist_ok=True)
-        images[0].save(file_name, save_all=True, append_images=images[1:], duration=int(1000 / fps), loop=0)
+        images[0].save(
+            file_name,
+            save_all=True,
+            append_images=images[1:],
+            duration=int(1000 / fps),
+            loop=0,
+        )
         self.log({name: aim.Image(file_name, caption=caption, format="gif")}, step=step)
 
 
@@ -322,7 +346,9 @@ class WandbLogger(DummyLogger):
 
         # HACK: Backward compatibility
         if "decay_type" in self.run.config.get("optimizer_config", {}):
-            self.run.config["optimizer_config"]["lr_decay_type"] = self.run.config["optimizer_config"]["decay_type"]
+            self.run.config["optimizer_config"]["lr_decay_type"] = self.run.config[
+                "optimizer_config"
+            ]["decay_type"]
             del self.run.config["optimizer_config"]["decay_type"]
 
         # If called by wandb.agent,
@@ -419,7 +445,10 @@ class WandbLogger(DummyLogger):
         caption : str, optional
             Caption for the video, by default
         """
-        self.run.log({name: wandb.Video(frames.transpose(0, 3, 1, 2), fps=fps, caption=caption)}, step=step)
+        self.run.log(
+            {name: wandb.Video(frames.transpose(0, 3, 1, 2), fps=fps, caption=caption)},
+            step=step,
+        )
 
 
 class ExceptionPrinter(contextlib.AbstractContextManager):
@@ -492,12 +521,17 @@ def leaf_norms(tree):
     """Return Dict of leaf names and their norms."""
     flattened, _ = jtu.tree_flatten_with_path(tree)
     flattened = {get_keystr(k): v for k, v in flattened}
-    return {k: tree_reduce(lambda x, y: x + jnp.linalg.norm(y), v, initializer=0) for k, v in flattened.items()}
+    return {
+        k: tree_reduce(lambda x, y: x + jnp.linalg.norm(y), v, initializer=0)
+        for k, v in flattened.items()
+    }
 
 
 def tree_norm(tree, **kwargs):
     """Sum of the norm of all elements in the tree."""
-    return tree_reduce(lambda x, y: x + jnp.linalg.norm(y, **kwargs), tree, initializer=0)
+    return tree_reduce(
+        lambda x, y: x + jnp.linalg.norm(y, **kwargs), tree, initializer=0
+    )
 
 
 def calc_norms(norm_params: dict = {}, leaf_norm_params: dict = {}):
@@ -533,6 +567,10 @@ def deep_replace(obj, /, **kwargs):
         obj = replace(obj, **{k: v})
     return obj
 
+
+# wandb Sweep related
+
+
 def count_combinations(config):
     """Recursively counts the number of combinations in a nested sweep config."""
     if isinstance(config, dict):
@@ -544,3 +582,14 @@ def count_combinations(config):
         return len(config)
     else:
         return 1
+
+
+def create_sweep_interactively(sweep_config, project=None):
+    pprint(sweep_config)
+    # Estimate number of runs and upload to wandb
+    est_runs = count_combinations(sweep_config["parameters"])
+    print("Est. runs:", est_runs)
+    name = input("Enter custom sweep name ():  ")
+    if name:
+        sweep_config["name"] = name
+    return wandb.sweep(sweep_config, project=project)
