@@ -21,7 +21,9 @@ from jax_rl_util.envs.env_util import make_obs_mask
 
 def is_discrete(env: gym.Env):
     """Check if env has discrete Action Space."""
-    return isinstance(env.action_space, (gym.spaces.Discrete, gymnax.environments.spaces.Discrete))
+    return isinstance(
+        env.action_space, (gym.spaces.Discrete, gymnax.environments.spaces.Discrete)
+    )
 
 
 class Wrapper:
@@ -107,13 +109,17 @@ class GymnaxBraxWrapper(Wrapper):
     def step(self, state: State, action: jnp.ndarray) -> State:
         """Make gymnax step and wrap in brax state."""
         step_key, state.info["rng"] = jrandom.split(state.info["rng"])
-        obs, gymnax_state, reward, done, _ = self.env.step_env(step_key, state.pipeline_state, action, self.params)
+        obs, gymnax_state, reward, done, _ = self.env.step_env(
+            step_key, state.pipeline_state, action, self.params
+        )
         # FIXME: Info dict cannot be passed outside since this function is jitted.
         # The state given by reset has to contain info with the same structure!
         reward = jnp.array(reward, dtype=state.reward.dtype)
         if len(reward.shape) == 0:
             reward = jnp.expand_dims(reward, axis=0)
-        return state.replace(pipeline_state=gymnax_state, obs=obs, reward=reward, done=done)
+        return state.replace(
+            pipeline_state=gymnax_state, obs=obs, reward=reward, done=done
+        )
 
     @property
     def action_space(self, params=None) -> int:
@@ -131,6 +137,11 @@ class GymnaxBraxWrapper(Wrapper):
         """Only works for default_params envs."""
         params = self.env.default_params if params is None else params
         return self.env.observation_space(params)
+
+    @property
+    def unwrapped(self):
+        """Unwrapped is self to stop recursion."""
+        return self
 
 
 # class RenderWrapper(GymnaxToGymWrapper):
@@ -187,7 +198,9 @@ class EpisodeWrapper(Wrapper):
         zero = jnp.zeros_like(state.done)
         episode_length = jnp.array(self.episode_length, dtype=jnp.int32)
         done = jnp.where(steps >= episode_length, one, state.done)
-        state.info["truncation"] = jnp.int32(jnp.where(steps >= episode_length, 1 - state.done, zero))
+        state.info["truncation"] = jnp.int32(
+            jnp.where(steps >= episode_length, 1 - state.done, zero)
+        )
         state.info["steps"] = steps
         return state.replace(done=done)
 
@@ -239,7 +252,9 @@ class EfficientAutoResetWrapper(Wrapper):
                 done = jnp.reshape(done, [x.shape[0]] + [1] * (len(x.shape) - 1))  # type: ignore
             return jnp.where(done, x, y)
 
-        pipeline_state = jax.jax.tree.map(where_done, state.info["first_pipeline_state"], state.pipeline_state)
+        pipeline_state = jax.jax.tree.map(
+            where_done, state.info["first_pipeline_state"], state.pipeline_state
+        )
         obs = where_done(state.info["first_obs"], state.obs)
         return state.replace(pipeline_state=pipeline_state, obs=obs, reward=reward)
 
@@ -255,7 +270,9 @@ class GymJaxWrapper(Wrapper):
     def reset(self, rng: jnp.ndarray):
         """Call gym reset as external callback."""
         result_shape_dtypes = (
-            jax.ShapeDtypeStruct(self.env.observation_space.shape, dtype=self.env.observation_space.dtype),
+            jax.ShapeDtypeStruct(
+                self.env.observation_space.shape, dtype=self.env.observation_space.dtype
+            ),
             {},
         )
         return jax.experimental.io_callback(self.env.reset, result_shape_dtypes)
@@ -263,7 +280,9 @@ class GymJaxWrapper(Wrapper):
     def step(self, state, action: jnp.ndarray, key: jrandom.PRNGKey = None):
         """Make gymnax step and wrap in brax state."""
         result_shape_dtypes = (
-            jax.ShapeDtypeStruct(self.env.observation_space.shape, dtype=self.env.observation_space.dtype),
+            jax.ShapeDtypeStruct(
+                self.env.observation_space.shape, dtype=self.env.observation_space.dtype
+            ),
             jax.ShapeDtypeStruct((), dtype=jnp.float32),
             jax.ShapeDtypeStruct((), dtype=jnp.bool),
         )
@@ -271,9 +290,15 @@ class GymJaxWrapper(Wrapper):
         def _step(action):
             obs, reward, done, truncated, info = self.env.step(action)
             # FIXME: Cannot pass back info with autoreset since shape changes
-            return obs, jnp.array(reward, dtype=jnp.float32), jnp.array(done or truncated)
+            return (
+                obs,
+                jnp.array(reward, dtype=jnp.float32),
+                jnp.array(done or truncated),
+            )
 
-        obs, reward, done = jax.experimental.io_callback(_step, result_shape_dtypes, action)
+        obs, reward, done = jax.experimental.io_callback(
+            _step, result_shape_dtypes, action
+        )
         return obs, state, reward, done
 
     @property
@@ -313,7 +338,7 @@ class RandomizedAutoResetWrapper(Wrapper):
         def _reset():
             reset_state = self.env.reset(_rng)
             reset_state.info["rng"] = rng
-            
+
             if "full_obs" in state.info:
                 # For compatibility with POBraxWrapper
                 reset_state.info["full_obs"] = state.obs
@@ -453,6 +478,7 @@ class POBraxWrapper(Wrapper):
             if "qd" in self.obs_mask:
                 obs_size += self.env.sys.qd_size()
             return obs_size
+
     @property
     def action_size(self):
         """Get the size of the masked Observation."""
@@ -496,15 +522,19 @@ class LogWrapper:
     @partial(jax.jit, static_argnums=(0,))
     def step(self, key, state: State, action):
         """Take a step and log the returns and lengths."""
-        obs, env_state, reward, done, info = self._env.step(key, state.env_state, action)
+        obs, env_state, reward, done, info = self._env.step(
+            key, state.env_state, action
+        )
         new_episode_return = state.episode_returns + reward
         new_episode_length = state.episode_lengths + 1
         state = LogEnvState(
             env_state=env_state,
             episode_returns=new_episode_return * (1 - done),
             episode_lengths=new_episode_length * (1 - done),
-            returned_episode_returns=state.returned_episode_returns * (1 - done) + new_episode_return * done,
-            returned_episode_lengths=state.returned_episode_lengths * (1 - done) + new_episode_length * done,
+            returned_episode_returns=state.returned_episode_returns * (1 - done)
+            + new_episode_return * done,
+            returned_episode_lengths=state.returned_episode_lengths * (1 - done)
+            + new_episode_length * done,
             timestep=state.timestep + 1,
         )
         info["returned_episode_returns"] = state.returned_episode_returns
