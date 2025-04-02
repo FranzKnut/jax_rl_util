@@ -7,6 +7,8 @@ import pandas as pd
 
 from eval.eval_util import pull_fields
 
+
+# TODO: CLI usability
 FIELDS = ["env_name", "agent_type", "learning_rate", "seed", "obs_mask", "use_doubt_model"]
 VAL_FIELD = "best_eval"
 BY = ["agent_type", "obs_mask"]
@@ -18,7 +20,7 @@ df = df.dropna(subset=VAL_FIELD)
 # SWEEPS = ["olx8u5gy", "bkngzbt9"]
 # df = df[df["Sweep"].isin(SWEEPS)]
 # COLUMNS PRESENT IN DF ARE OVERWRITTEN!
-df = pull_fields(df, FIELDS)
+df = pull_fields(df)
 df[BY] = df[BY].fillna("none")
 
 
