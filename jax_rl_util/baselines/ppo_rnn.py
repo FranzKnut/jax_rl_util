@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from typing import Dict, NamedTuple, Sequence
 
 import distrax
-from envs.env_util import compute_agg_reward
+from jax_rl_util.envs.env_util import compute_agg_reward
 import flashbax as fbx
 import flax.linen as nn
 import jax
@@ -23,11 +23,16 @@ from flax.linen.initializers import constant, orthogonal
 from flax.training.train_state import TrainState
 from matplotlib import pyplot as plt
 
-from envs.env_util import compute_avg_reward
+from jax_rl_util.envs.env_util import compute_avg_reward
 from jax_rl_util.envs.environments import EnvironmentConfig, make_env, print_env_info
 from jax_rl_util.envs.plot_drones import plot_from_file
 from jax_rl_util.envs.wrappers import VmapWrapper
-from jax_rl_util.util.logging_util import DummyLogger, LoggableConfig, log_norms, with_logger
+from jax_rl_util.util.logging_util import (
+    DummyLogger,
+    LoggableConfig,
+    log_norms,
+    with_logger,
+)
 
 warnings.simplefilter(action="ignore", category=FutureWarning)
 
@@ -95,7 +100,11 @@ class LSTM(nn.Module):
     config: Dict
 
     @functools.partial(
-        nn.transforms.scan, variable_broadcast="params", in_axes=0, out_axes=0, split_rngs={"params": False}
+        nn.transforms.scan,
+        variable_broadcast="params",
+        in_axes=0,
+        out_axes=0,
+        split_rngs={"params": False},
     )
     @nn.compact
     def __call__(self, carry, x):  # noqa
@@ -111,7 +120,9 @@ class LSTM(nn.Module):
 
     def initialize_carry(self, rng, input_shape):
         """See flax dokumantation for more info."""
-        return nn.OptimizedLSTMCell(self.config.NUM_UNITS, parent=None).initialize_carry(rng, input_shape)
+        return nn.OptimizedLSTMCell(
+            self.config.NUM_UNITS, parent=None
+        ).initialize_carry(rng, input_shape)
 
 
 class CTRNN(nn.Module):
@@ -136,7 +147,11 @@ class CTRNN(nn.Module):
             h,
         )
         dense = nn.Dense(self.config.NUM_UNITS)
-        tau = self.param("tau", functools.partial(jrandom.uniform, minval=1, maxval=10), (self.config.NUM_UNITS,))
+        tau = self.param(
+            "tau",
+            functools.partial(jrandom.uniform, minval=1, maxval=10),
+            (self.config.NUM_UNITS,),
+        )
 
         y = jnp.concatenate([ins, h], axis=-1)
         u = dense(y)
@@ -178,7 +193,9 @@ class GRU(nn.Module):
     def initialize_carry(self, rng, input_shape):
         """Use a dummy key since the default state init fn is just zeros."""
         return nn.GRUCell(
-            self.config.NUM_UNITS, parent=None, param_dtype=jnp.float64 if jax.config.jax_enable_x64 else jnp.float32
+            self.config.NUM_UNITS,
+            parent=None,
+            param_dtype=jnp.float64 if jax.config.jax_enable_x64 else jnp.float32,
         ).initialize_carry(rng, input_shape)
 
 
@@ -266,9 +283,13 @@ class ActorCriticRNN(nn.Module):
         """
         if self.action_limits:
             # If action limits are defined we sample from [0, 1] and transform the event.
-            act_range = jnp.array(self.action_limits[1]) - jnp.array(self.action_limits[0])
+            act_range = jnp.array(self.action_limits[1]) - jnp.array(
+                self.action_limits[0]
+            )
             act_min = jnp.array(self.action_limits[0])
-            scaling_transform = tfp.bijectors.Chain([tfp.bijectors.Shift(act_min), tfp.bijectors.Scale(act_range)])
+            scaling_transform = tfp.bijectors.Chain(
+                [tfp.bijectors.Shift(act_min), tfp.bijectors.Scale(act_range)]
+            )
 
         if self.discrete:
             return tfp.distributions.Categorical(logits=model_out)
@@ -276,11 +297,15 @@ class ActorCriticRNN(nn.Module):
             if self.config.act_dist_name == "beta":
                 alpha = jax.nn.softplus(model_out[..., : model_out.shape[-1] // 2])
                 beta = jax.nn.softplus(model_out[..., model_out.shape[-1] // 2 :])
-                return tfp.distributions.TransformedDistribution(tfp.distributions.Beta(alpha, beta), scaling_transform)
+                return tfp.distributions.TransformedDistribution(
+                    tfp.distributions.Beta(alpha, beta), scaling_transform
+                )
             elif self.config.act_dist_name == "brax":
                 from brax.training.distribution import NormalTanhDistribution
 
-                return NormalTanhDistribution(event_size=self.action_dim).create_dist(model_out)
+                return NormalTanhDistribution(event_size=self.action_dim).create_dist(
+                    model_out
+                )
             else:
                 mean = model_out
                 # mean = model_out[..., : model_out.shape[-1] // 2]
@@ -291,48 +316,72 @@ class ActorCriticRNN(nn.Module):
                 #     std = log_std_min + 0.5 * (log_std_max - log_std_min) * (std + 1)
                 # elif log_std_min is not None:
                 #     std = jnp.clip(std, min=log_std_min
-                log_std = self.param("log_std", nn.initializers.ones, (self.action_dim,))
+                log_std = self.param(
+                    "log_std", nn.initializers.ones, (self.action_dim,)
+                )
                 dist = distrax.LogStddevNormal(mean, log_std)
                 if not self.action_limits:
                     return dist
                 else:
                     tranforms = [scaling_transform, tfp.bijectors.Sigmoid()]
-                    return tfp.distributions.TransformedDistribution(dist, tfp.bijectors.Chain(tranforms))
+                    return tfp.distributions.TransformedDistribution(
+                        dist, tfp.bijectors.Chain(tranforms)
+                    )
 
     @nn.compact
     def __call__(self, hidden, x):
         """Compute embedding from RNN and then actor and critic MLPs."""
         obs, dones = x
         embedding = nn.Dense(
-            self.config.NUM_UNITS, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0), name="emb"
+            self.config.NUM_UNITS,
+            kernel_init=orthogonal(np.sqrt(2)),
+            bias_init=constant(0.0),
+            name="emb",
         )(obs)
         embedding = nn.relu(embedding)
 
         rnn_in = (embedding, dones)
         hidden, embedding = globals()[self.config.MODEL](self.config)(hidden, rnn_in)
 
-        actor_mean = nn.Dense(self.config.NUM_UNITS, kernel_init=orthogonal(2), bias_init=constant(0.0), name="actor0")(
-            embedding
-        )
+        actor_mean = nn.Dense(
+            self.config.NUM_UNITS,
+            kernel_init=orthogonal(2),
+            bias_init=constant(0.0),
+            name="actor0",
+        )(embedding)
         actor_mean = nn.relu(actor_mean)
-        action_dim = self.action_dim if self.discrete or self.config.act_dist_name == "normal" else self.action_dim * 2
-        actor_mean = nn.Dense(action_dim, kernel_init=orthogonal(0.01), bias_init=constant(0.0), name="actor1")(
-            actor_mean
+        action_dim = (
+            self.action_dim
+            if self.discrete or self.config.act_dist_name == "normal"
+            else self.action_dim * 2
         )
+        actor_mean = nn.Dense(
+            action_dim,
+            kernel_init=orthogonal(0.01),
+            bias_init=constant(0.0),
+            name="actor1",
+        )(actor_mean)
 
         pi = self.dist(actor_mean)
 
-        critic = nn.Dense(self.config.NUM_UNITS, kernel_init=orthogonal(2), bias_init=constant(0.0), name="critic0")(
-            embedding
-        )
+        critic = nn.Dense(
+            self.config.NUM_UNITS,
+            kernel_init=orthogonal(2),
+            bias_init=constant(0.0),
+            name="critic0",
+        )(embedding)
         critic = nn.relu(critic)
-        critic = nn.Dense(1, kernel_init=orthogonal(1.0), bias_init=constant(0.0), name="critic1")(critic)
+        critic = nn.Dense(
+            1, kernel_init=orthogonal(1.0), bias_init=constant(0.0), name="critic1"
+        )(critic)
 
         return hidden, pi, jnp.squeeze(critic, axis=-1)
 
     def initialize_carry(self, rng, input_shape):
         """Initialize the rnn hidden state."""
-        return globals()[self.config.MODEL](self.config).initialize_carry(rng, input_shape)
+        return globals()[self.config.MODEL](self.config).initialize_carry(
+            rng, input_shape
+        )
 
 
 class Transition(NamedTuple):
@@ -380,7 +429,12 @@ def make_train(config: PPOParams, logger: DummyLogger):
             Average eval reward of last validation epoch
         """
         # INIT NETWORK
-        network = ActorCriticRNN(env.action_size, discrete=_discrete, config=config, action_limits=env_info["act_clip"])
+        network = ActorCriticRNN(
+            env.action_size,
+            discrete=_discrete,
+            config=config,
+            action_limits=env_info["act_clip"],
+        )
         rng, _rng = jax.random.split(rng)
         input_size = env.observation_size
         if config.meta_rl:
@@ -390,20 +444,28 @@ def make_train(config: PPOParams, logger: DummyLogger):
             jnp.zeros((1, config.env_params.batch_size, input_size)),
             jnp.zeros((1, config.env_params.batch_size)),
         )
-        init_hstate = _rnn_model.initialize_carry(rng, (config.env_params.batch_size, input_size))
+        init_hstate = _rnn_model.initialize_carry(
+            rng, (config.env_params.batch_size, input_size)
+        )
 
         network_params = network.init(_rng, init_hstate, init_x)
 
         # TODO: Use optimizers.py
         if config.anneal_lr:
-            linear_schedule = optax.linear_schedule(config.LR, 0.0, config.episodes * config.update_steps)
+            linear_schedule = optax.linear_schedule(
+                config.LR, 0.0, config.episodes * config.update_steps
+            )
             tx = optax.chain(
-                optax.clip_by_global_norm(config.gradient_clip) if config.gradient_clip else optax.identity(),
+                optax.clip_by_global_norm(config.gradient_clip)
+                if config.gradient_clip
+                else optax.identity(),
                 optax.adam(learning_rate=linear_schedule),
             )
         else:
             tx = optax.chain(
-                optax.clip_by_global_norm(config.gradient_clip) if config.gradient_clip else optax.identity(),
+                optax.clip_by_global_norm(config.gradient_clip)
+                if config.gradient_clip
+                else optax.identity(),
                 # optax.sgd(config.LR),
                 optax.adam(config.LR),
             )
@@ -463,7 +525,11 @@ def make_train(config: PPOParams, logger: DummyLogger):
                 x = normalize(_env_state.obs[None, :], _normalizer_state)
                 if config.meta_rl:
                     x = jnp.concatenate(
-                        [x, last_act[None], _env_state.reward.reshape((1, eval_env.batch_size, -1))],
+                        [
+                            x,
+                            last_act[None],
+                            _env_state.reward.reshape((1, eval_env.batch_size, -1)),
+                        ],
                         axis=-1,
                     )
                 ac_in = (x, _env_state.done[None, :])
@@ -499,7 +565,9 @@ def make_train(config: PPOParams, logger: DummyLogger):
                 )
 
                 # Action fed to the Meta-Learner is one-hot encoded for discrete envs.
-                re_action = jax.nn.one_hot(action, env.action_size) if _discrete else action
+                re_action = (
+                    jax.nn.one_hot(action, env.action_size) if _discrete else action
+                )
 
                 runner_state = (
                     next_env_state,
@@ -509,7 +577,9 @@ def make_train(config: PPOParams, logger: DummyLogger):
                 )
                 return runner_state, transition
 
-            runner_state, traj_batch = jax.lax.scan(_env_step, runner_state, None, config.eval_steps)
+            runner_state, traj_batch = jax.lax.scan(
+                _env_step, runner_state, None, config.eval_steps
+            )
             mean_reward = compute_agg_reward(traj_batch)
             return mean_reward, traj_batch
 
@@ -520,15 +590,27 @@ def make_train(config: PPOParams, logger: DummyLogger):
 
             # COLLECT TRAJECTORIES
             def _env_step(runner_state, unused):
-                train_state, env_state, _normalizer_state, last_act, prev_hstate, rng = runner_state
+                (
+                    train_state,
+                    env_state,
+                    _normalizer_state,
+                    last_act,
+                    prev_hstate,
+                    rng,
+                ) = runner_state
                 rng, _rng = jax.random.split(rng)
 
                 # SELECT ACTION
                 x = normalize(env_state.obs, _normalizer_state)
                 if config.meta_rl:
-                    x = jnp.concatenate([x, last_act, env_state.reward.reshape((env.batch_size, 1))], axis=-1)
+                    x = jnp.concatenate(
+                        [x, last_act, env_state.reward.reshape((env.batch_size, 1))],
+                        axis=-1,
+                    )
                 ac_in = (x[None], env_state.done[None, :])
-                next_hstate, pi, value = network.apply(train_state.params, prev_hstate, ac_in)
+                next_hstate, pi, value = network.apply(
+                    train_state.params, prev_hstate, ac_in
+                )
                 action = pi.sample(seed=_rng)
                 if env_info["act_clip"]:
                     action = jnp.clip(action, *action_clip)
@@ -542,7 +624,9 @@ def make_train(config: PPOParams, logger: DummyLogger):
                 # STEP ENV
                 rng, _rng = jax.random.split(rng)
                 next_env_state = env.step(env_state, action)
-                next_env_state = next_env_state.replace(obs=normalize(next_env_state.obs, _normalizer_state))
+                next_env_state = next_env_state.replace(
+                    obs=normalize(next_env_state.obs, _normalizer_state)
+                )
 
                 transition = Transition(
                     prev_done=env_state.done,
@@ -561,7 +645,9 @@ def make_train(config: PPOParams, logger: DummyLogger):
                 )
 
                 # Action fed to the Meta-Learner is one-hot encoded for discrete envs.
-                re_action = jax.nn.one_hot(action, env.action_size) if _discrete else action
+                re_action = (
+                    jax.nn.one_hot(action, env.action_size) if _discrete else action
+                )
 
                 runner_state = (
                     train_state,
@@ -574,12 +660,18 @@ def make_train(config: PPOParams, logger: DummyLogger):
                 return runner_state, transition
 
             # initial_hstate = runner_state[-2]
-            runner_state, traj_batch = jax.lax.scan(_env_step, runner_state, None, config.collect_horizon)
-            train_state, env_state, _normalizer_state, re_action, hstate, rng = runner_state
+            runner_state, traj_batch = jax.lax.scan(
+                _env_step, runner_state, None, config.collect_horizon
+            )
+            train_state, env_state, _normalizer_state, re_action, hstate, rng = (
+                runner_state
+            )
 
             # UPDATE NORMALIZER
             if config.normalize_obs:
-                _normalizer_state = running_statistics.update(_normalizer_state, traj_batch.obs)
+                _normalizer_state = running_statistics.update(
+                    _normalizer_state, traj_batch.obs
+                )
 
             # CALCULATE ADVANTAGES
             # Compute the last value
@@ -596,8 +688,12 @@ def make_train(config: PPOParams, logger: DummyLogger):
                     gae, next_value = carry
                     _transition, _value = _batch
                     next_done, reward = _transition.done, _transition.reward.squeeze()
-                    delta = reward + config.gamma * next_value * (1 - next_done) - _value
-                    gae = delta + config.gamma * config.gae_lambda * (1 - next_done) * gae
+                    delta = (
+                        reward + config.gamma * next_value * (1 - next_done) - _value
+                    )
+                    gae = (
+                        delta + config.gamma * config.gae_lambda * (1 - next_done) * gae
+                    )
                     return (gae, _value), gae
 
                 _, advantages = jax.lax.scan(
@@ -612,7 +708,9 @@ def make_train(config: PPOParams, logger: DummyLogger):
             gae, val = _calculate_gae(traj_batch, traj_batch.value, _last_val[0])
 
             # Swap axes to make batch major
-            batch_major = jax.tree_util.tree_map(lambda x: jnp.swapaxes(x, 0, 1), (traj_batch, gae, val))
+            batch_major = jax.tree_util.tree_map(
+                lambda x: jnp.swapaxes(x, 0, 1), (traj_batch, gae, val)
+            )
             # Add to buffer
             buffer_state = buffer.init(jax.tree.map(lambda x: x[0][0], batch_major))
             buffer_state = buffer.add(buffer_state, batch_major)
@@ -621,18 +719,29 @@ def make_train(config: PPOParams, logger: DummyLogger):
             def _update_epoch(update_state, unused):
                 (train_state, rng) = update_state
 
-                def _update_minbatch(train_state: TrainState, batch: tuple[Transition, jax.Array, jax.Array]):
+                def _update_minbatch(
+                    train_state: TrainState,
+                    batch: tuple[Transition, jax.Array, jax.Array],
+                ):
                     def _loss_fn(params):
                         transition, _gae, _val = batch
-                        _init_hstate = jax.tree.map(lambda a: a[0], transition.hidden)  # T=0, B, H
+                        _init_hstate = jax.tree.map(
+                            lambda a: a[0], transition.hidden
+                        )  # T=0, B, H
                         # RERUN NETWORK
                         x = normalize(transition.obs, _normalizer_state)
                         if config.meta_rl:
                             x = jnp.concatenate(
-                                [x, transition.prev_action, transition.prev_reward.reshape((*x.shape[:2], 1))],
+                                [
+                                    x,
+                                    transition.prev_action,
+                                    transition.prev_reward.reshape((*x.shape[:2], 1)),
+                                ],
                                 axis=-1,
                             )
-                        _, pi, _values = network.apply(params, _init_hstate, (x, transition.prev_done))
+                        _, pi, _values = network.apply(
+                            params, _init_hstate, (x, transition.prev_done)
+                        )
 
                         if env_info["act_clip"]:
                             action = jnp.clip(transition.action, *action_clip)
@@ -643,12 +752,14 @@ def make_train(config: PPOParams, logger: DummyLogger):
                             log_prob = log_prob.mean(axis=-1)
 
                         # CALCULATE VALUE LOSS
-                        value_pred_clipped = transition.value + (_values - transition.value).clip(
-                            -config.clip_eps, config.clip_eps
-                        )
+                        value_pred_clipped = transition.value + (
+                            _values - transition.value
+                        ).clip(-config.clip_eps, config.clip_eps)
                         value_losses = jnp.square(_val - _values)
                         value_losses_clipped = jnp.square(_val - value_pred_clipped)
-                        value_loss = 0.5 * jnp.maximum(value_losses, value_losses_clipped).mean()
+                        value_loss = (
+                            0.5 * jnp.maximum(value_losses, value_losses_clipped).mean()
+                        )
 
                         # CALCULATE ACTOR LOSS
                         diff = log_prob - transition.log_prob
@@ -674,7 +785,11 @@ def make_train(config: PPOParams, logger: DummyLogger):
                             entropy = pi.entropy().mean()
                         if config.ent_coef:
                             total_loss -= config.ent_coef * entropy
-                        return total_loss, {"value_loss": value_loss, "loss_actor": loss_actor, "entropy": entropy}
+                        return total_loss, {
+                            "value_loss": value_loss,
+                            "loss_actor": loss_actor,
+                            "entropy": entropy,
+                        }
 
                     grad_fn = jax.value_and_grad(_loss_fn, has_aux=True)
                     (total_loss, loss_info), grads = grad_fn(train_state.params)
@@ -683,7 +798,9 @@ def make_train(config: PPOParams, logger: DummyLogger):
 
                 rng, _rng = jax.random.split(rng)
                 minibatch = buffer.sample(buffer_state, _rng)
-                experience = jax.tree_util.tree_map(lambda x: jnp.swapaxes(x, 0, 1), minibatch.experience)
+                experience = jax.tree_util.tree_map(
+                    lambda x: jnp.swapaxes(x, 0, 1), minibatch.experience
+                )
 
                 # batch_indices = jrandom.choice(
                 #     _rng, config.env_params.batch_size, (config.train_batch_size,), replace=False
@@ -698,8 +815,17 @@ def make_train(config: PPOParams, logger: DummyLogger):
                 return update_state, loss_info
 
             update_state = (train_state, rng)
-            update_state, loss_info = jax.lax.scan(_update_epoch, update_state, None, config.updates_per_batch)
-            runner_state = (update_state[0], env_state, _normalizer_state, re_action, hstate, update_state[-1])
+            update_state, loss_info = jax.lax.scan(
+                _update_epoch, update_state, None, config.updates_per_batch
+            )
+            runner_state = (
+                update_state[0],
+                env_state,
+                _normalizer_state,
+                re_action,
+                hstate,
+                update_state[-1],
+            )
             return runner_state, loss_info
 
         rng, _rng = jax.random.split(rng)
@@ -717,11 +843,17 @@ def make_train(config: PPOParams, logger: DummyLogger):
         try:
             for i in range(config.episodes):
                 with jax.disable_jit(DISABLE_JIT):
-                    runner_state, loggables = jax.lax.scan(update_step, runner_state, None, config.update_steps)
+                    runner_state, loggables = jax.lax.scan(
+                        update_step, runner_state, None, config.update_steps
+                    )
                 if config.eval_every and i % config.eval_every == 0:
-                    eval_reward, _traj = eval_model(runner_state[0].params, runner_state[2])
+                    eval_reward, _traj = eval_model(
+                        runner_state[0].params, runner_state[2]
+                    )
 
-                    timestep = runner_state[0].step  # * config.collect_horizon * config.env_params.batch_size
+                    timestep = runner_state[
+                        0
+                    ].step  # * config.collect_horizon * config.env_params.batch_size
                     loggables = {
                         **jax.tree.map(jnp.mean, loggables),
                         "eval/rewards": eval_reward,
@@ -766,15 +898,23 @@ def make_train(config: PPOParams, logger: DummyLogger):
                 out_dir = f"data/{config.env_params.env_name}"
                 os.makedirs(out_dir, exist_ok=True)
                 # Save last episode data for plotting.
-                np.savez(f"{out_dir}/ppo_last_trajectory_{str(config.seed)}.npz", **_prep_ep(_traj))
+                np.savez(
+                    f"{out_dir}/ppo_last_trajectory_{str(config.seed)}.npz",
+                    **_prep_ep(_traj),
+                )
 
                 # Save best episode data for plotting.
-                np.savez(f"{out_dir}/ppo_best_trajectory_{str(config.seed)}.npz", **_prep_ep(trajectories))
+                np.savez(
+                    f"{out_dir}/ppo_best_trajectory_{str(config.seed)}.npz",
+                    **_prep_ep(trajectories),
+                )
 
                 _prep_ep(trajectories)
                 env_params = getattr(env, "params")
                 if env_params:
-                    with open(f"{out_dir}/ppo_env_params_{str(config.seed)}.pkl", "wb") as f:
+                    with open(
+                        f"{out_dir}/ppo_env_params_{str(config.seed)}.pkl", "wb"
+                    ) as f:
                         pickle.dump(env_params, f)
         return eval_reward if config.eval_every else None
 
@@ -797,14 +937,18 @@ def train_and_eval(config: PPOParams, logger=DummyLogger()):
                 f"{out_dir}/ppo_env_params_{str(config.seed)}.pkl",
             )
             logger.log_img(
-                "best_trajectories", plt.gcf(), caption="Total reward: {:.2f}".format(logger["best_eval_reward"])
+                "best_trajectories",
+                plt.gcf(),
+                caption="Total reward: {:.2f}".format(logger["best_eval_reward"]),
             )
             # Plot last trajectory
             plot_from_file(
                 f"{out_dir}/ppo_last_trajectory_{str(config.seed)}.npz",
                 f"{out_dir}/ppo_env_params_{str(config.seed)}.pkl",
             )
-            logger.log_img("last_trajectories", plt.gcf(), caption=f"Total reward: {result:.2f}")
+            logger.log_img(
+                "last_trajectories", plt.gcf(), caption=f"Total reward: {result:.2f}"
+            )
 
         return logger["best_eval_reward"]
     except Exception as e:
@@ -816,5 +960,7 @@ def train_and_eval(config: PPOParams, logger=DummyLogger()):
 if __name__ == "__main__":
     config_path = "config/ppo.yaml" if os.path.exists("config/ppo.yaml") else None
     params: PPOParams = simple_parsing.parse(PPOParams, config_path=config_path)
-    best_reward = with_logger(train_and_eval, params, run_name=params.env_params.env_name)
+    best_reward = with_logger(
+        train_and_eval, params, run_name=params.env_params.env_name
+    )
     print(f"Best eval reward: {best_reward:.2f}")

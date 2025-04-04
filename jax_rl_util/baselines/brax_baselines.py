@@ -18,7 +18,7 @@ from jax import debug
 from jax import numpy as jnp
 from util.logging_util import DummyLogger, LoggableConfig, with_logger
 
-import envs  # noqa
+import jax_rl_util.envs  # noqa
 from jax_rl_util.envs.env_util import render_brax
 from jax_rl_util.envs.wrappers import POBraxWrapper
 
@@ -277,11 +277,15 @@ def eval_baseline(
     if TRAIN_FNS[env_name].func.__module__.split(".")[-2] == "ppo":
 
         def make_inference_fn(*args, **kwargs):  # noqa
-            return ppo.ppo_networks.make_inference_fn(ppo.ppo_networks.make_ppo_networks(*args, **kwargs))
+            return ppo.ppo_networks.make_inference_fn(
+                ppo.ppo_networks.make_ppo_networks(*args, **kwargs)
+            )
     elif TRAIN_FNS[env_name].func.__module__.split(".")[-2] == "sac":
 
         def make_inference_fn(*args, **kwargs):  # noqa
-            return sac.sac_networks.make_inference_fn(sac.sac_networks.make_sac_networks(*args, **kwargs))
+            return sac.sac_networks.make_inference_fn(
+                sac.sac_networks.make_sac_networks(*args, **kwargs)
+            )
 
     def normalize(x, y):
         return x  # noqa
@@ -289,7 +293,9 @@ def eval_baseline(
     if TRAIN_FNS[env_name].keywords["normalize_observations"]:
         normalize = acme.running_statistics.normalize  # noqa
 
-    inference_fn = make_inference_fn(state.obs.shape[-1], env.action_size, preprocess_observations_fn=normalize)(params)
+    inference_fn = make_inference_fn(
+        state.obs.shape[-1], env.action_size, preprocess_observations_fn=normalize
+    )(params)
 
     jit_inference_fn = jax.jit(inference_fn)
 
@@ -317,7 +323,9 @@ def train_brax_baseline(config: BraxBaselineParams, logger=DummyLogger()):
     """Train a baseline model for control of a brax physics simulation."""
     env_name = config.env_name.replace("brax-", "")
     obs_mask = config.obs_mask
-    env = brax.envs.get_environment(env_name=env_name, backend=config.backend, **config.env_kwargs)
+    env = brax.envs.get_environment(
+        env_name=env_name, backend=config.backend, **config.env_kwargs
+    )
     if obs_mask:
         env = POBraxWrapper(env, obs_mask)
 
@@ -366,7 +374,9 @@ def train_brax_baseline(config: BraxBaselineParams, logger=DummyLogger()):
     )
     if config.render and not DEBUG:
         avg_reward, frames = avg_reward
-        logger.log_video("env/video", np.array(frames), fps=30, caption=f"Reward: {avg_reward:.2f}")
+        logger.log_video(
+            "env/video", np.array(frames), fps=30, caption=f"Reward: {avg_reward:.2f}"
+        )
     logger["eval_reward"] = avg_reward
 
 
@@ -395,11 +405,17 @@ def load_brax_model(path, env_name: str, obs_size: int, action_size: int):
     if TRAIN_FNS[env_name].func.__module__.split(".")[-2] == "ppo":
 
         def make_inference_fn(*args, **kwargs):  # noqa
-            return ppo.ppo_networks.make_inference_fn(ppo.ppo_networks.make_ppo_networks(*args, **kwargs))
+            return ppo.ppo_networks.make_inference_fn(
+                ppo.ppo_networks.make_ppo_networks(*args, **kwargs)
+            )
     elif TRAIN_FNS[env_name].func.__module__.split(".")[-2] == "sac":
 
         def make_inference_fn(*args, **kwargs):  # noqa
-            return sac.sac_networks.make_inference_fn(sac.sac_networks.make_sac_networks(*args, **kwargs))
+            return sac.sac_networks.make_inference_fn(
+                sac.sac_networks.make_sac_networks(*args, **kwargs)
+            )
 
-    _fn = make_inference_fn(obs_size, action_size, preprocess_observations_fn=normalize)(params)
+    _fn = make_inference_fn(
+        obs_size, action_size, preprocess_observations_fn=normalize
+    )(params)
     return jax.jit(lambda obs, key: _fn(obs, key)[0])

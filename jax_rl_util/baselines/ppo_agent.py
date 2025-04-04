@@ -13,7 +13,7 @@ from gymnasium.wrappers import RecordVideo
 from gymnasium.wrappers.frame_stack import FrameStack
 from models.jax_util import JaxRng
 
-from envs.wrappers import GymJaxWrapper, is_discrete
+from jax_rl_util.envs.wrappers import GymJaxWrapper, is_discrete
 from jax_rl_util.envs.wrappers import RGBtoGrayWrapper
 from rtr_iil.reinforcement.ppo_rnn import ActorCriticRNN, PPO_Params
 
@@ -59,7 +59,9 @@ if __name__ == "__main__":
     config = load_config(ckpt_dir)
     params = load_params(ckpt_dir)
 
-    env = gymnasium.make("CarRacing-v2", render_mode="rgb_array", **config.env_init_args)
+    env = gymnasium.make(
+        "CarRacing-v2", render_mode="rgb_array", **config.env_init_args
+    )
 
     env = RecordVideo(env, video_folder="./artifacts/videos", video_length=video_length)
     if config.stack_frames > 1:

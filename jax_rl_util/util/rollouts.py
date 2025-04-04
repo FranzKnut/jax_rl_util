@@ -8,9 +8,9 @@ import jax.numpy as jnp
 import numpy as np
 import simple_parsing
 from baselines.brax_baselines import load_brax_model
-from envs.environments import EnvironmentConfig, make_env, print_env_info
+from jax_rl_util.envs.environments import EnvironmentConfig, make_env, print_env_info
+from jax_rl_util.envs import BRAX_ENVS_POS_DIMS
 
-from envs import BRAX_ENVS_POS_DIMS
 
 @dataclass
 class RolloutConfig:
@@ -27,7 +27,9 @@ class RolloutConfig:
         seed (int): Random seed for reproducibility. Defaults to 0.
     """
 
-    policy_path: str | None = None  # defaults to "artifacts/baselines/{backend}/{env_name}.ckpt"
+    policy_path: str | None = (
+        None  # defaults to "artifacts/baselines/{backend}/{env_name}.ckpt"
+    )
     ckpt_type: str = "brax"
     output_dir: str = "data"
     env_config: EnvironmentConfig = field(
@@ -44,31 +46,49 @@ class RolloutConfig:
     seed: int = 0
 
 
-def collect_rollouts(config: RolloutConfig, save_rollouts: bool = True, verbose: bool = True):
+def collect_rollouts(
+    config: RolloutConfig, save_rollouts: bool = True, verbose: bool = True
+):
     """Collect rollouts for the given environment."""
     rng = jax.random.PRNGKey(config.seed)
 
     if config.env_config.env_name in BRAX_ENVS_POS_DIMS:
-        config.env_config.init_kwargs["exclude_current_positions_from_observation"] = False
+        config.env_config.init_kwargs["exclude_current_positions_from_observation"] = (
+            False
+        )
 
     env, env_info = make_env(config.env_config, use_vmap_wrapper=True)
     if verbose:
         print_env_info(env_info)
 
     backend = config.env_config.init_kwargs.get("backend", "none")
-    policy_path = config.policy_path or f"artifacts/baselines/{backend}/{config.env_config.env_name}.ckpt"
+    policy_path = (
+        config.policy_path
+        or f"artifacts/baselines/{backend}/{config.env_config.env_name}.ckpt"
+    )
 
     if config.ckpt_type == "brax":
-        policy_fn = load_brax_model(policy_path, config.env_config.env_name, env.observation_size, env.action_size)
+        policy_fn = load_brax_model(
+            policy_path,
+            config.env_config.env_name,
+            env.observation_size,
+            env.action_size,
+        )
         use_rnn = False
         init_carry = None
     elif config.ckpt_type == "orbax":
         from rtr_iil import make_flax_inference_fn  # FIXME
 
-        policy_fn, policy = make_flax_inference_fn(policy_path, env.observation_size, env.action_size)
+        policy_fn, policy = make_flax_inference_fn(
+            policy_path, env.observation_size, env.action_size
+        )
         use_rnn = policy.use_rnn
         rng, policy_key = jax.random.split(rng)
-        init_carry = policy.initialize_carry(policy_key, (env.observation_size,)) if policy.use_rnn else None
+        init_carry = (
+            policy.initialize_carry(policy_key, (env.observation_size,))
+            if policy.use_rnn
+            else None
+        )
 
     def _step(carry, _):
         print("Tracing _step")
@@ -99,7 +119,9 @@ def collect_rollouts(config: RolloutConfig, save_rollouts: bool = True, verbose:
         rng, reset_key, step_key = jax.random.split(rng, 3)
         env_state = env.reset(reset_key)
 
-        _, (states, actions) = jax.lax.scan(_step, (env_state, init_carry, step_key), xs=None, length=config.max_steps)
+        _, (states, actions) = jax.lax.scan(
+            _step, (env_state, init_carry, step_key), xs=None, length=config.max_steps
+        )
         states, actions = jax.tree.map(lambda x: x.swapaxes(0, 1), (states, actions))
         episode_ends = jnp.where(
             jnp.any(states.done, axis=1),
@@ -107,7 +129,9 @@ def collect_rollouts(config: RolloutConfig, save_rollouts: bool = True, verbose:
             states.done.shape[-1],
         )
         num_episodes = max(1, len(episode_ends))
-        _reward = np.sum([np.sum(states.reward[i, :l]) for i, l in enumerate(episode_ends)])
+        _reward = np.sum(
+            [np.sum(states.reward[i, :l]) for i, l in enumerate(episode_ends)]
+        )
         total_reward += _reward
         total_num_eps += num_episodes
         if save_rollouts:
@@ -119,7 +143,9 @@ def collect_rollouts(config: RolloutConfig, save_rollouts: bool = True, verbose:
                 rew=states.reward,
                 done=states.done,
             )
-            print(f"Saved {num_episodes} episodes to {filename}. Average reward: {_reward / num_episodes}")
+            print(
+                f"Saved {num_episodes} episodes to {filename}. Average reward: {_reward / num_episodes}"
+            )
     return total_reward / total_num_eps
 
 
