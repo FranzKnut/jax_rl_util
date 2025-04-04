@@ -78,7 +78,7 @@ def render_frames(_env: gym.Env, states: list, start_idx: int = None, end_idx: i
     if not isinstance(states, list):
         states = [jax.tree.map(lambda x: x[n], states) for n in range(start_idx or 0, end_idx or states.time.shape[0])]
 
-    from wrappers import GymnaxBraxWrapper
+    from jax_rl_util.envs.wrappers import GymnaxBraxWrapper
 
     # Define rendering function for specific envs
     is_brax = _env.name.startswith("brax-") or _env.name in brax.envs._envs
