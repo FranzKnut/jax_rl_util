@@ -584,12 +584,13 @@ def count_combinations(config):
         return 1
 
 
-def create_sweep_interactively(sweep_config, project=None):
+def create_sweep_interactively(sweep_config, project=None, **kwargs):
+    import wandb
     pprint(sweep_config)
     # Estimate number of runs and upload to wandb
     est_runs = count_combinations(sweep_config["parameters"])
     print("Est. runs:", est_runs)
-    name = input("Enter custom sweep name ():  ")
+    name = input(f"Enter custom sweep name (\"{sweep_config.get('name', '')}\"):  ")
     if name:
         sweep_config["name"] = name
-    return wandb.sweep(sweep_config, project=project)
+    return wandb.sweep(sweep_config, project=project, **kwargs)
