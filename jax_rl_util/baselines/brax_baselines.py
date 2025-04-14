@@ -16,7 +16,7 @@ from brax.training.agents.ppo import train as ppo
 from brax.training.agents.sac import train as sac
 from jax import debug
 from jax import numpy as jnp
-from util.logging_util import DummyLogger, LoggableConfig, with_logger
+from jax_rl_util.util.logging_util import DummyLogger, LoggableConfig, with_logger
 
 import jax_rl_util.envs  # noqa
 from jax_rl_util.envs.env_util import render_brax

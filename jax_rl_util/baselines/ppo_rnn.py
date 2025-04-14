@@ -23,7 +23,6 @@ from flax.linen.initializers import constant, orthogonal
 from flax.training.train_state import TrainState
 from matplotlib import pyplot as plt
 
-from jax_rl_util.envs.env_util import compute_avg_reward
 from jax_rl_util.envs.environments import EnvironmentConfig, make_env, print_env_info
 from jax_rl_util.envs.plot_drones import plot_from_file
 from jax_rl_util.envs.wrappers import VmapWrapper

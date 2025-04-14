@@ -156,7 +156,7 @@ class ContinuousCartPoleEnv(CartPoleEnv):
         initial_state = initial_state.at[2].set(initial_state[2] + self.start_theta)
         return initial_state
 
-    def reset(self, seed=None):
+    def reset(self, seed=None, **_):
         if seed is None:
             self.key, seed = jrandom.split(self.key)
 
@@ -164,7 +164,7 @@ class ContinuousCartPoleEnv(CartPoleEnv):
         state = self._reset(seed)
         self.state = state
 
-        return state, state
+        return state, {}
 
 
 class CartPoleSwingUp(ContinuousCartPoleEnv):
