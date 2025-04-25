@@ -79,15 +79,13 @@ def collect_rollouts(
     elif config.ckpt_type == "orbax":
         from rtr_iil import make_flax_inference_fn  # FIXME
 
-        policy_fn, policy = make_flax_inference_fn(
+        policy_fn, reset_carry, policy = make_flax_inference_fn(
             policy_path, env.observation_size, env.action_size
         )
         use_rnn = policy.use_rnn
         rng, policy_key = jax.random.split(rng)
         init_carry = (
-            policy.initialize_carry(policy_key, (env.observation_size,))
-            if policy.use_rnn
-            else None
+            reset_carry(policy_key, (env.observation_size,)) if policy.use_rnn else None
         )
 
     def _step(carry, _):

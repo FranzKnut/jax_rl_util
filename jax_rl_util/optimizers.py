@@ -60,8 +60,10 @@ def make_optimizer(config=OptimizerConfig(), direction="min") -> optax.GradientT
     weight_decay = config.weight_decay
     if direction in ["max", "maximize"]:
         learning_rate = -learning_rate
-    else:
+    elif direction in ["min", "minimize"]:
         weight_decay = -weight_decay
+    else:
+        raise ValueError(f"Unknown direction {direction}. Use 'min' or 'max'.")
 
     if config.lr_decay_type == "cosine_warmup":
         """Args:

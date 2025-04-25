@@ -1,4 +1,5 @@
 """Util for eligibility traces."""
+
 from functools import partial
 
 import jax
@@ -8,8 +9,10 @@ from flax import linen as nn
 from jax_rtrl.models.mlp import FADense
 
 
-@partial(jax.jit, static_argnames=('trace_mode'))
-def trace_update(grads, z, gamma_lambda, trace_mode: str = 'accumulate', alpha=None, _I=1):
+@partial(jax.jit, static_argnames=("trace_mode"))
+def trace_update(
+    grads, z, gamma_lambda, trace_mode: str = "accumulate", alpha=None, _I=1
+):
     """Update the eligibility trace. Also compute the gradients if d is given.
 
     See Sutton & Barto, 1998, p. 275
@@ -43,19 +46,27 @@ def trace_update(grads, z, gamma_lambda, trace_mode: str = 'accumulate', alpha=N
     return jax.tree.map(locals()[trace_mode], z, grads)
 
 
-@partial(jax.jit, static_argnames=('trace_mode',))
-def compute_updates(z, trace_mode: str = 'accumulate', d=None, dutch_diff=None, alpha=1, grads=None):
+@partial(jax.jit, static_argnames=("trace_mode",))
+def compute_updates(
+    z,
+    trace_mode: str = "accumulate",
+    d=None,
+    dutch_diff=None,
+    alpha=1,
+):
     """Compute gradients given the eligibility trace."""
     # Multiply trace with TD-error.
-    grads = jax.tree.map(lambda t: (d.T * t.T).T,  z)
-    if trace_mode == 'dutch':
-        grads = jax.tree.map(lambda _z, _g: _g + alpha * (dutch_diff.T * (_z-_g).T).T, z, grads)
+    grads = jax.tree.map(lambda t: (d.T * t.T).T, z)
+    if trace_mode == "dutch":
+        grads = jax.tree.map(
+            lambda _z, _g: _g + alpha * (dutch_diff.T * (_z - _g).T).T, z, grads
+        )
     return grads
 
 
 def init_trace(params, batch_shape=()):
     """Initialize the eligibility trace: zθ ← 0 (d'-component eligibility trace vector)."""
-    return jax.tree.map(lambda x: jnp.zeros(batch_shape+x.shape), params)
+    return jax.tree.map(lambda x: jnp.zeros(batch_shape + x.shape), params)
 
 
 class TraceModel(nn.Module):
@@ -66,7 +77,9 @@ class TraceModel(nn.Module):
 
     def setup(self):
         """Initialize a model for every component in the flattened example trace."""
-        self.models = [FADense(np.prod(s), f_align=self.f_align) for s in self.flat_shapes]
+        self.models = [
+            FADense(np.prod(s), f_align=self.f_align) for s in self.flat_shapes
+        ]
 
     def __call__(self, obs):
         """Flatten the given pytree and predict every component separately using Linear functions."""

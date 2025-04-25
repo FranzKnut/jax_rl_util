@@ -203,7 +203,8 @@ class AimLogger(DummyLogger):
             # Assuming it is a dataclass
             hparams = asdict(hparams)
         self.log_params(hparams)
-        self.run.name = run_name + " " + self.run.hash
+        if run_name is not None:
+            self.run.name = run_name + " " + self.run.hash
         if hparams.get("save_model", False):
             import orbax.checkpoint
 
@@ -586,11 +587,12 @@ def count_combinations(config):
 
 def create_sweep_interactively(sweep_config, project=None, **kwargs):
     import wandb
+
     pprint(sweep_config)
     # Estimate number of runs and upload to wandb
     est_runs = count_combinations(sweep_config["parameters"])
     print("Est. runs:", est_runs)
-    name = input(f"Enter custom sweep name (\"{sweep_config.get('name', '')}\"):  ")
+    name = input(f'Enter custom sweep name ("{sweep_config.get("name", "")}"):  ')
     if name:
         sweep_config["name"] = name
     return wandb.sweep(sweep_config, project=project, **kwargs)
