@@ -6,7 +6,6 @@ from typing import Any, Callable, Optional, Union
 
 import jax
 import jax.numpy as jnp
-import jax.tree_util as jtu
 import optax
 from optax._src import base, wrappers
 
@@ -29,7 +28,9 @@ class OptimizerConfig:
     # fmt: on
 
 
-def make_optimizer(config=OptimizerConfig(), direction="min") -> optax.GradientTransformation:
+def make_optimizer(
+    config=OptimizerConfig(), direction="min"
+) -> optax.GradientTransformation:
     """Make optax optimizer.
 
     The decorator allows reading scheduled lr from the optimizer state.
@@ -119,7 +120,9 @@ def make_optimizer(config=OptimizerConfig(), direction="min") -> optax.GradientT
 
         """
         learning_rate = optax.cosine_decay_schedule(
-            learning_rate, decay_steps=config.lr_kwargs["decay_steps"], alpha=config.lr_kwargs.get("alpha", 0)
+            learning_rate,
+            decay_steps=config.lr_kwargs["decay_steps"],
+            alpha=config.lr_kwargs.get("alpha", 0),
         )
     elif config.lr_decay_type == "exponential":
         """Args:
@@ -145,7 +148,9 @@ def make_optimizer(config=OptimizerConfig(), direction="min") -> optax.GradientT
         raise ValueError(f"Decay type {config.lr_decay_type} unknown.")
 
     if weight_decay == "l2" and config.opt_name in ["adam"]:
-        print(f"WARNING: Weight decay incorrect for {config.opt_name}, consider using adamw.")
+        print(
+            f"WARNING: Weight decay incorrect for {config.opt_name}, consider using adamw."
+        )
 
     @optax.inject_hyperparams
     def _make_opt(learning_rate):
@@ -163,7 +168,9 @@ def make_optimizer(config=OptimizerConfig(), direction="min") -> optax.GradientT
             if config.opt_name not in ["adamw"]
             else optax.identity(),  # , mask=decay_mask
             # Gradient clipping
-            optax.clip_by_global_norm(config.gradient_clip) if config.gradient_clip else optax.identity(),
+            optax.clip_by_global_norm(config.gradient_clip)
+            if config.gradient_clip
+            else optax.identity(),
             # Optimizer
             _opt(learning_rate, **config.kwargs)
             if config.opt_name not in ["adamw"]
@@ -186,7 +193,8 @@ def make_optimizer(config=OptimizerConfig(), direction="min") -> optax.GradientT
 
 
 def add_decayed_weights_l1(
-    weight_decay: Union[float, jax.Array] = 0.0, mask: Optional[Union[Any, Callable[[base.Params], Any]]] = None
+    weight_decay: Union[float, jax.Array] = 0.0,
+    mask: Optional[Union[Any, Callable[[base.Params], Any]]] = None,
 ) -> base.GradientTransformation:
     """Add the derivative of L1 loss of the params scaled by `weight_decay`.
 
@@ -206,14 +214,16 @@ def add_decayed_weights_l1(
     def update_fn(updates, state, params):
         if params is None:
             raise ValueError(base.NO_PARAMS_MSG)
-        additions = jtu.tree_map(lambda p: jnp.sign(p), params)
-        updates = jtu.tree_map(lambda g, p: g + weight_decay * p, updates, additions)
+        additions = jax.tree.map(lambda p: jnp.sign(p), params)
+        updates = jax.tree.map(lambda g, p: g + weight_decay * p, updates, additions)
         return updates, state
 
     # If mask is not `None`, apply mask to the gradient transformation.
     # E.g. it is common to skip weight decay on bias units and batch stats.
     if mask is not None:
-        return wrappers.masked(base.GradientTransformation(base.init_empty_state, update_fn), mask)
+        return wrappers.masked(
+            base.GradientTransformation(base.init_empty_state, update_fn), mask
+        )
     return base.GradientTransformation(base.init_empty_state, update_fn)
 
 
@@ -282,12 +292,17 @@ def map_nested_fn(fn):
     """
 
     def map_fn(nested_dict):
-        return {k: (map_fn(v) if hasattr(v, "keys") else fn(k, v)) for k, v in nested_dict.items()}
+        return {
+            k: (map_fn(v) if hasattr(v, "keys") else fn(k, v))
+            for k, v in nested_dict.items()
+        }
 
     return map_fn
 
 
-def make_optimizer_for_model(model_name: str, config=OptimizerConfig(), no_decay_lr_factor=1.0):
+def make_optimizer_for_model(
+    model_name: str, config=OptimizerConfig(), no_decay_lr_factor=1.0
+):
     """Make optax optimizer for given model name and config."""
     if "s5" in model_name:
         no_decay_params = ["B", "Lambda_re", "Lambda_im", "log_step", "norm"]
@@ -298,13 +313,22 @@ def make_optimizer_for_model(model_name: str, config=OptimizerConfig(), no_decay
     else:
         return make_optimizer(config)
 
-    print("Making optimizer for", model_name, "model, no_decay_params:", no_decay_params)
-    ssm_fn = map_nested_fn(lambda k, _: "no_decay" if k in no_decay_params else ("none" if k in [] else "regular"))
+    print(
+        "Making optimizer for", model_name, "model, no_decay_params:", no_decay_params
+    )
+    ssm_fn = map_nested_fn(
+        lambda k, _: "no_decay"
+        if k in no_decay_params
+        else ("none" if k in [] else "regular")
+    )
     return make_multi_transform(
         {
             "none": replace(config, learning_rate=0.0),
             "no_decay": replace(
-                config, opt_name="adam", learning_rate=no_decay_lr_factor * config.learning_rate, weight_decay=0.0
+                config,
+                opt_name="adam",
+                learning_rate=no_decay_lr_factor * config.learning_rate,
+                weight_decay=0.0,
             ),
             "regular": config,
         },

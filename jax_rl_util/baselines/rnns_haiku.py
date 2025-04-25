@@ -51,7 +51,7 @@ class BaseODECell(BaseRNNCell):
                 traces = solution[1]
             else:
                 out = solution[0][-1, -self.units:]
-                traces = jax.tree_map(lambda x: x[-1], solution[1])
+                traces = jax.tree.map(lambda x: x[-1], solution[1])
             return (out[-self.units:], traces)
         else:
             out = solution[:, -self.units:]
@@ -71,7 +71,7 @@ class BaseODECell(BaseRNNCell):
 
         def euler_step(y, t):
             dh = self.f(t, y)
-            out = jax.tree_map(lambda a, b: a + b * dt, y, dh)
+            out = jax.tree.map(lambda a, b: a + b * dt, y, dh)
             return out, out
 
         t = jnp.arange(t1 // dt)

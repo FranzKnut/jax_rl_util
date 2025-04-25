@@ -299,9 +299,9 @@ def make_train(config, logger=DummyLogger()):
                 permutation = jax.random.permutation(_rng, config["NUM_ENVS"])
                 batch = (init_hstate, traj_batch, advantages, targets)
 
-                shuffled_batch = jax.tree_util.tree_map(lambda x: jnp.take(x, permutation, axis=1), batch)
+                shuffled_batch = jax.tree.map(lambda x: jnp.take(x, permutation, axis=1), batch)
 
-                minibatches = jax.tree_util.tree_map(
+                minibatches = jax.tree.map(
                     lambda x: jnp.swapaxes(
                         jnp.reshape(x, [x.shape[0], config["NUM_MINIBATCHES"], -1] + list(x.shape[2:])), 1, 0
                     ),

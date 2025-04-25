@@ -708,7 +708,7 @@ def make_train(config: PPOParams, logger: DummyLogger):
             gae, val = _calculate_gae(traj_batch, traj_batch.value, _last_val[0])
 
             # Swap axes to make batch major
-            batch_major = jax.tree_util.tree_map(
+            batch_major = jax.tree.map(
                 lambda x: jnp.swapaxes(x, 0, 1), (traj_batch, gae, val)
             )
             # Add to buffer
@@ -798,7 +798,7 @@ def make_train(config: PPOParams, logger: DummyLogger):
 
                 rng, _rng = jax.random.split(rng)
                 minibatch = buffer.sample(buffer_state, _rng)
-                experience = jax.tree_util.tree_map(
+                experience = jax.tree.map(
                     lambda x: jnp.swapaxes(x, 0, 1), minibatch.experience
                 )
 
@@ -808,7 +808,7 @@ def make_train(config: PPOParams, logger: DummyLogger):
                 # experience = jax.tree.map(lambda x: x[batch_indices], batch_major)
 
                 # Swap axes back to time major
-                # experience = jax.tree_util.tree_map(lambda x: jnp.swapaxes(x, 0, 1), experience)
+                # experience = jax.tree.map(lambda x: jnp.swapaxes(x, 0, 1), experience)
 
                 train_state, loss_info = _update_minbatch(train_state, experience)
                 update_state = (train_state, rng)
