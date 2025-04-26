@@ -153,7 +153,7 @@ def update_nested_dict(d, u):
     return d
 
 
-def tree_stack(trees):
+def tree_stack(trees, axis=0):
     """Take a list of trees and stack every corresponding leaf.
 
     For example, given two trees ((a, b), c) and ((a', b'), c'), returns
@@ -169,7 +169,7 @@ def tree_stack(trees):
         treedef_list.append(treedef)
 
     grouped_leaves = zip(*leaves_list)
-    result_leaves = [jnp.stack(leaf) for leaf in grouped_leaves]
+    result_leaves = [jnp.stack(leaf, axis=axis) for leaf in grouped_leaves]
     return treedef_list[0].unflatten(result_leaves)
 
 
