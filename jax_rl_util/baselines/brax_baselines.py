@@ -16,7 +16,7 @@ from brax.training.agents.ppo import train as ppo
 from brax.training.agents.sac import train as sac
 from jax import debug
 from jax import numpy as jnp
-from util.logging_util import DummyLogger, LoggableConfig, with_logger
+from jax_rl_util.util.logging_util import DummyLogger, LoggableConfig, with_logger
 
 import jax_rl_util.envs  # noqa
 from jax_rl_util.envs.env_util import render_brax
@@ -36,7 +36,7 @@ class BraxBaselineParams(LoggableConfig):
     project_name: str = "brax_baselines"
     env_name: str = "halfcheetah"
     backend: str = "spring"
-    force: bool = True
+    force: bool = False
     env_kwargs: dict = field(default_factory=dict)
     obs_mask: str | Iterable[int] | None = None
     render: bool = True
@@ -350,7 +350,8 @@ def train_brax_baseline(config: BraxBaselineParams, logger=DummyLogger()):
 
         debug.callback(print_progress, num_steps, metrics["eval/episode_reward"])
 
-    model_filename = f"artifacts/baselines/{config.backend}/{env_name}.ckpt"
+    file_dir = os.path.dirname(os.path.abspath(__file__))
+    model_filename = file_dir + f"/trained/brax_baselines/{config.backend}/{env_name}.ckpt"
     if os.path.exists(model_filename) and not config.force:
         print("Loading existing model")
         params = model.load_params(model_filename)
@@ -392,7 +393,7 @@ if __name__ == "__main__" and TRAIN:
         with_logger(train_brax_baseline, params, run_name=params.env_name + " baseline")
 
 
-def load_brax_model(path, env_name: str, obs_size: int, action_size: int):
+def load_brax_model(path, env_name: str, obs_size: int, act_size: int):
     """Load a trained model from given path."""
     params = model.load_params(path)
 
@@ -416,6 +417,6 @@ def load_brax_model(path, env_name: str, obs_size: int, action_size: int):
             )
 
     _fn = make_inference_fn(
-        obs_size, action_size, preprocess_observations_fn=normalize
+        obs_size, act_size, preprocess_observations_fn=normalize
     )(params)
     return jax.jit(lambda obs, key: _fn(obs, key)[0])
