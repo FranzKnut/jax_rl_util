@@ -36,6 +36,8 @@ class LoggableConfig(simple_parsing.Serializable):
 class DummyLogger(dict, object):
     """Dummy Logger that does nothing besides acting as dictionary."""
 
+    run_artifacts_dir: str = "artifacts/log"
+
     def __repr__(self) -> str:
         """Return name of logger."""
         return "DummyLogger"
@@ -127,7 +129,20 @@ class DummyLogger(dict, object):
         kwargs : any
             Are passed to the underlying logging method.
         """
-        pass
+        file_name = name.replace("/", "_")
+        file_name = (
+            f"{file_name}_{step}.gif" if step is not None else f"{file_name}.gif"
+        )
+        file_name = os.path.join(self.run_artifacts_dir, file_name)
+        images = [Image.fromarray(frames[i]) for i in range(len(frames))]
+        os.makedirs(self.run_artifacts_dir, exist_ok=True)
+        images[0].save(
+            file_name,
+            save_all=True,
+            append_images=images[1:],
+            duration=int(1000 / fps),
+            loop=0,
+        )
 
 
 def update_nested_dict(d, u):

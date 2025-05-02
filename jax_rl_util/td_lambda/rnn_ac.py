@@ -88,12 +88,12 @@ class AC(nn.Module):
             name="critic",
         )
 
-    def loss(self, x, action):
+    def loss(self, x, action, critic_weight: float = 1.0):
         """Compute loss."""
         critic_loss = self.critic(x).mean()
         dist = self.actor(x)
         actor_loss = dist.log_prob(action).mean()
-        return actor_loss + critic_loss
+        return actor_loss + critic_weight * critic_loss
 
     def value(self, x):
         """Compute value from latent."""
@@ -135,7 +135,9 @@ class RNNActorCritic(nn.RNNCellBase):
             return RNNEnsemble(self.rnn_config, name="rnn")
         else:
             if self.rnn_config.num_modules != 2:
-                raise ValueError("RNNActorCritic num_modules has to be 2 when shared is False.")
+                raise ValueError(
+                    "RNNActorCritic num_modules has to be 2 when shared is False."
+                )
             return RNNEnsemble(self.rnn_config, name="rnn")
 
     def setup(self) -> None:
