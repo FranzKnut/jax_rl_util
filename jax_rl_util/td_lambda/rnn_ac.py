@@ -134,8 +134,8 @@ class RNNActorCritic(nn.RNNCellBase):
         if self.shared:
             return RNNEnsemble(self.rnn_config, name="rnn")
         else:
-            if self.rnn_config.num_modules > 1:
-                raise NotImplementedError
+            if self.rnn_config.num_modules != 2:
+                raise ValueError("RNNActorCritic num_modules has to be 2 when shared is False.")
             return RNNEnsemble(self.rnn_config, name="rnn")
 
     def setup(self) -> None:
@@ -267,13 +267,9 @@ class RNNActorCritic(nn.RNNCellBase):
         """Returns the number of feature axes of the RNN cell."""
         return 1
 
-    @nn.nowrap
     def initialize_carry(self, rng: PRNGKey, input_shape: Tuple[int, ...]):
         """Initialize the Worldmodel cell carry."""
         if not self.rnn_config.model_name:
             return None
-
-        if len(input_shape) > 0:
-            self.batch_shape = input_shape[:-1]
 
         return self._make_rnn().initialize_carry(rng, input_shape)

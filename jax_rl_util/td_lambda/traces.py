@@ -47,7 +47,7 @@ def trace_update(
 
 
 @partial(jax.jit, static_argnames=("trace_mode",))
-def compute_updates(
+def compute_td_updates(
     z,
     trace_mode: str = "accumulate",
     d=None,
