@@ -326,7 +326,6 @@ def make_optimizer_for_model(
             "none": replace(config, learning_rate=0.0),
             "no_decay": replace(
                 config,
-                opt_name="adam",
                 learning_rate=no_decay_lr_factor * config.learning_rate,
                 weight_decay=0.0,
             ),
