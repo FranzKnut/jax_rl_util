@@ -319,13 +319,14 @@ class ActorCriticRNN(nn.Module):
                     "log_std", nn.initializers.ones, (self.action_dim,)
                 )
                 dist = distrax.LogStddevNormal(mean, log_std)
-                if not self.action_limits:
-                    return dist
-                else:
-                    tranforms = [scaling_transform, tfp.bijectors.Sigmoid()]
-                    return tfp.distributions.TransformedDistribution(
-                        dist, tfp.bijectors.Chain(tranforms)
-                    )
+                return dist
+                # if not self.action_limits:
+                #     return dist
+                # else:
+                #     tranforms = [scaling_transform, tfp.bijectors.Sigmoid()]
+                #     return tfp.distributions.TransformedDistribution(
+                #         dist, tfp.bijectors.Chain(tranforms)
+                #     )
 
     @nn.compact
     def __call__(self, hidden, x):
@@ -676,7 +677,7 @@ def make_train(config: PPOParams, logger: DummyLogger):
             # Compute the last value
             x = normalize(env_state.obs, _normalizer_state)
             if config.meta_rl:
-                x = jnp.concatenate([x, re_action, env_state.reward], axis=-1)
+                x = jnp.concatenate([x, re_action, env_state.reward.reshape(config.train_batch_size, -1)], axis=-1)
             ac_in = (x[None], env_state.done[None, :])
             _, _, _last_val = network.apply(train_state.params, hstate, ac_in)
 

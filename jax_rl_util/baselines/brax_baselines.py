@@ -34,8 +34,8 @@ class BraxBaselineParams(LoggableConfig):
     """Class representing the training parameters for reinforcement learning."""
 
     project_name: str = "brax_baselines"
-    env_name: str = "halfcheetah"
-    backend: str = "spring"
+    env_name: str = "inverted_pendulum"
+    backend: str = "generalized"
     force: bool = False
     env_kwargs: dict = field(default_factory=dict)
     obs_mask: str | Iterable[int] | None = None
@@ -109,7 +109,7 @@ TRAIN_FNS = {
         unroll_length=10,
         num_minibatches=32,
         num_updates_per_batch=8,
-        discounting=0.97,
+        discounting=0.95,
         learning_rate=3e-4,
         entropy_cost=1e-3,
         num_envs=2048,
@@ -346,7 +346,7 @@ def train_brax_baseline(config: BraxBaselineParams, logger=DummyLogger()):
         debug.callback(logger.log, metrics, step=num_steps)
 
         def print_progress(step, rew):
-            print(f"num_steps: {step}, reward: {rew}")
+            print(f"num_steps: {step:.2f}, reward: {rew}")
 
         debug.callback(print_progress, num_steps, metrics["eval/episode_reward"])
 
