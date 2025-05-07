@@ -141,6 +141,9 @@ def make_env(
     env_info : dict
         Dictionary with env info
     """
+    # TODO refactor:
+    # Make env_info a field of the env.
+    # Unify env and eval_env creation.
     env: BraxEnv
     env_name = params.env_name
     if env_name in gymnax.registered_envs:
@@ -171,7 +174,8 @@ def make_env(
             env = GymBraxWrapper(env, params.env_kwargs)
 
     OBS_SIZE, DISCRETE, ACT_SIZE, obs_mask, act_clip = get_env_specs(env, params.obs_mask)
-
+    env.name = env_name
+    
     # Wrap with the brax wrappers
     env = EpisodeWrapper(env, params.max_ep_length, action_repeat=1)
     env = FlatObsBraxWrapper(env)
@@ -203,6 +207,7 @@ def make_env(
             eval_env = gym.make(env_name, disable_env_checker=getattr(params, "debug", 0) < 3, **params.init_kwargs)
             eval_env = GymBraxWrapper(eval_env, params.env_kwargs)
 
+        eval_env.name = env_name
         eval_env = EpisodeWrapper(eval_env, params.max_ep_length, action_repeat=1)
         eval_env = FlatObsBraxWrapper(eval_env)
         if obs_mask is not None:

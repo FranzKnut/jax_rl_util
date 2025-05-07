@@ -13,10 +13,14 @@ from typing_extensions import deprecated
 def compute_agg_reward(states: brax.envs.State, agg_fn=jnp.mean):
     """Compute the average reward per episode from a batch of trajectories."""
     # For episodes that are done early, get the first occurence of done
-    ep_until = jnp.where(states.done.any(axis=0), states.done.argmax(axis=0), states.done.shape[0])
+    ep_until = jnp.where(
+        states.done.any(axis=0), states.done.argmax(axis=0), states.done.shape[0]
+    )
     # Compute cumsum and get value corresponding to end of episode per batch.
     # mean_reward = jnp.sum(traj_batch.reward) / jnp.max(jnp.array([jnp.sum(traj_batch.done), 1]))
-    return agg_fn(states.reward.cumsum(axis=0)[ep_until, jnp.arange(ep_until.shape[-1])])
+    return agg_fn(
+        states.reward.cumsum(axis=0)[ep_until, jnp.arange(ep_until.shape[-1])]
+    )
 
 
 def render_brax(env, states, render_steps=100, render_start=0, camera=None):
@@ -56,7 +60,9 @@ def make_obs_mask(base_obs_size: int, obs_mask: Iterable[int] | str | int = None
     return jnp.array(obs_mask, dtype=jnp.int32)
 
 
-def render_frames(_env: gym.Env, states: list, start_idx: int = None, end_idx: int = None):
+def render_frames(
+    _env: gym.Env, states: list, start_idx: int = None, end_idx: int = None
+):
     """Render the given states of the environment.
 
     Parameters
@@ -76,14 +82,23 @@ def render_frames(_env: gym.Env, states: list, start_idx: int = None, end_idx: i
         List of RGB array renderings of the environment at given states.
     """
     if not isinstance(states, list):
-        states = [jax.tree.map(lambda x: x[n], states) for n in range(start_idx or 0, end_idx or states.time.shape[0])]
+        states = [
+            jax.tree.map(lambda x: x[n], states)
+            for n in range(start_idx or 0, end_idx or states.time.shape[0])
+        ]
 
     from jax_rl_util.envs.wrappers import GymnaxBraxWrapper
 
     # Define rendering function for specific envs
     is_brax = _env.name.startswith("brax-") or _env.name in brax.envs._envs
     if isinstance(_env.unwrapped, GymnaxBraxWrapper):
-        if _env.name in ["CartPole-v1", "MountainCarContinuous-v0", "MountainCar-v0", "Pendulum-v1", "Acrobot-v1"]:
+        if _env.name in [
+            "CartPole-v1",
+            "MountainCarContinuous-v0",
+            "MountainCar-v0",
+            "Pendulum-v1",
+            "Acrobot-v1",
+        ]:
             from gymnax.visualize.vis_gym import get_gym_state
 
             gym__env = gym.make(_env.name, render_mode="rgb_array").unwrapped
@@ -104,7 +119,10 @@ def render_frames(_env: gym.Env, states: list, start_idx: int = None, end_idx: i
         from brax.io import image
 
         def render_gym(_env, _state):
-            return image.render_array(_env.sys, _state, 256, 256, camera="track").transpose(2, 0, 1)
+            camera = "track" if "inverted_pendulum" not in _env.name else None
+            return image.render_array(
+                _env.sys, _state, 256, 256, camera=camera
+            )  # .transpose(2, 0, 1)
     else:
 
         def render_gym(_env, _state):

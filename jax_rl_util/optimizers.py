@@ -168,7 +168,7 @@ def make_optimizer(
             if config.opt_name not in ["adamw"]
             else optax.identity(),  # , mask=decay_mask
             # Gradient clipping
-            optax.clip_by_global_norm(config.gradient_clip)
+            optax.clip_by_block_rms(config.gradient_clip)
             if config.gradient_clip
             else optax.identity(),
             # Optimizer

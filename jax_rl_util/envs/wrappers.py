@@ -2,11 +2,10 @@
 
 import importlib
 import os
-from dataclasses import dataclass, fields
+from dataclasses import dataclass
 from functools import partial
 from typing import Iterable
 
-import brax
 import gymnasium as gym
 import gymnax
 import jax
@@ -21,6 +20,9 @@ from jax_rl_util.envs.env_util import make_obs_mask
 
 def is_discrete(env: gym.Env):
     """Check if env has discrete Action Space."""
+    if not hasattr(env, "action_space"):
+        # Should be a brax env, they are all continuous.
+        return False
     return isinstance(
         env.action_space, (gym.spaces.Discrete, gymnax.environments.spaces.Discrete)
     )
@@ -194,12 +196,10 @@ class EpisodeWrapper(Wrapper):
         state, rewards = jax.lax.scan(f, state, (), self.action_repeat)
         state = state.replace(reward=jnp.sum(rewards, axis=0))
         steps = state.info["steps"] + self.action_repeat
-        one = jnp.ones_like(state.done)
-        zero = jnp.zeros_like(state.done)
         episode_length = jnp.array(self.episode_length, dtype=jnp.int32)
-        done = jnp.where(steps >= episode_length, one, state.done)
+        done = jnp.where(steps >= episode_length, jnp.ones_like(state.done), state.done)
         state.info["truncation"] = jnp.int32(
-            jnp.where(steps >= episode_length, 1 - state.done, zero)
+            jnp.where(steps >= episode_length, 1 - state.done, jnp.zeros_like(state.done))
         )
         state.info["steps"] = steps
         return state.replace(done=done)

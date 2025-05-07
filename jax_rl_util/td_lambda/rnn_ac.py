@@ -7,10 +7,50 @@ import distrax
 import jax.numpy as jnp
 from chex import PRNGKey
 from flax import linen as nn
-from jax import random as jrandom
 from jax_rtrl.models.jax_util import sigmoid_between
 from jax_rtrl.models.mlp import MLP, FADense
 from jax_rtrl.models.seq_models import RNNEnsemble, RNNEnsembleConfig
+
+
+# Actor
+class Actor(nn.Module):
+    layers: list[int]
+    f_align: bool
+    discrete: bool
+    a_dim: int
+    act_log_bounds: tuple[float, ...]
+    act_bounds: tuple[float, ...] | None = None
+
+    @nn.compact
+    def __call__(self, hidden):
+        """Compute action distribution form latent."""
+        # actor_out_dim = self.a_dim if self.discrete else 2 * self.a_dim
+        _actor = MLP(
+            self.layers + (self.a_dim,),
+            f_align=self.f_align,
+            name="mean",
+        )
+
+        if not self.discrete:
+            loc = _actor(hidden)
+            if len(loc.shape) > 1:
+                # Take mean of ... ensemble?
+                loc = loc.mean(axis=-2)
+            log_std = self.param("log_std", nn.initializers.zeros_init(), self.a_dim)
+            # scale = sigmoid_between(scale, *self.act_log_bounds)
+            # scale = jnp.exp(scale) + self.act_log_bounds[0]
+            # scale = jax.nn.softplus(scale) + self.act_log_bounds[0]
+            if self.act_bounds is not None:
+                loc = sigmoid_between(loc, *self.act_bounds)
+            dist = distrax.LogStddevNormal(
+                loc,
+                log_std + self.act_log_bounds[0],
+                max_scale=self.act_log_bounds[1],
+            )
+        else:
+            logits = _actor(hidden).mean(axis=-2)
+            dist = distrax.Categorical(logits=logits)
+        return dist
 
 
 class AC(nn.Module):
@@ -20,57 +60,14 @@ class AC(nn.Module):
     discrete: bool
     act_bounds: tuple[float, ...] | None = None
     act_log_bounds: tuple[float, ...] = field(default_factory=lambda: [0.01, 5])
-    mlp_actor: bool = False
+    actor_layers: tuple[int, ...] = ()
+    critic_layers: tuple[int, ...] = ()
     f_align: bool = False
     action_noise: float = 0.0  # TODO: Implement action noise for exploration
-    actor_layers: tuple[int, ...] = field(default_factory=lambda: [64])
-    critic_layers: tuple[int, ...] = field(default_factory=lambda: [64])
 
     def setup(self) -> None:
         """Initialize components."""
-
         # Actor
-        class Actor(nn.Module):
-            layers: list[int]
-            f_align: bool
-            discrete: bool
-            a_dim: int
-            act_log_bounds: tuple[float, ...]
-            act_bounds: tuple[float, ...] | None = None
-
-            @nn.compact
-            def __call__(self, hidden):
-                """Compute action distribution form latent."""
-                # actor_out_dim = self.a_dim if self.discrete else 2 * self.a_dim
-                _actor = MLP(
-                    self.layers + (self.a_dim,),
-                    f_align=self.f_align,
-                    name="mean",
-                )
-
-                if not self.discrete:
-                    loc = _actor(hidden)
-                    if len(loc.shape) > 1:
-                        # Take mean of ... ensemble?
-                        loc = loc.mean(axis=-2)
-                    log_std = self.param(
-                        "log_std", nn.initializers.zeros_init(), self.a_dim
-                    )
-                    # scale = sigmoid_between(scale, *self.act_log_bounds)
-                    # scale = jnp.exp(scale) + self.act_log_bounds[0]
-                    # scale = jax.nn.softplus(scale) + self.act_log_bounds[0]
-                    if self.act_bounds is not None:
-                        loc = sigmoid_between(loc, *self.act_bounds)
-                    dist = distrax.LogStddevNormal(
-                        loc,
-                        log_std + self.act_log_bounds[0],
-                        max_scale=self.act_log_bounds[1],
-                    )
-                else:
-                    logits = _actor(hidden).mean(axis=-2)
-                    dist = distrax.Categorical(logits=logits)
-                return dist
-
         self.actor = Actor(
             self.actor_layers,
             self.f_align,
@@ -99,18 +96,21 @@ class AC(nn.Module):
         """Compute value from latent."""
         return self.critic(x)
 
-    def policy(self, x, sample_act: bool = False):
+    def policy(self, x, sample_act: bool = False, deterministic: bool = False):
         """Compute action distribution form latent."""
         dist = self.actor(x)
         if sample_act:
-            action = dist.sample(seed=self.make_rng("sampling"))
+            if deterministic:
+                action = dist.mode()
+            else:
+                action = dist.sample(seed=self.make_rng("sampling"))
             if self.act_bounds is not None:
                 action = jnp.clip(action, *self.act_bounds)
             return action, dist
         return dist
 
-    def __call__(self, x):
-        return self.actor(x), self.critic(x)
+    def __call__(self, x, sample_act: bool = False, deterministic: bool = False):
+        return self.policy(x, sample_act, deterministic), self.value(x)
 
 
 class RNNActorCritic(nn.RNNCellBase):
@@ -125,25 +125,22 @@ class RNNActorCritic(nn.RNNCellBase):
     shared: bool = False
     act_bounds: tuple[float] | None = None
     pass_obs: bool = False
-    mlp_actor: bool = False
+    actor_layers: tuple[int, ...] = ()
+    critic_layers: tuple[int, ...] = ()
     pred_obs: bool = False
     layer_norm: bool = False
-
-    @nn.nowrap
-    def _make_rnn(self):
-        if self.shared:
-            return RNNEnsemble(self.rnn_config, name="rnn")
-        else:
-            if self.rnn_config.num_modules != 2:
-                raise ValueError(
-                    "RNNActorCritic num_modules has to be 2 when shared is False."
-                )
-            return RNNEnsemble(self.rnn_config, name="rnn")
 
     def setup(self) -> None:
         """Initialize components."""
         if self.rnn_config.model_name:
-            self.rnn = self._make_rnn()
+            if self.shared:
+                self.rnn = RNNEnsemble(self.rnn_config, name="rnn")
+            else:
+                if self.rnn_config.num_modules != 2:
+                    raise ValueError(
+                        "RNNActorCritic num_modules has to be 2 when shared is False."
+                    )
+                self.rnn = RNNEnsemble(self.rnn_config, name="rnn")
 
         # Make an ensemble of actor and critic using flax.linen.vmap
         # _vmap_td = nn.vmap(
@@ -158,7 +155,8 @@ class RNNActorCritic(nn.RNNCellBase):
             self.discrete,
             self.act_bounds,
             self.act_log_bounds,
-            self.mlp_actor,
+            self.actor_layers,
+            self.critic_layers,
             self.f_align,
             name="td",
         )
@@ -184,7 +182,7 @@ class RNNActorCritic(nn.RNNCellBase):
             return obs, carry
         if carry is None:
             # Initialize seed and the carry
-            carry = self.initialize_carry(jrandom.PRNGKey(self.random_seed), obs.shape)
+            carry = self.initialize_carry(self.make_rng(), obs.shape)
         carry, hidden = self.rnn(carry, obs, **kwargs)
         # Layer Norm
         if self.layer_norm:
@@ -216,6 +214,7 @@ class RNNActorCritic(nn.RNNCellBase):
         hidden,
         x=None,
         sample_act: bool = False,
+        deterministic: bool = False,
         selected_act=None,
     ):
         """Compute action distribution form latent."""
@@ -226,25 +225,19 @@ class RNNActorCritic(nn.RNNCellBase):
             if len(x.shape) < len(hidden.shape):
                 x = jnp.expand_dims(x, -2)
             hidden = jnp.concatenate([hidden, x], axis=-1)
-        dist = self.td.actor(hidden)
-        if sample_act:
-            action = dist.sample(seed=self.make_rng("sampling"))
-            # if self.num_modules > 1:
-            #     # Select action corresponding to the module predicting the highest value
-            #     batch_shape = () if action.ndim == 1 else action.shape[-2]
-            #     if selected_act is None:
-            #         selected_act = jrandom.randint(self.make_rng("sampling"), batch_shape, 0, self.num_modules)
-            #     if action.ndim > 1:
-            #         action = action[..., jnp.arange(batch_shape), selected_act]
-            #     else:
-            #         action = action[selected_act]
-            if self.act_bounds is not None:
-                action = jnp.clip(action, *self.act_bounds)
-            return action, dist
-        return dist
+        # if self.num_modules > 1:
+        #     # Select action corresponding to the module predicting the highest value
+        #     batch_shape = () if action.ndim == 1 else action.shape[-2]
+        #     if selected_act is None:
+        #         selected_act = jrandom.randint(self.make_rng("sampling"), batch_shape, 0, self.num_modules)
+        #     if action.ndim > 1:
+        #         action = action[..., jnp.arange(batch_shape), selected_act]
+        #     else:
+        #         action = action[selected_act]
+        return self.td.policy(hidden, sample_act=sample_act, deterministic=deterministic)
 
     @nn.compact
-    def __call__(self, carry, x):
+    def __call__(self, carry, x, deterministic=False):
         """Step RNN and compute actor and critic."""
         # RNN
         hidden, new_carry = self.rnn_step(carry, x)
@@ -255,7 +248,7 @@ class RNNActorCritic(nn.RNNCellBase):
         # selected_act = v_hat.argmax()
 
         # Actor
-        action, _ = self.policy(hidden, x, True)
+        action, _ = self.policy(hidden, x, True, deterministic=deterministic)
 
         if self.pred_obs:
             prediction = self.obs_prediction(hidden, action, x)
@@ -274,4 +267,4 @@ class RNNActorCritic(nn.RNNCellBase):
         if not self.rnn_config.model_name:
             return None
 
-        return self._make_rnn().initialize_carry(rng, input_shape)
+        return self.rnn.initialize_carry(rng, input_shape)
