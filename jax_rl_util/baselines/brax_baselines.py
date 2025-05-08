@@ -34,7 +34,7 @@ class BraxBaselineParams(LoggableConfig):
     """Class representing the training parameters for reinforcement learning."""
 
     project_name: str = "brax_baselines"
-    env_name: str = "humanoidstandup"
+    env_name: str = "inverted_double_pendulum"
     backend: str = "spring"
     force: bool = False
     env_kwargs: dict = field(default_factory=dict)
