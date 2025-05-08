@@ -78,7 +78,7 @@ def make_optimizer(
         learning_rate = optax.warmup_cosine_decay_schedule(
             learning_rate * config.lr_kwargs.get("initial_multiplier", 0),
             peak_value=learning_rate,
-            end_value=learning_rate * config.lr_kwargs["end_multiplier"],
+            end_value=learning_rate * config.lr_kwargs.get("end_multiplier", 0),
             decay_steps=config.lr_kwargs["decay_steps"],
             warmup_steps=config.lr_kwargs["warmup_steps"],
         )
@@ -122,7 +122,7 @@ def make_optimizer(
         learning_rate = optax.cosine_decay_schedule(
             learning_rate,
             decay_steps=config.lr_kwargs["decay_steps"],
-            alpha=config.lr_kwargs.get("alpha", 0),
+            alpha=config.lr_kwargs.get("end_multiplier", 0),
         )
     elif config.lr_decay_type == "exponential":
         """Args:
@@ -281,7 +281,7 @@ def get_current_lrs(opt_state, opt_config: OptimizerConfig | None = None):
             lrs["LR/" + k] = s[0][1]["learning_rate"] * reduce_on_plateau_lr
     else:
         reduce_on_plateau_lr = opt_state[3][3].scale if _reduce_on_plateau else 1
-        lrs["learning_rate"] = opt_state[1]["learning_rate"] * reduce_on_plateau_lr
+        lrs["LR/learning_rate"] = opt_state[1]["learning_rate"] * reduce_on_plateau_lr
     return lrs
 
 
