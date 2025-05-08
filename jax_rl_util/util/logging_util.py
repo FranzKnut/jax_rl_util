@@ -598,6 +598,19 @@ def count_combinations(config):
         return len(config)
     else:
         return 1
+    
+def extract_keys_with_values(d, parent_key=''):
+    """Recursively extract keys with 'values' from sweep configuration."""
+    result = {}
+    for k, v in d.items():
+        key_path = f"{parent_key}.{k}" if parent_key else k
+        if isinstance(v, dict):
+            if "values" in v:
+                result[key_path] = v["values"]
+            else:
+                # Recurse into nested dict
+                result.update(extract_keys_with_values(v, key_path))
+    return result
 
 
 def create_sweep_interactively(sweep_config, project=None, **kwargs):
@@ -608,6 +621,18 @@ def create_sweep_interactively(sweep_config, project=None, **kwargs):
     est_runs = count_combinations(sweep_config["parameters"])
     print("Est. runs:", est_runs)
     name = input(f'Enter custom sweep name ("{sweep_config.get("name", "")}"):  ')
+
     if name:
         sweep_config["name"] = name
-    return wandb.sweep(sweep_config, project=project, **kwargs)
+        
+    print("---------------------------------------")
+    print("### Sweep " + name)
+    print("Est. runs:", est_runs)
+    sweep_id = wandb.sweep(sweep_config, project=project, **kwargs)
+    print("")
+    print(">   "+ sweep_id)
+    print("")
+    print("**Description**")
+    for k, v in extract_keys_with_values(sweep_config["parameters"]).items():
+        print(f"- {k}: {', '.join(map(str, v))}")
+    return sweep_id

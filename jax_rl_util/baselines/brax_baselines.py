@@ -34,8 +34,8 @@ class BraxBaselineParams(LoggableConfig):
     """Class representing the training parameters for reinforcement learning."""
 
     project_name: str = "brax_baselines"
-    env_name: str = "inverted_pendulum"
-    backend: str = "generalized"
+    env_name: str = "humanoidstandup"
+    backend: str = "spring"
     force: bool = False
     env_kwargs: dict = field(default_factory=dict)
     obs_mask: str | Iterable[int] | None = None
@@ -172,7 +172,7 @@ TRAIN_FNS = {
     #     seed=1,
     # ),
     # "walker2d": functools.partial(
-    #     sac.train,
+    #     ppo.train,
     #     num_timesteps=7_864_320,
     #     num_evals=20,
     #     reward_scaling=5,
@@ -183,10 +183,10 @@ TRAIN_FNS = {
     #     learning_rate=6e-4,
     #     num_envs=128,
     #     batch_size=128,
-    #     grad_updates_per_step=32,
-    #     max_devices_per_host=1,
-    #     max_replay_size=1048576,
-    #     min_replay_size=8192,
+    #     # grad_updates_per_step=32,
+    #     # max_devices_per_host=1,
+    #     # max_replay_size=1048576,
+    #     # min_replay_size=8192,
     #     seed=1,
     # ),
     "halfcheetah": functools.partial(
