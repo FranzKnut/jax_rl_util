@@ -9,7 +9,7 @@ import matplotlib.pyplot as plt
 from eval.eval_util import pull_fields
 
 # Load data
-df = pd.read_csv("eval/data/wandb_runs_history64ctrnn.csv", index_col=[0, 1])
+df = pd.read_csv("data/eval/wandb_runs_history64ctrnn.csv", index_col=[0, 1])
 
 df = pull_fields(df)
 

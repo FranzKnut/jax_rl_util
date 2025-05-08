@@ -147,7 +147,7 @@ def make_optimizer(
     elif config.lr_decay_type is not None:
         raise ValueError(f"Decay type {config.lr_decay_type} unknown.")
 
-    if weight_decay == "l2" and config.opt_name in ["adam"]:
+    if weight_decay == "l2" and "adam" in config.opt_name:
         print(
             f"WARNING: Weight decay incorrect for {config.opt_name}, consider using adamw."
         )

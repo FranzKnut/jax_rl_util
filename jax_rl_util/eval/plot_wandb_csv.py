@@ -10,7 +10,7 @@ import simple_parsing
 class Arguments:
     """Arguments for the script."""
 
-    file_name: str = "data/Sweep3_halfcheetah.csv"
+    file_name: str = "data/eval/Sweep3_halfcheetah.csv"
     column: str = "best_eval"
     by: list[str] = simple_parsing.list_field("policy_config.agent_type")
     title: str = "Boxplot"

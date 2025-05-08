@@ -8,8 +8,8 @@ from tqdm import tqdm
 
 api = wandb.Api()
 
-# PROJECTS = ["brax_imitation"]
-PROJECTS = ["RTRRL", "neurips24", "gymnax_new", "brax_new", "AC_brax", "AC_gymnax", "PPO_Gymnax"]
+PROJECTS = ["brax_imitation"]
+# PROJECTS = ["RTRRL", "neurips24", "gymnax_new", "brax_new", "AC_brax", "AC_gymnax", "PPO_Gymnax"]
 # PROJECTS = ["RTRRL"]
 
 SWEEPS = None  # None for all sweeps
@@ -63,5 +63,5 @@ if __name__ == "__main__":
     print("downloaded:")
     print(df_out)
     # Save to csv
-    os.makedirs("data", exist_ok=True)
-    df_out.to_csv("data/wandb_runs.csv")
+    os.makedirs("data/eval", exist_ok=True)
+    df_out.to_csv("data/eval/wandb_runs.csv")

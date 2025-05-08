@@ -10,7 +10,7 @@ INDEX = "env name"
 MEASURE = "median"
 
 
-df = pd.read_csv("eval/data/wandb_runs.csv", index_col=0)
+df = pd.read_csv("data/eval/wandb_runs.csv", index_col=0)
 
 SWEEPS = ["olx8u5gy", "bkngzbt9"]
 # df = df[df["Sweep"].isin(SWEEPS)]
