@@ -66,7 +66,25 @@ def make_optimizer(
     else:
         raise ValueError(f"Unknown direction {direction}. Use 'min' or 'max'.")
 
-    if config.lr_decay_type == "cosine_warmup":
+    if config.lr_decay_type == "cosine":
+        """Args:
+            init_value: An initial value for the learning rate.
+            decay_steps: Positive integer - the number of steps for which to apply
+                the decay for.
+            alpha: The minimum value of the multiplier used to adjust the
+                learning rate. Defaults to 0.0.
+            exponent:  The default decay is ``0.5 * (1 + cos(pi * t/T))``, where 
+                ``t`` is the current timestep and ``T`` is the ``decay_steps``. The
+                exponent modifies this to be ``(0.5 * (1 + cos(pi * t/T))) ** exponent``.
+                Defaults to 1.0.
+
+        """
+        learning_rate = optax.cosine_decay_schedule(
+            learning_rate,
+            decay_steps=config.lr_kwargs["decay_steps"],
+            alpha=config.lr_kwargs.get("end_multiplier", 0),
+        )
+    elif config.lr_decay_type == "cosine_warmup":
         """Args:
             initial_multiplier: Scalar multiplier for the initial learning rate.
             end_multiplier: Scalar multiplier for the final learning rate.
@@ -76,11 +94,34 @@ def make_optimizer(
                 annealing is applied is ``decay_steps - warmup_steps``.
         """
         learning_rate = optax.warmup_cosine_decay_schedule(
-            learning_rate * config.lr_kwargs.get("initial_multiplier", 0),
+            init_value=learning_rate * config.lr_kwargs.get("initial_multiplier", 0),
             peak_value=learning_rate,
             end_value=learning_rate * config.lr_kwargs.get("end_multiplier", 0),
             decay_steps=config.lr_kwargs["decay_steps"],
             warmup_steps=config.lr_kwargs["warmup_steps"],
+        )
+
+    elif config.lr_decay_type == "cosine_restarts":
+        """See above."""
+        learning_rate = optax.join_schedules(
+            schedules=[
+                optax.warmup_cosine_decay_schedule(
+                    init_value=learning_rate
+                    * config.lr_kwargs.get("initial_multiplier", 0),
+                    peak_value=learning_rate
+                    * config.lr_kwargs.get("max_lr_base", 1) ** i,
+                    end_value=learning_rate * config.lr_kwargs.get("end_multiplier", 0),
+                    warmup_steps=config.lr_kwargs["warmup_steps"],
+                    decay_steps=config.lr_kwargs["decay_steps"],
+                )
+                for i in range(config.lr_kwargs["num_cycles"])
+            ],
+            boundaries=jnp.cumsum(
+                jnp.array(
+                    [config.lr_kwargs["warmup_steps"] + config.lr_kwargs["decay_steps"]]
+                    * config.lr_kwargs["num_cycles"]
+                )
+            ),
         )
 
     elif config.lr_decay_type == "warmup":
@@ -106,24 +147,7 @@ def make_optimizer(
             end_value=learning_rate,
             transition_steps=config.lr_kwargs["warmup_steps"],
         )
-    elif config.lr_decay_type == "cosine":
-        """Args:
-            init_value: An initial value for the learning rate.
-            decay_steps: Positive integer - the number of steps for which to apply
-                the decay for.
-            alpha: The minimum value of the multiplier used to adjust the
-                learning rate. Defaults to 0.0.
-            exponent:  The default decay is ``0.5 * (1 + cos(pi * t/T))``, where 
-                ``t`` is the current timestep and ``T`` is the ``decay_steps``. The
-                exponent modifies this to be ``(0.5 * (1 + cos(pi * t/T))) ** exponent``.
-                Defaults to 1.0.
 
-        """
-        learning_rate = optax.cosine_decay_schedule(
-            learning_rate,
-            decay_steps=config.lr_kwargs["decay_steps"],
-            alpha=config.lr_kwargs.get("end_multiplier", 0),
-        )
     elif config.lr_decay_type == "exponential":
         """Args:
             init_value: the initial learning rate.
