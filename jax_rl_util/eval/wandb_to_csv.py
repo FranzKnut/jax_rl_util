@@ -8,7 +8,7 @@ from tqdm import tqdm
 
 api = wandb.Api()
 
-PROJECTS = ["brax_imitation"]
+PROJECTS = ["TubeDAgger"]
 # PROJECTS = ["RTRRL", "neurips24", "gymnax_new", "brax_new", "AC_brax", "AC_gymnax", "PPO_Gymnax"]
 # PROJECTS = ["RTRRL"]
 

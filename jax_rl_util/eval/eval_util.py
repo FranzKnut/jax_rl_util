@@ -40,7 +40,16 @@ def pull_fields(df: pd.DataFrame, names: list[str] = []):
         if isinstance(cfg, str):
             cfg = eval(cfg)
 
-        return pd.Series({n: deep_get(cfg, n) for n in names})
+        fields = {n: deep_get(cfg, n) for n in names}
+        for k,v in fields.items():
+            try:
+                hash(v)
+            except:
+                if isinstance(v, list):  
+                    fields[k] = tuple(v)
+                else:
+                    fields[k] = str(v)
+        return pd.Series(fields)
 
     df["config"] = df.config.apply(eval)
     return df.assign(**df.config.apply(_pull_fields))
