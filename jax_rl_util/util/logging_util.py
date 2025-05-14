@@ -297,8 +297,8 @@ class AimLogger(DummyLogger):
     @override
     def log_img(self, name, img, step=None, caption="", pil_mode="RGB", format="png"):
         """Log an image to wandb."""
-        if isinstance(img, plt.Figure):
-            img = img
+        # if isinstance(img, plt.Figure):
+        #     img = img
         self.log(
             {
                 name: aim.Image(

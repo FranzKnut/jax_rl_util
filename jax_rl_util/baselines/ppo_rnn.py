@@ -52,11 +52,11 @@ class PPOParams(LoggableConfig):
     logging: str = "aim"
     debug: int = 0
     seed: int = -1
-    MODEL: str = "LRU"
+    MODEL: str = "MLP"
     NUM_UNITS: int = 64
     meta_rl: bool = False
     act_dist_name: str = "normal"
-    log_norms: bool = False
+    log_norms: bool = True
     record_best_eval_episode: bool = False
 
     # Training Settings
@@ -76,9 +76,9 @@ class PPOParams(LoggableConfig):
     gamma: float = 0.99
     gae_lambda: float = 0.95
     clip_eps: float = 0.2
-    ent_coef: float = 1e-5
+    ent_coef: float = 1e-3
     vf_coef: float = 0.5
-    gradient_clip: float | None = None
+    gradient_clip: float | None = 0.5
     anneal_lr: bool = False
 
     # Env settings
@@ -89,8 +89,8 @@ class PPOParams(LoggableConfig):
         )
     )
     dt: float = 1.0
-    normalize_obs: bool = True
-    normalize_gae: bool = True
+    normalize_obs: bool = False
+    normalize_gae: bool = False
 
 
 class LSTM(nn.Module):
@@ -259,12 +259,13 @@ class ActorCriticRNN(nn.Module):
     discrete: bool
     config: PPOParams
     action_limits: jnp.ndarray = None
-    log_std_min: jnp.ndarray = 0.001
+    log_std_min: jnp.ndarray = -2
 
     def dist(self, model_out):
         """Split the output of the actor into mean and std.
 
         Applies squashing to the normal distribution
+        
 
         Args:
         ----
@@ -313,11 +314,12 @@ class ActorCriticRNN(nn.Module):
                 #     # https://spinningup.openai.com/en/latest/algorithms/sac.html#id1
                 #     std = jnp.tanh(std)
                 #     std = log_std_min + 0.5 * (log_std_max - log_std_min) * (std + 1)
-                # elif log_std_min is not None:
-                #     std = jnp.clip(std, min=log_std_min
+                # el
                 log_std = self.param(
-                    "log_std", nn.initializers.ones, (self.action_dim,)
+                    "log_std", nn.initializers.constant(-1), (self.action_dim)
                 )
+                if self.log_std_min is not None:
+                    log_std = jnp.clip(log_std, min=self.log_std_min)
                 dist = distrax.LogStddevNormal(mean, log_std)
                 return dist
                 # if not self.action_limits:
@@ -405,7 +407,12 @@ class Transition(NamedTuple):
 def make_train(config: PPOParams, logger: DummyLogger):
     """Create the training function."""
     _rnn_model = globals()[config.MODEL](config)
-
+    
+    batch_size = config.env_params.batch_size
+    if config.env_params.batch_size is None:
+        print("WARNING: batch_size was not configured: set it to 1.")
+        batch_size = 1
+    
     env, env_info, eval_env = make_env(config.env_params, make_eval=True)
     eval_env = VmapWrapper(eval_env, config.eval_batch_size)
     _discrete = env_info["discrete"]
@@ -441,11 +448,11 @@ def make_train(config: PPOParams, logger: DummyLogger):
             # Previous action and reward are also inputs in MetaRL
             input_size += env.action_size + 1
         init_x = (
-            jnp.zeros((1, config.env_params.batch_size, input_size)),
-            jnp.zeros((1, config.env_params.batch_size)),
+            jnp.zeros((1, batch_size, input_size)),
+            jnp.zeros((1, batch_size)),
         )
         init_hstate = _rnn_model.initialize_carry(
-            rng, (config.env_params.batch_size, input_size)
+            rng, (batch_size, input_size)
         )
 
         network_params = network.init(_rng, init_hstate, init_x)
@@ -493,7 +500,7 @@ def make_train(config: PPOParams, logger: DummyLogger):
 
         # Make Buffer
         buffer = fbx.make_trajectory_buffer(
-            add_batch_size=config.env_params.batch_size,
+            add_batch_size=batch_size,
             sample_batch_size=config.train_batch_size,
             sample_sequence_length=config.rollout_horizon,
             period=1,
@@ -556,7 +563,7 @@ def make_train(config: PPOParams, logger: DummyLogger):
                     value=value,
                     reward=next_env_state.reward,
                     prev_reward=_env_state.reward,
-                    log_prob=log_prob.mean(axis=-1) if not _discrete else log_prob,
+                    log_prob=log_prob, #.mean(axis=-1) if not _discrete else log_prob,
                     obs=_env_state.obs,
                     # next_obs= # next_env_state.obs,
                     hidden=prev_hstate,
@@ -636,7 +643,7 @@ def make_train(config: PPOParams, logger: DummyLogger):
                     value=value,
                     reward=next_env_state.reward,
                     prev_reward=env_state.reward,
-                    log_prob=log_prob.mean(axis=-1) if not _discrete else log_prob,
+                    log_prob=log_prob, #.mean(axis=-1) if not _discrete else log_prob,
                     obs=env_state.obs,
                     # next_obs= # next_env_state.obs,
                     hidden=prev_hstate,
@@ -748,8 +755,8 @@ def make_train(config: PPOParams, logger: DummyLogger):
                         else:
                             action = transition.action
                         log_prob = pi.log_prob(action)
-                        if not _discrete:
-                            log_prob = log_prob.mean(axis=-1)
+                        # if not _discrete:
+                        #     log_prob = log_prob.mean(axis=-1)
 
                         # CALCULATE VALUE LOSS
                         value_pred_clipped = transition.value + (
@@ -762,11 +769,11 @@ def make_train(config: PPOParams, logger: DummyLogger):
                         )
 
                         # CALCULATE ACTOR LOSS
-                        diff = log_prob - transition.log_prob
+                        diff = log_prob.sum(axis=-1) - transition.log_prob.sum(axis=-1)
                         # diff = jnp.clip(diff, max=10)  # HACK avoids some NaNs!
                         ratio = jnp.exp(diff)
                         if config.normalize_gae:
-                            _gae = (_gae - _gae.mean()) / (_gae.std() + 1e-8)
+                            _gae = (_gae - _gae.mean()) / (_gae.std() + 1e-6)
                         loss_actor1 = ratio * _gae
                         loss_actor2 = (
                             jnp.clip(
@@ -776,9 +783,8 @@ def make_train(config: PPOParams, logger: DummyLogger):
                             )
                             * _gae
                         )
-                        loss_actor = -jnp.minimum(loss_actor1, loss_actor2).mean()
+                        loss_actor = -jnp.minimum(loss_actor1, loss_actor2).sum()
                         total_loss = loss_actor + config.vf_coef * value_loss
-
                         if hasattr(pi, "distribution"):
                             entropy = pi.distribution.entropy().mean()
                         else:
@@ -789,6 +795,8 @@ def make_train(config: PPOParams, logger: DummyLogger):
                             "value_loss": value_loss,
                             "loss_actor": loss_actor,
                             "entropy": entropy,
+                            "gae": _gae,
+                            "log_prob_diff": diff,
                         }
 
                     grad_fn = jax.value_and_grad(_loss_fn, has_aux=True)
@@ -803,7 +811,7 @@ def make_train(config: PPOParams, logger: DummyLogger):
                 )
 
                 # batch_indices = jrandom.choice(
-                #     _rng, config.env_params.batch_size, (config.train_batch_size,), replace=False
+                #     _rng, batch_size, (config.train_batch_size,), replace=False
                 # )
                 # experience = jax.tree.map(lambda x: x[batch_indices], batch_major)
 
@@ -833,7 +841,7 @@ def make_train(config: PPOParams, logger: DummyLogger):
             train_state,
             env_state,
             normalizer_state,
-            jnp.zeros((config.env_params.batch_size, env.action_size)),
+            jnp.zeros((batch_size, env.action_size)),
             init_hstate,
             _rng,
         )
@@ -853,7 +861,7 @@ def make_train(config: PPOParams, logger: DummyLogger):
 
                     timestep = runner_state[
                         0
-                    ].step  # * config.collect_horizon * config.env_params.batch_size
+                    ].step  # * config.collect_horizon * batch_size
                     loggables = {
                         **jax.tree.map(jnp.mean, loggables),
                         "eval/rewards": eval_reward,
@@ -935,19 +943,21 @@ def train_and_eval(config: PPOParams, logger=DummyLogger()):
             plot_from_file(
                 f"{out_dir}/ppo_best_trajectory_{str(config.seed)}.npz",
                 f"{out_dir}/ppo_env_params_{str(config.seed)}.pkl",
+                title="Total reward: {:.2f}".format(logger["best_eval_reward"]),
             )
-            logger.log_img(
+            logger.log_figure(
                 "best_trajectories",
-                plt.gcf(),
-                caption="Total reward: {:.2f}".format(logger["best_eval_reward"]),
+                plt.gcf()
+                
             )
             # Plot last trajectory
             plot_from_file(
                 f"{out_dir}/ppo_last_trajectory_{str(config.seed)}.npz",
                 f"{out_dir}/ppo_env_params_{str(config.seed)}.pkl",
+                title=f"Total reward: {result:.2f}"
             )
-            logger.log_img(
-                "last_trajectories", plt.gcf(), caption=f"Total reward: {result:.2f}"
+            logger.log_figure(
+                "last_trajectories", plt.gcf()
             )
 
         return logger["best_eval_reward"]

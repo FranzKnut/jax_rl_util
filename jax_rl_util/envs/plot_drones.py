@@ -256,7 +256,7 @@ def plot_drone_eval(ax, eval_output, gym_params: EnvParams):
     ax.legend()
 
 
-def plot_from_file(file="data/dronegym/ppo_best_trajectory.npz", args_file="data/dronegym/ppo_env_params.pkl"):
+def plot_from_file(file="data/dronegym/ppo_best_trajectory.npz", args_file="data/dronegym/ppo_env_params.pkl", title=None):
     """Plot the evaluation results from a file.
 
     Args:
@@ -278,6 +278,8 @@ def plot_from_file(file="data/dronegym/ppo_best_trajectory.npz", args_file="data
     # Traces are saved with batch as leading dimension. Swap to make it time major.
     data = {k: np.swapaxes(d, 0, 1) for k, d in data.items()}
     fig = plot_drones(params, data)
+    if title:
+        plt.title(title)
 
     os.makedirs("plots", exist_ok=True)
     plt.savefig("plots/drone_sim.png")

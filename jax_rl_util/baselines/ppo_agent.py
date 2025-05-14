@@ -1,27 +1,23 @@
-import json
 import os
 
-import dacite
 import gymnasium
 import jax
 import jax.numpy as jnp
 import jax.random as jrandom
-import models.mlp as models
 import numpy as np
 import orbax.checkpoint
 from gymnasium.wrappers import RecordVideo
-from gymnasium.wrappers.frame_stack import FrameStack
-from models.jax_util import JaxRng
+from gymnasium.wrappers import FrameStackObservation
 
 from jax_rl_util.envs.wrappers import GymJaxWrapper, is_discrete
 from jax_rl_util.envs.wrappers import RGBtoGrayWrapper
-from rtr_iil.reinforcement.ppo_rnn import ActorCriticRNN, PPO_Params
+from .ppo_rnn import ActorCriticRNN, PPOParams, MLP
 
 
 def load_config(ckpt_dir):
     config_file = os.path.join(ckpt_dir, "config.json")
     with open(config_file, "r") as f:
-        return dacite.from_dict(PPO_Params, json.load(f))
+        return 
 
 
 def load_params(ckpt_dir):
@@ -29,25 +25,25 @@ def load_params(ckpt_dir):
     return orbax.checkpoint.PyTreeCheckpointer().restore(ckpt_file)
 
 
-class PPO_Agent(JaxRng):
+class PPO_Agent():
     def __init__(self, action_dim, discrete, params, config, rng=None) -> None:
-        rng = rng or jrandom.PRNGKey(0)
-        super().__init__(rng)
+        self.rng = rng or jrandom.PRNGKey(0)
+        super().__init__()
         # Restore the model config and parameters
         self.params = params
         self.config = config
 
         # Initialize the model
         self.model = ActorCriticRNN(action_dim, self.config, discrete)
-        rnn_cls = getattr(models, self.config.MODEL)
 
-        self.hidden = rnn_cls.initialize_carry(1, self.config.NUM_UNITS)
+        self.hidden = self.model.initialize_carry(1, self.config.NUM_UNITS)
 
     def __call__(self, obs, done):
         self.hidden, pi, value = jax.jit(self.model.apply)(
             self.params, self.hidden, (obs[None, None], jnp.array(done)[None, None])
         )
-        return pi.sample(seed=self.rng).squeeze(), value
+        self.rng, _rng = jrandom.split(self.rng)
+        return pi.sample(seed=_rng).squeeze(), value
 
 
 if __name__ == "__main__":
@@ -65,7 +61,7 @@ if __name__ == "__main__":
 
     env = RecordVideo(env, video_folder="./artifacts/videos", video_length=video_length)
     if config.stack_frames > 1:
-        env = FrameStack(env, config.stack_frames)
+        env = FrameStackObservation(env, config.stack_frames)
 
     env = GymJaxWrapper(env)
     env = RGBtoGrayWrapper(env)
