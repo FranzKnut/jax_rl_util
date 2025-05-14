@@ -157,7 +157,7 @@ def make_env(
         env, env_params = popjym.make(env_name)
         env = PopJymBraxWrapper(env, params.env_kwargs)
     elif "dronegym" in env_name.lower():
-        env = DroneGym()
+        env = DroneGym(**params.init_kwargs)
         env = GymnaxBraxWrapper(env, params.env_kwargs)
     elif "tribead" in env_name.lower():
         env = TriangleJax(**params.init_kwargs)

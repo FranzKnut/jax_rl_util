@@ -769,8 +769,10 @@ def make_train(config: PPOParams, logger: DummyLogger):
                         )
 
                         # CALCULATE ACTOR LOSS
-                        diff = log_prob.sum(axis=-1) - transition.log_prob.sum(axis=-1)
-                        # diff = jnp.clip(diff, max=10)  # HACK avoids some NaNs!
+                        diff = log_prob - transition.log_prob
+                        if not _discrete:
+                            diff = diff.sum(axis=-1)
+                        diff = jnp.clip(diff, min=-2, max=2)  # HACK avoids some NaNs!
                         ratio = jnp.exp(diff)
                         if config.normalize_gae:
                             _gae = (_gae - _gae.mean()) / (_gae.std() + 1e-6)
@@ -943,21 +945,26 @@ def train_and_eval(config: PPOParams, logger=DummyLogger()):
             plot_from_file(
                 f"{out_dir}/ppo_best_trajectory_{str(config.seed)}.npz",
                 f"{out_dir}/ppo_env_params_{str(config.seed)}.pkl",
-                title="Total reward: {:.2f}".format(logger["best_eval_reward"]),
+                config.env_params.init_kwargs
             )
-            logger.log_figure(
+            logger.log_img(
                 "best_trajectories",
-                plt.gcf()
+                plt.gcf(),
+                caption="Total reward: {:.2f}".format(logger["best_eval_reward"]),
+                
                 
             )
             # Plot last trajectory
             plot_from_file(
                 f"{out_dir}/ppo_last_trajectory_{str(config.seed)}.npz",
                 f"{out_dir}/ppo_env_params_{str(config.seed)}.pkl",
-                title=f"Total reward: {result:.2f}"
+                config.env_params.init_kwargs
+                
             )
-            logger.log_figure(
-                "last_trajectories", plt.gcf()
+            logger.log_img(
+                "last_trajectories", plt.gcf(),
+                caption=f"Total reward: {result:.2f}"
+                
             )
 
         return logger["best_eval_reward"]

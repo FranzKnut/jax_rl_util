@@ -297,14 +297,16 @@ class AimLogger(DummyLogger):
     @override
     def log_img(self, name, img, step=None, caption="", pil_mode="RGB", format="png"):
         """Log an image to wandb."""
-        # if isinstance(img, plt.Figure):
-        #     img = img
+        if isinstance(img, str):
+            img = Image.open(img)
+        elif isinstance(img, plt.Figure):
+            img = Image.fromarray(np.asarray(img.canvas.buffer_rgba() , dtype=np.uint8), mode="RGBa").convert(pil_mode)
         self.log(
             {
                 name: aim.Image(
-                    Image.fromarray(np.asarray(img, dtype=np.uint8), mode=pil_mode),
+                    img,
                     caption=caption,
-                    format=format,
+                    format=format
                 )
             },
             step=step,

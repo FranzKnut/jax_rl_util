@@ -341,7 +341,7 @@ class RandomizedAutoResetWrapper(Wrapper):
 
             if "full_obs" in state.info:
                 # For compatibility with POBraxWrapper
-                reset_state.info["full_obs"] = state.obs
+                reset_state.info["full_obs"] = reset_state.obs
             return reset_state
 
         state = jax.lax.cond(state.done, _reset, lambda: state)

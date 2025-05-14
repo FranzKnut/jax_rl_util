@@ -6,6 +6,7 @@ import pathlib
 import pickle
 from typing import Iterable
 
+from matplotlib.patches import Rectangle
 import matplotlib.pyplot as plt
 import numpy as np
 import plotly.graph_objects as go
@@ -42,7 +43,7 @@ def plotly_drone_pos(fig, data_drones_pos, name):
     #     fig.add_trace(go.Scatter(x=data_ego_pos[..., 0], y=data_drones_pos[..., 2], mode='markers', name='Other Drones'), row=2, col=1)
 
 
-def plot_drones(args: EnvParams, data, plot_which="all", show_aux=False):
+def plot_drones(args: EnvParams, data, plot_which="all", show_aux=False, obstacle:str = "center"):
     """Plot the drone positions and distances."""
     n_dim = data["pos"].shape[-1]
     # Make subplots
@@ -90,10 +91,15 @@ def plot_drones(args: EnvParams, data, plot_which="all", show_aux=False):
         ax0.add_artist(circle)
         # ax.plot(data_drones_x[0], data_drones_y[0], "bx")
 
-    # if args.obstacle:
-    # Plot Obstacle
-    circle = plt.Circle((0, 0), args.obstacle_size, color="grey", fill="grey")
-    ax0.add_artist(circle)
+        # Plot Obstacle
+    
+    if obstacle=="center":
+        circle = plt.Circle((0, 0), args.obstacle_size, color="grey", fill="grey")
+        ax0.add_artist(circle)
+    elif obstacle == "flappy":
+        for r in args.flappy_obstacle_positions:
+            rect = Rectangle(r[:2], r[2], r[3], color="grey", fill="grey")
+            ax0.add_artist(rect)
 
     if n_dim == 3:
         ax1, ax2 = axes[0, 1], axes[1, 0]
@@ -256,7 +262,7 @@ def plot_drone_eval(ax, eval_output, gym_params: EnvParams):
     ax.legend()
 
 
-def plot_from_file(file="data/dronegym/ppo_best_trajectory.npz", args_file="data/dronegym/ppo_env_params.pkl", title=None):
+def plot_from_file(file="data/dronegym/ppo_best_trajectory.npz", args_file="data/dronegym/ppo_env_params.pkl", init_kwargs={}, title=None):
     """Plot the evaluation results from a file.
 
     Args:
@@ -277,7 +283,7 @@ def plot_from_file(file="data/dronegym/ppo_best_trajectory.npz", args_file="data
 
     # Traces are saved with batch as leading dimension. Swap to make it time major.
     data = {k: np.swapaxes(d, 0, 1) for k, d in data.items()}
-    fig = plot_drones(params, data)
+    fig = plot_drones(params, data, obstacle=init_kwargs.get("obstacle", "center"))
     if title:
         plt.title(title)
 

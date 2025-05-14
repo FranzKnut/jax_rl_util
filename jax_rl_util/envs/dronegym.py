@@ -5,13 +5,17 @@ import argparse
 import csv
 import pathlib
 from collections import OrderedDict
+from functools import partial
 
 import gymnax
 import gymnax.environments.spaces
+import jax
 import jax.numpy as jnp
 import jax.random as jrandom
 from flax import struct
 from gymnax.environments.environment import Environment as GymnaxEnv
+from simple_parsing import list_field
+
 
 
 @struct.dataclass
@@ -59,6 +63,19 @@ class EnvParams:
     obstacle_size: float = 0.5
     solved_reward: float = 10
     failed_penalty: float = -10
+    
+    starting_pos_ego:tuple[float, float, float]=(5.0, 0.0, 0.0)
+    starting_pos_goal:tuple[float, float, float]=(-5.0, 0.0, 0.0)
+    obstacle_pos:tuple[float, float, float]=(0.0, 0.0, 0.0)
+    
+    flappy_obstacle_positions: list = list_field(
+                [2,-2, 0.2, 10], 
+                [2,-13, 0.2, 10],
+                [0,-8, 0.2, 10],
+                [0,3, 0.2, 10],
+                [-2,-2, 0.2, 10],
+                [-2,-13, 0.2, 10],
+    )
 
 
 # class EnvState
@@ -75,16 +92,14 @@ class DroneGym(GymnaxEnv):
     def __init__(
         self,
         include_pos_in_obs: bool = False,
+        include_vel_in_obs: bool = False,
         n_drones: int = 1,
         n_dim: int = 2,
-        starting_pos_ego=(5.0, 0.0, 0.0),
-        starting_pos_goal=(-5.0, 0.0, 0.0),
-        obstacle_pos=(0.0, 0.0, 0.0),
         fps=30,
         noise_color=0,
         action_mode: int = 0,  # 0 = acc, 1 = vel
         action_scale: float = 1,
-        obstacle: bool = True,
+        obstacle: str = "center"
     ):
         """Initialize the DroneGym object."""
         # initialize empty arrays
@@ -93,15 +108,14 @@ class DroneGym(GymnaxEnv):
         self.n_drones = n_drones
         self.n_dim = n_dim
         self.include_pos_in_obs = include_pos_in_obs
+        self.include_vel_in_obs = include_vel_in_obs
         self.noise_color = noise_color
         self.action_mode = action_mode
         self.action_scale = action_scale
         self.obstacle = obstacle
         self.dt = 1 / fps
         # initialize ego and other drones
-        self.starting_pos_ego = jnp.array(starting_pos_ego)[:n_dim]
-        self.starting_pos_goal = jnp.array(starting_pos_goal)[:n_dim]
-        self.obstacle_pos = jnp.array(obstacle_pos)[:n_dim]
+
 
     def action_space(self, params: EnvParams):
         """Action space of the environment."""
@@ -111,7 +125,7 @@ class DroneGym(GymnaxEnv):
     def observation_space(self, params: EnvParams):
         """Observation space of the environment."""
         return gymnax.environments.spaces.Box(
-            -params.plot_range, params.plot_range, shape=2 + (self.n_dim if self.include_pos_in_obs else 0)
+            -params.plot_range, params.plot_range, shape=2 + (self.n_dim if self.include_pos_in_obs else 0) + (self.n_dim if self.include_vel_in_obs else 0)
         )
 
     def state_space(self, params):
@@ -133,21 +147,21 @@ class DroneGym(GymnaxEnv):
         k_pos, k_vel, k_step = jrandom.split(rng_key, 3)
         initial_pos = jnp.concatenate(
             [
-                self.starting_pos_ego[None]
+                jnp.array(params.starting_pos_ego)[None, :self.n_dim]
                 + jrandom.uniform(
                     k_pos,
                     [1, self.n_dim],
-                    minval=-params.initial_pos_max,
-                    maxval=params.initial_pos_max,
+                    minval=-jnp.array(params.initial_pos_max),
+                    maxval=jnp.array(params.initial_pos_max),
                 ),
-                self.starting_pos_goal[None],
+                jnp.array(params.starting_pos_goal)[None, :self.n_dim],
             ],
             axis=0,
         )
         initial_vel = jnp.concatenate(
             [
                 params.initial_vel_stddev * jrandom.normal(k_vel, [self.n_drones, self.n_dim]),
-                jnp.zeros_like(self.starting_pos_goal[None]),
+                jnp.zeros_like(jnp.array(params.starting_pos_goal)[None, :self.n_dim]),
             ],
             axis=0,
         )
@@ -276,9 +290,21 @@ class DroneGym(GymnaxEnv):
         done = is_outside | is_out_of_time
         failed = is_outside
 
-        if self.obstacle:
-            dist_to_obstacle = jnp.linalg.norm(pos[0] - jnp.array(self.obstacle_pos[: self.n_dim]))
+        if self.obstacle == "center":
+            dist_to_obstacle = jnp.linalg.norm(pos[0] - jnp.array(params.obstacle_pos[: self.n_dim]))
             hit_obstacle = dist_to_obstacle <= params.obstacle_size
+            done |= hit_obstacle
+            failed |= hit_obstacle
+        elif self.obstacle == "flappy":
+            obstacle_pos = jnp.array(params.flappy_obstacle_positions)
+            corners = jnp.concatenate([obstacle_pos[:, :2], obstacle_pos[:, :2] + obstacle_pos[:, 2:]], axis=-1)
+
+            def inside_rect(p, rect_bounds):
+                x, y = p
+                x_min, y_min, x_max, y_max = rect_bounds
+                return (x_min <= x) & (x <= x_max) & (y_min <= y) & (y <= y_max)
+            
+            hit_obstacle = jax.vmap(partial(inside_rect, pos[0][:2]))(corners).any()
             done |= hit_obstacle
             failed |= hit_obstacle
 
@@ -326,7 +352,12 @@ class DroneGym(GymnaxEnv):
         - An observation tuple containing the ego drone velocity, ego drone position, noisy distance to drone 0,
           true distance to drone 0, and other relevant information.
         """
-        obstacle_distance = jnp.linalg.norm(pos[0] - self.obstacle_pos)
+        if self.obstacle == "flappy":
+            obstacle_pos = jnp.array(params.flappy_obstacle_positions)
+            corners = jnp.concatenate([obstacle_pos[:, :2], obstacle_pos[:, :2] + obstacle_pos[:, 2:]], axis=-1)
+            obstacle_distance = jnp.linalg.norm(pos[:1][:2] - corners.reshape((-1, 2, 2)), axis=-1).min()        
+        else:
+            obstacle_distance = jnp.linalg.norm(pos[0] - jnp.array(params.obstacle_pos)[:self.n_dim])
         noisy_obstacle_dist = self.apply_noise(obstacle_distance, rng_key, params)
 
         goal_distance = jnp.linalg.norm(pos[0] - pos[1:], axis=-1)
@@ -335,6 +366,8 @@ class DroneGym(GymnaxEnv):
         obs = jnp.concatenate(jnp.array([noisy_obstacle_dist[None], noisy_goal_dist]))
         if self.include_pos_in_obs:
             obs = jnp.append(pos[0], obs)
+        if self.include_vel_in_obs:
+                    obs = jnp.append(vel[0], obs)
 
         return (
             obs,
