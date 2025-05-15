@@ -61,7 +61,7 @@ class PPOParams(LoggableConfig):
 
     # Training Settings
     episodes: int = 100000
-    patience: int | None = 100
+    patience: int | None = None
     eval_every: int | None = 10
     eval_steps: int = 1000
     eval_batch_size: int = 10
@@ -78,7 +78,7 @@ class PPOParams(LoggableConfig):
     clip_eps: float = 0.2
     ent_coef: float = 1e-3
     vf_coef: float = 0.5
-    gradient_clip: float | None = 0.5
+    gradient_clip: float | None = None
     anneal_lr: bool = False
 
     # Env settings
@@ -259,7 +259,7 @@ class ActorCriticRNN(nn.Module):
     discrete: bool
     config: PPOParams
     action_limits: jnp.ndarray = None
-    log_std_min: jnp.ndarray = -2
+    log_std_min: jnp.ndarray = -1
 
     def dist(self, model_out):
         """Split the output of the actor into mean and std.
@@ -303,24 +303,24 @@ class ActorCriticRNN(nn.Module):
             elif self.config.act_dist_name == "brax":
                 from brax.training.distribution import NormalTanhDistribution
 
-                return NormalTanhDistribution(event_size=self.action_dim).create_dist(
+                return NormalTanhDistribution(event_size=self.action_dim, min_std = jnp.exp(self.log_std_min),).create_dist(
                     model_out
                 )
             else:
-                mean = model_out
-                # mean = model_out[..., : model_out.shape[-1] // 2]
-                # std = model_out[..., model_out.shape[-1] // 2 :]
+                # mean = jnp.tanh(model_out)
+                mean =  jnp.tanh(model_out[..., : model_out.shape[-1] // 2])
+                std = model_out[..., model_out.shape[-1] // 2 :]
                 #     # Squashed Gaussian taken from SAC
                 #     # https://spinningup.openai.com/en/latest/algorithms/sac.html#id1
                 #     std = jnp.tanh(std)
                 #     std = log_std_min + 0.5 * (log_std_max - log_std_min) * (std + 1)
                 # el
-                log_std = self.param(
-                    "log_std", nn.initializers.constant(-1), (self.action_dim)
-                )
-                if self.log_std_min is not None:
-                    log_std = jnp.clip(log_std, min=self.log_std_min)
-                dist = distrax.LogStddevNormal(mean, log_std)
+                # log_std = self.param(
+                #     "log_std", nn.initializers.constant(1), (self.action_dim)
+                # )
+                # if self.log_std_min is not None:
+                #     log_std = jnp.clip(log_std, min=self.log_std_min)
+                dist = distrax.MultivariateNormalDiag(mean, jnp.exp(std)+self.log_std_min)
                 return dist
                 # if not self.action_limits:
                 #     return dist
@@ -354,7 +354,7 @@ class ActorCriticRNN(nn.Module):
         actor_mean = nn.relu(actor_mean)
         action_dim = (
             self.action_dim
-            if self.discrete or self.config.act_dist_name == "normal"
+            if self.discrete# or self.config.act_dist_name == "normal"
             else self.action_dim * 2
         )
         actor_mean = nn.Dense(
@@ -542,8 +542,8 @@ def make_train(config: PPOParams, logger: DummyLogger):
                 ac_in = (x, _env_state.done[None, :])
                 next_hstate, pi, value = network.apply(params, prev_hstate, ac_in)
                 action = pi.sample(seed=_rng)
-                if env_info["act_clip"]:
-                    action = jnp.clip(action, *action_clip)
+                # if env_info["act_clip"]:
+                #     action = jnp.clip(action, *action_clip)
                 log_prob = pi.log_prob(action)
                 value, action, log_prob = (
                     value.squeeze(0),
@@ -619,8 +619,8 @@ def make_train(config: PPOParams, logger: DummyLogger):
                     train_state.params, prev_hstate, ac_in
                 )
                 action = pi.sample(seed=_rng)
-                if env_info["act_clip"]:
-                    action = jnp.clip(action, *action_clip)
+                # if env_info["act_clip"]:
+                #     action = jnp.clip(action, *action_clip)
                 log_prob = pi.log_prob(action)
                 value, action, log_prob = (
                     value.squeeze(0),
@@ -708,7 +708,7 @@ def make_train(config: PPOParams, logger: DummyLogger):
                     (jnp.zeros_like(last_val), last_val),
                     (transitions, values),
                     reverse=True,
-                    unroll=config.rollout_horizon,
+                    # unroll=config.rollout_horizon,
                 )
                 return advantages, advantages + transitions.value
 
@@ -750,13 +750,12 @@ def make_train(config: PPOParams, logger: DummyLogger):
                             params, _init_hstate, (x, transition.prev_done)
                         )
 
-                        if env_info["act_clip"]:
-                            action = jnp.clip(transition.action, *action_clip)
-                        else:
-                            action = transition.action
+                        # if env_info["act_clip"]:
+                        #     action = jnp.clip(transition.action, *action_clip)
+                        # else:
+                        action = transition.action
+                        # _ = pi.sample_and_log_prob(seed=jrandom.PRNGKey(0))
                         log_prob = pi.log_prob(action)
-                        # if not _discrete:
-                        #     log_prob = log_prob.mean(axis=-1)
 
                         # CALCULATE VALUE LOSS
                         value_pred_clipped = transition.value + (
@@ -772,7 +771,7 @@ def make_train(config: PPOParams, logger: DummyLogger):
                         diff = log_prob - transition.log_prob
                         if not _discrete:
                             diff = diff.sum(axis=-1)
-                        diff = jnp.clip(diff, min=-2, max=2)  # HACK avoids some NaNs!
+                        # diff = jnp.clip(diff, min=-20, max=20)  # HACK avoids some NaNs!
                         ratio = jnp.exp(diff)
                         if config.normalize_gae:
                             _gae = (_gae - _gae.mean()) / (_gae.std() + 1e-6)
@@ -785,7 +784,7 @@ def make_train(config: PPOParams, logger: DummyLogger):
                             )
                             * _gae
                         )
-                        loss_actor = -jnp.minimum(loss_actor1, loss_actor2).sum()
+                        loss_actor = -jnp.minimum(loss_actor1.mean(), loss_actor2.mean())
                         total_loss = loss_actor + config.vf_coef * value_loss
                         if hasattr(pi, "distribution"):
                             entropy = pi.distribution.entropy().mean()
@@ -836,6 +835,7 @@ def make_train(config: PPOParams, logger: DummyLogger):
                 hstate,
                 update_state[-1],
             )
+            loss_info["num_episodes"]=env_state.done.sum()
             return runner_state, loss_info
 
         rng, _rng = jax.random.split(rng)

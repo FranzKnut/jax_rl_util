@@ -64,17 +64,17 @@ class EnvParams:
     solved_reward: float = 10
     failed_penalty: float = -10
     
-    starting_pos_ego:tuple[float, float, float]=(5.0, 0.0, 0.0)
-    starting_pos_goal:tuple[float, float, float]=(-5.0, 0.0, 0.0)
+    starting_pos_ego:tuple[float, float, float]=(7.0, 0.0, 0.0)
+    starting_pos_goal:tuple[float, float, float]=(-7.0, 0.0, 0.0)
     obstacle_pos:tuple[float, float, float]=(0.0, 0.0, 0.0)
     
     flappy_obstacle_positions: list = list_field(
-                [2,-2, 0.2, 10], 
-                [2,-13, 0.2, 10],
-                [0,-8, 0.2, 10],
-                [0,3, 0.2, 10],
-                [-2,-2, 0.2, 10],
-                [-2,-13, 0.2, 10],
+                # [2,-2, 0.2, 10], 
+                [2,-10, 1.0, 15],
+                # [0,-7, 0.2, 10],
+                [-2, -3, 1.0, 15],
+                # [-2,-2, 0.2, 10],
+                # [-2,-10, 1.0, 15],
     )
 
 
@@ -125,7 +125,8 @@ class DroneGym(GymnaxEnv):
     def observation_space(self, params: EnvParams):
         """Observation space of the environment."""
         return gymnax.environments.spaces.Box(
-            -params.plot_range, params.plot_range, shape=2 + (self.n_dim if self.include_pos_in_obs else 0) + (self.n_dim if self.include_vel_in_obs else 0)
+            -params.plot_range, params.plot_range, 
+            shape=2 + (self.n_dim if self.include_pos_in_obs else 0) + (self.n_dim if self.include_vel_in_obs else 0),
         )
 
     def state_space(self, params):
@@ -228,7 +229,7 @@ class DroneGym(GymnaxEnv):
         - info: Additional information about the step.
         """
         # perform ego and other drone movement for next step
-        step, pos, vel, goto, reached_goal, filtered_dist, key = state.values()
+        step, prev_pos, vel, goto, reached_goal, filtered_dist, key = state.values()
         ego_key, obs_key, drone_key, next_key = jrandom.split(key, 4)
         ego_vel = vel[0]
 
@@ -262,7 +263,7 @@ class DroneGym(GymnaxEnv):
 
         # Concatenate ego and drones velocities
         vel = jnp.concatenate([ego_vel[None], drones_vel], axis=0)
-        pos += vel * self.dt
+        pos = prev_pos + vel * self.dt
 
         # Sample observation
         obs, dists = self._sample_observation(pos, vel, obs_key, params)
@@ -276,10 +277,14 @@ class DroneGym(GymnaxEnv):
         # filtered_dist = filtered_dist * (1.0 - params.iir_filter) + noisy_distance * (params.iir_filter)
         is_out_of_time = step >= params.max_steps
 
-        # Reward when target is reached
+        # Reward for coming closer to target
         reward = 1 / jnp.max(jnp.array([1, goal_distance.squeeze()])) ** 2
+        # Reward for moving
+        reward += jnp.clip(jnp.log(jnp.linalg.norm(vel)), max=0.05)
+        
         # reward = 0
         is_outside = jnp.any(jnp.abs(pos) > params.plot_range)
+        # Reward when target is reached
         is_at_target = (goal_distance <= 1).squeeze()
         reward = jnp.where(is_at_target & ~reached_goal, params.solved_reward, reward)
 
@@ -299,12 +304,22 @@ class DroneGym(GymnaxEnv):
             obstacle_pos = jnp.array(params.flappy_obstacle_positions)
             corners = jnp.concatenate([obstacle_pos[:, :2], obstacle_pos[:, :2] + obstacle_pos[:, 2:]], axis=-1)
 
-            def inside_rect(p, rect_bounds):
-                x, y = p
+            def detect_collision(previous, current, rect_bounds):
+                px, py = previous
+                cx, cy = current
                 x_min, y_min, x_max, y_max = rect_bounds
-                return (x_min <= x) & (x <= x_max) & (y_min <= y) & (y <= y_max)
+                
+                # Check if the line segment from prev_point to curr_point intersects the rectangle
+                # Simple bounding box intersection check
+                min_x, max_x = jnp.minimum(px, cx), jnp.maximum(px, cx)
+                min_y, max_y = jnp.minimum(py, cy), jnp.maximum(py, cy)
+                intersects = (x_min <= max_x) & (x_max >= min_x) & (y_min <= max_y) & (y_max >= min_y)
+                
+                 # Check if current point is inside the rectangle
+                inside = (x_min <= px) & (px <= x_max) & (y_min <= py) & (py <= y_max)
+                return intersects | inside
             
-            hit_obstacle = jax.vmap(partial(inside_rect, pos[0][:2]))(corners).any()
+            hit_obstacle = jax.vmap(partial(detect_collision, pos[0][:2], prev_pos[0][:2]))(corners).any()
             done |= hit_obstacle
             failed |= hit_obstacle
 
@@ -356,6 +371,7 @@ class DroneGym(GymnaxEnv):
             obstacle_pos = jnp.array(params.flappy_obstacle_positions)
             corners = jnp.concatenate([obstacle_pos[:, :2], obstacle_pos[:, :2] + obstacle_pos[:, 2:]], axis=-1)
             obstacle_distance = jnp.linalg.norm(pos[:1][:2] - corners.reshape((-1, 2, 2)), axis=-1).min()        
+            # obstacle_distance = jnp.zeros_like(obstacle_distance)        
         else:
             obstacle_distance = jnp.linalg.norm(pos[0] - jnp.array(params.obstacle_pos)[:self.n_dim])
         noisy_obstacle_dist = self.apply_noise(obstacle_distance, rng_key, params)

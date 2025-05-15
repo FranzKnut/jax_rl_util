@@ -51,5 +51,6 @@ def pull_fields(df: pd.DataFrame, names: list[str] = []):
                     fields[k] = str(v)
         return pd.Series(fields)
 
-    df["config"] = df.config.apply(eval)
+    if df.config.dtype == str:
+        df["config"] = df.config.apply(eval)
     return df.assign(**df.config.apply(_pull_fields))
