@@ -52,11 +52,11 @@ class PPOParams(LoggableConfig):
     logging: str = "aim"
     debug: int = 0
     seed: int = -1
-    MODEL: str = "MLP"
+    MODEL: str = "LSTM"
     NUM_UNITS: int = 64
     meta_rl: bool = False
-    act_dist_name: str = "normal"
-    log_norms: bool = True
+    act_dist_name: str = "brax"
+    log_norms: bool = False
     record_best_eval_episode: bool = False
 
     # Training Settings
@@ -84,7 +84,7 @@ class PPOParams(LoggableConfig):
     # Env settings
     env_params: EnvironmentConfig = field(
         default_factory=lambda: EnvironmentConfig(
-            env_name="MemoryChain-bsuite",
+            env_name="dronegym",
             batch_size=512,
         )
     )
@@ -112,7 +112,7 @@ class LSTM(nn.Module):
         ins, resets = x
         rnn_state = jax.tree.map(
             lambda new, old: jnp.where(resets[:, None], new, old),
-            self.initialize_carry(self.make_rng(), ins.shape),
+            self.initialize_carry(jrandom.PRNGKey(0), ins.shape),
             rnn_state,
         )
         return nn.OptimizedLSTMCell(features)(rnn_state, ins)
@@ -242,8 +242,8 @@ class MLP(nn.Module):
         y = nn.Dense(self.config.NUM_UNITS)(ins)
         y = nn.relu(y)
         y = nn.Dense(self.config.NUM_UNITS)(y)
-        y = nn.relu(y)
-        y = nn.Dense(self.config.NUM_UNITS)(y)
+        # y = nn.relu(y)
+        # y = nn.Dense(self.config.NUM_UNITS)(y)
         return carry, y
 
     @staticmethod
@@ -684,7 +684,7 @@ def make_train(config: PPOParams, logger: DummyLogger):
             # Compute the last value
             x = normalize(env_state.obs, _normalizer_state)
             if config.meta_rl:
-                x = jnp.concatenate([x, re_action, env_state.reward.reshape(config.train_batch_size, -1)], axis=-1)
+                x = jnp.concatenate([x, re_action, env_state.reward.reshape(config.env_params.batch_size, -1)], axis=-1)
             ac_in = (x[None], env_state.done[None, :])
             _, _, _last_val = network.apply(train_state.params, hstate, ac_in)
 
@@ -694,12 +694,12 @@ def make_train(config: PPOParams, logger: DummyLogger):
                 def _get_advantages(carry, _batch: tuple[Transition, jax.Array]):
                     gae, next_value = carry
                     _transition, _value = _batch
-                    next_done, reward = _transition.done, _transition.reward.squeeze()
+                    _done, _reward = _transition.done, _transition.reward.squeeze()
                     delta = (
-                        reward + config.gamma * next_value * (1 - next_done) - _value
+                        _reward + config.gamma * next_value * (1 - _done) - _value
                     )
                     gae = (
-                        delta + config.gamma * config.gae_lambda * (1 - next_done) * gae
+                        delta + config.gamma * config.gae_lambda * (1 - _done) * gae
                     )
                     return (gae, _value), gae
 
@@ -758,10 +758,11 @@ def make_train(config: PPOParams, logger: DummyLogger):
                         log_prob = pi.log_prob(action)
 
                         # CALCULATE VALUE LOSS
+                        value_losses = jnp.square(_val - _values)
+                        
                         value_pred_clipped = transition.value + (
                             _values - transition.value
                         ).clip(-config.clip_eps, config.clip_eps)
-                        value_losses = jnp.square(_val - _values)
                         value_losses_clipped = jnp.square(_val - value_pred_clipped)
                         value_loss = (
                             0.5 * jnp.maximum(value_losses, value_losses_clipped).mean()
@@ -784,7 +785,7 @@ def make_train(config: PPOParams, logger: DummyLogger):
                             )
                             * _gae
                         )
-                        loss_actor = -jnp.minimum(loss_actor1.mean(), loss_actor2.mean())
+                        loss_actor = -jnp.minimum(loss_actor1, loss_actor2).mean()
                         total_loss = loss_actor + config.vf_coef * value_loss
                         if hasattr(pi, "distribution"):
                             entropy = pi.distribution.entropy().mean()

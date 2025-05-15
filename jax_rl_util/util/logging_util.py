@@ -300,6 +300,7 @@ class AimLogger(DummyLogger):
         if isinstance(img, str):
             img = Image.open(img)
         elif isinstance(img, plt.Figure):
+            img.canvas.draw() # Needed on macOS
             img = Image.fromarray(np.asarray(img.canvas.buffer_rgba() , dtype=np.uint8), mode="RGBa").convert(pil_mode)
         self.log(
             {

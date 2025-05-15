@@ -9,6 +9,9 @@ import numpy as np
 from jax import numpy as jnp
 from typing_extensions import deprecated
 
+from jax_rl_util.envs.plot_drones import plot_drones
+from jax_rl_util.util.logging_util import tree_stack
+
 
 def compute_agg_reward(states: brax.envs.State, agg_fn=jnp.mean):
     """Compute the average reward per episode from a batch of trajectories."""
@@ -91,6 +94,15 @@ def render_frames(
 
     # Define rendering function for specific envs
     is_brax = _env.name.startswith("brax-") or _env.name in brax.envs._envs
+    if _env.name == "dronegym":
+        states = tree_stack(states)
+        data = states.pipeline_state
+        data["reward"] = states.reward
+        data["done"] = states.done[1:] # shift by 1 since 'done' always marks the obs after reset
+        return plot_drones(_env.params, data, obstacle=_env.obstacle)
+    else:
+        states = jax.tree_map(lambda x: x[:, 0], states.pipeline_state)
+
     if isinstance(_env.unwrapped, GymnaxBraxWrapper):
         if _env.name in [
             "CartPole-v1",

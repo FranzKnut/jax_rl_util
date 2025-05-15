@@ -4,6 +4,7 @@ from dataclasses import field
 from typing import Tuple
 
 import distrax
+import jax
 import jax.numpy as jnp
 from chex import PRNGKey
 from flax import linen as nn
@@ -170,23 +171,14 @@ class RNNActorCritic(nn.RNNCellBase):
                 name="obs",
             )
 
-        if self.layer_norm:
-            self._layer_norm = nn.LayerNorm(use_bias=False, use_scale=False)
-
     def rnn_step(self, carry, obs, training=True, **kwargs):
         """Step RNN."""
-        # Layer Norm
-        if self.layer_norm:
-            obs = self._layer_norm(obs)
         if not self.rnn_config.model_name:
             return obs, carry
         if carry is None:
             # Initialize seed and the carry
             carry = self.initialize_carry(self.make_rng(), obs.shape)
         carry, hidden = self.rnn(carry, obs, **kwargs)
-        # Layer Norm
-        if self.layer_norm:
-            hidden = self._layer_norm(hidden)
         return hidden, carry
 
     def value(self, hidden, x=None):

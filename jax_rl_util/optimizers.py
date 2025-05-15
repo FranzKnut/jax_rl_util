@@ -28,9 +28,7 @@ class OptimizerConfig:
     # fmt: on
 
 
-def make_optimizer(
-    config=OptimizerConfig(), direction="min"
-) -> optax.GradientTransformation:
+def make_optimizer(config=OptimizerConfig()) -> optax.GradientTransformation:
     """Make optax optimizer.
 
     The decorator allows reading scheduled lr from the optimizer state.
@@ -59,12 +57,6 @@ def make_optimizer(
     """
     learning_rate = config.learning_rate
     weight_decay = config.weight_decay
-    if direction in ["max", "maximize"]:
-        learning_rate = -learning_rate
-    elif direction in ["min", "minimize"]:
-        weight_decay = -weight_decay
-    else:
-        raise ValueError(f"Unknown direction {direction}. Use 'min' or 'max'.")
 
     if config.lr_decay_type == "cosine":
         """Args:
@@ -169,7 +161,7 @@ def make_optimizer(
             config.lr_kwargs.get("end_value", None),
         )
     elif config.lr_decay_type is not None:
-        raise ValueError(f"Decay type {config.lr_decay_type} unknown.")
+        print(f"WARNING: Decay type {config.lr_decay_type} unknown. Using no decay.")
 
     if weight_decay == "l2" and "adam" in config.opt_name:
         print(
@@ -205,11 +197,12 @@ def make_optimizer(
                 factor=config.lr_kwargs.get("factor", 0.5),
                 min_scale=config.lr_kwargs.get("min_scale", 1e-6),
                 accumulation_size=config.lr_kwargs.get("accumulation_size", 10),
+                cooldown=config.lr_kwargs.get("cooldown", 10),
             )
             if config.reduce_on_plateau
             else optax.identity(),
         )
-        if config.multi_step:
+        if config.multi_step is not None and config.multi_step > 1:
             optimizer = optax.MultiSteps(optimizer, every_k_schedule=config.multi_step)
         return optimizer
 
@@ -301,8 +294,14 @@ def get_current_lrs(opt_state, opt_config: OptimizerConfig | None = None):
     _reduce_on_plateau = False if opt_config is None else opt_config.reduce_on_plateau
     if hasattr(opt_state, "inner_states"):
         for k, s in opt_state.inner_states.items():
-            reduce_on_plateau_lr = s[0][3][3].scale if _reduce_on_plateau else 1
-            lrs["LR/" + k] = s[0][1]["learning_rate"] * reduce_on_plateau_lr
+            reduce_on_plateau_lr = (
+                s.inner_state.inner_state.inner_opt_state[3].scale
+                if _reduce_on_plateau
+                else 1
+            )
+            lrs["LR/" + k] = (
+                s.inner_state.hyperparams["learning_rate"] * reduce_on_plateau_lr
+            )
     else:
         reduce_on_plateau_lr = opt_state[3][3].scale if _reduce_on_plateau else 1
         lrs["LR/learning_rate"] = opt_state[1]["learning_rate"] * reduce_on_plateau_lr
