@@ -41,7 +41,7 @@ def render_brax(env, states, render_steps=100, render_start=0, camera=None):
 
 
 @deprecated("Deprecated for Brax Envs. Will be removed in the future.")
-def make_obs_mask(base_obs_size: int, obs_mask: Iterable[int] | str | int = None):
+def make_obs_mask(base_obs_size: int, obs_mask: Iterable[int] | str | int | None = None):
     """Get the observation mask from string description.
 
     obs_mask may take values ['odd', 'even', 'first_half', 'second_half'] or a list of indices.

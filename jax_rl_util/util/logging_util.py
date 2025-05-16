@@ -359,7 +359,7 @@ class WandbLogger(DummyLogger):
             config=hparams,
             entity=hparams.repo,
             mode="disabled" if hparams.debug else "online",
-            dir="logs/wandb/",
+            dir="logs/",
             save_code=False,
         )
 
