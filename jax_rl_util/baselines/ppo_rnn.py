@@ -55,7 +55,7 @@ class PPOParams(LoggableConfig):
     MODEL: str = "LSTM"
     NUM_UNITS: int = 64
     meta_rl: bool = False
-    act_dist_name: str = "brax"
+    act_dist_name: str = "normal"
     log_norms: bool = False
     record_best_eval_episode: bool = False
 
@@ -309,7 +309,7 @@ class ActorCriticRNN(nn.Module):
             else:
                 # mean = jnp.tanh(model_out)
                 mean =  jnp.tanh(model_out[..., : model_out.shape[-1] // 2])
-                std = model_out[..., model_out.shape[-1] // 2 :]
+                log_std = model_out[..., model_out.shape[-1] // 2 :]
                 #     # Squashed Gaussian taken from SAC
                 #     # https://spinningup.openai.com/en/latest/algorithms/sac.html#id1
                 #     std = jnp.tanh(std)
@@ -318,9 +318,9 @@ class ActorCriticRNN(nn.Module):
                 # log_std = self.param(
                 #     "log_std", nn.initializers.constant(1), (self.action_dim)
                 # )
-                # if self.log_std_min is not None:
-                #     log_std = jnp.clip(log_std, min=self.log_std_min)
-                dist = distrax.MultivariateNormalDiag(mean, jnp.exp(std)+self.log_std_min)
+                if self.log_std_min is not None:
+                    log_std = jnp.clip(log_std, min=self.log_std_min)
+                dist = distrax.LogStddevNormal(mean, log_std)
                 return dist
                 # if not self.action_limits:
                 #     return dist

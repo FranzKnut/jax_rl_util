@@ -71,7 +71,7 @@ class EnvParams:
         # [2,-2, 0.2, 10],
         [3, -10, 1.0, 12],
         # [0,-7, 0.2, 10],
-        [-3, -2, 1.0, 15],
+        [-3, -1, 1.0, 10],
         # [-2,-2, 0.2, 10],
         # [-2,-10, 1.0, 15],
     )
@@ -97,7 +97,7 @@ class DroneGym(GymnaxEnv):
         fps=30,
         noise_color=0,
         action_mode: int = 0,  # 0 = acc, 1 = vel
-        action_scale: float = 2,
+        action_scale: float = 1,
         obstacle: str = "center",
     ):
         """Initialize the DroneGym object."""

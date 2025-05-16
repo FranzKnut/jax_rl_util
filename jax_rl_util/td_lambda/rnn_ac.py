@@ -21,37 +21,97 @@ class Actor(nn.Module):
     a_dim: int
     act_log_bounds: tuple[float, ...]
     act_bounds: tuple[float, ...] | None = None
+    act_dist_name: str = "normal"
 
     @nn.compact
     def __call__(self, hidden):
         """Compute action distribution form latent."""
         # actor_out_dim = self.a_dim if self.discrete else 2 * self.a_dim
-        _actor = MLP(
-            self.layers + (self.a_dim,),
-            f_align=self.f_align,
-            name="mean",
-        )
+        if self.layers:
+            hidden = MLP(
+                self.layers,
+                f_align=self.f_align,
+                name="mean",
+            )(hidden)
+        model_out = FADense(
+            self.a_dim * 2
+            if self.act_dist_name in ["beta", "brax", "normal_scale"]
+            else self.a_dim,
+            kernel_init=nn.initializers.lecun_normal(),
+            bias_init=nn.initializers.zeros_init(),
+        )(hidden)
 
-        if not self.discrete:
-            loc = _actor(hidden)
-            if len(loc.shape) > 1:
-                # Take mean of ... ensemble?
-                loc = loc.mean(axis=-2)
-            log_std = self.param("log_std", nn.initializers.zeros_init(), self.a_dim)
-            # scale = sigmoid_between(scale, *self.act_log_bounds)
-            # scale = jnp.exp(scale) + self.act_log_bounds[0]
-            # scale = jax.nn.softplus(scale) + self.act_log_bounds[0]
-            if self.act_bounds is not None:
-                loc = sigmoid_between(loc, *self.act_bounds)
-            dist = distrax.LogStddevNormal(
-                loc,
-                log_std + self.act_log_bounds[0],
-                max_scale=self.act_log_bounds[1],
-            )
-        else:
-            logits = _actor(hidden).mean(axis=-2)
+        if self.discrete:
+            logits = model_out.mean(axis=-2)
             dist = distrax.Categorical(logits=logits)
+        else:
+            if self.act_dist_name == "beta":
+                if self.act_bounds:
+                    # If action limits are defined we sample from [0, 1] and transform the event.
+                    act_range = jnp.array(self.act_bounds[1]) - jnp.array(
+                        self.act_bounds[0]
+                    )
+                    act_min = jnp.array(self.act_bounds[0])
+                    scaling_transform = distrax.ScalarAffine(act_min, act_range)
+                alpha = jax.nn.softplus(model_out[..., : model_out.shape[-1] // 2])
+                beta = jax.nn.softplus(model_out[..., model_out.shape[-1] // 2 :])
+                return distrax.Transformed(distrax.Beta(alpha, beta), scaling_transform)
+            elif self.act_dist_name == "brax":
+                from brax.training.distribution import NormalTanhDistribution
+
+                return NormalTanhDistribution(
+                    event_size=self.a_dim,
+                    min_std=jnp.exp(self.act_log_bounds[0]),
+                ).create_dist(model_out)
+            else:
+                if self.act_dist_name == "normal_scale":
+                    loc, log_std = jnp.split(model_out, 2, axis=-1)
+                else:
+                    loc = model_out
+                    log_std = self.param(
+                        "log_std", nn.initializers.zeros_init(), self.a_dim
+                    )
+                if len(loc.shape) > 1:
+                    # Take mean of ... ensemble?
+                    loc = loc.mean(axis=-2)
+                    if self.act_dist_name == "normal_scale":
+                        log_std = log_std.mean(axis=-2)
+
+                # scale = sigmoid_between(scale, *self.act_log_bounds)
+                # scale = jnp.exp(scale) + self.act_log_bounds[0]
+                # scale = jax.nn.softplus(scale) + self.act_log_bounds[0]
+                if self.act_bounds is not None:
+                    loc = sigmoid_between(loc, *self.act_bounds)
+                dist = distrax.LogStddevNormal(
+                    loc,
+                    log_std + self.act_log_bounds[0],
+                    max_scale=self.act_log_bounds[1],
+                )
+
         return dist
+
+
+class Critic(nn.Module):
+    """Critic network."""
+
+    layers: list[int]
+    f_align: bool
+
+    @nn.compact
+    def __call__(self, x):
+        """Compute value from latent."""
+        if self.layers:
+            x = MLP(
+                self.layers,
+                f_align=self.f_align,
+                name="critic",
+            )(x)
+        return FADense(
+            1,
+            kernel_init=nn.initializers.lecun_normal(),
+            bias_init=nn.initializers.zeros_init(),
+            name="critic_head",
+        )(x)
 
 
 class AC(nn.Module):
@@ -61,6 +121,7 @@ class AC(nn.Module):
     discrete: bool
     act_bounds: tuple[float, ...] | None = None
     act_log_bounds: tuple[float, ...] = field(default_factory=lambda: [0.01, 5])
+    act_dist_name: str = "normal"
     actor_layers: tuple[int, ...] = ()
     critic_layers: tuple[int, ...] = ()
     f_align: bool = False
@@ -76,19 +137,19 @@ class AC(nn.Module):
             self.a_dim,
             act_bounds=self.act_bounds,
             act_log_bounds=self.act_log_bounds,
+            act_dist_name=self.act_dist_name,
             name="actor",
         )
         # Critic
-        self.critic = MLP(
-            self.critic_layers + (1,),
-            f_align=self.f_align,
-            # kernel_init=nn.initializers.zeros_init(),
+        self.critic = Critic(
+            self.critic_layers,
+            self.f_align,
             name="critic",
         )
 
     def loss(self, x, action, critic_weight: float = 1.0):
         """Compute loss."""
-        critic_loss = self.critic(x).mean()
+        critic_loss = self.value(x).mean()
         dist = self.actor(x)
         actor_loss = dist.log_prob(action).mean()
         return actor_loss + critic_weight * critic_loss
@@ -125,6 +186,7 @@ class RNNActorCritic(nn.RNNCellBase):
     act_log_bounds: tuple[float] = field(default_factory=lambda: [0.01, 1])
     shared: bool = False
     act_bounds: tuple[float] | None = None
+    act_dist_name: str = "normal"
     pass_obs: bool = False
     actor_layers: tuple[int, ...] = ()
     critic_layers: tuple[int, ...] = ()
@@ -152,13 +214,14 @@ class RNNActorCritic(nn.RNNCellBase):
         #     axis_size=self.num_modules,
         # )
         self.td = AC(
-            self.a_dim,
-            self.discrete,
-            self.act_bounds,
-            self.act_log_bounds,
-            self.actor_layers,
-            self.critic_layers,
-            self.f_align,
+            a_dim=self.a_dim,
+            discrete=self.discrete,
+            act_bounds=self.act_bounds,
+            act_log_bounds=self.act_log_bounds,
+            actor_layers=self.actor_layers,
+            critic_layers=self.critic_layers,
+            f_align=self.f_align,
+            act_dist_name=self.act_dist_name,
             name="td",
         )
 
@@ -190,7 +253,7 @@ class RNNActorCritic(nn.RNNCellBase):
             if len(x.shape) < len(hidden.shape):
                 x = jnp.expand_dims(x, -2)
             hidden = jnp.concatenate([hidden, x], axis=-1)
-        return self.td.critic(hidden)
+        return self.td.value(hidden)
 
     def obs_prediction(self, hidden, a, x=None):
         """Compute observation prediction from latent."""
@@ -226,7 +289,9 @@ class RNNActorCritic(nn.RNNCellBase):
         #         action = action[..., jnp.arange(batch_shape), selected_act]
         #     else:
         #         action = action[selected_act]
-        return self.td.policy(hidden, sample_act=sample_act, deterministic=deterministic)
+        return self.td.policy(
+            hidden, sample_act=sample_act, deterministic=deterministic
+        )
 
     @nn.compact
     def __call__(self, carry, x, deterministic=False):
