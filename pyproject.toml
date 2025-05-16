@@ -13,7 +13,7 @@ brax           = "^0.12.1"
 flashbax       = "^0.1.3"
 gymnax         = "^0.0.8"
 popjym         = { git = "https://github.com/EdanToledo/popjym.git", branch = "main" }
-mujoco_menagerie         = { git = "https://github.com/google-deepmind/mujoco_menagerie", branch = "main" }
+# mujoco_menagerie         = { git = "https://github.com/google-deepmind/mujoco_menagerie", branch = "main" }
 simple-parsing = "^0.1.6"
 
 
