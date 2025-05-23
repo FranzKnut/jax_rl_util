@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass, field, replace
 from functools import partial
-from typing import Any, Callable, Optional, Union
+from typing import Any, Callable
 
 import jax
 import jax.numpy as jnp
@@ -15,7 +15,7 @@ class OptimizerConfig:
     """Class representing the parameters for an optimizer."""
 
     # fmt: off
-    opt_name: str = "adam"                                       # opt_name (str): The name of the optimizer.
+    opt_name: str = "adam"                                      # opt_name (str): The name of the optimizer.
     learning_rate: float = 1e-3                                 # learning_rate (float): The learning rate for the optimizer.
     kwargs: dict = field(default_factory=dict, hash=False)      # kwargs (dict): Additional keyword arguments for the optimizer.
     lr_decay_type: str | None = None                            # decay_type (str): The type of decay for the learning rate.
@@ -38,18 +38,12 @@ def make_optimizer(config=OptimizerConfig()) -> optax.GradientTransformation:
     config : OptimizerConfig, optional
         learning_rate : float
             initial learning rate
-        direction : str, optional
-            min or max. Defaults to "min", by default "min"
         opt_name : str, optional
             Name of optimizer, by default 'sgd'
         gradient_clip : int, optional
             Clip gradient norm. Defaults to 0
-        lr_decay : int, optional
-            Exponential lr decay. Defaults to 1, by default 1
-        optimizer_params : dict, optional
-            Additional kwargs to the optimizer, by default {}
-    direction : str, optional
-        min or max. Defaults to "min".
+
+        for more options see OptimizerConfig dataclass.
 
     Returns
     -------
@@ -208,10 +202,9 @@ def make_optimizer(config=OptimizerConfig()) -> optax.GradientTransformation:
 
     return _make_opt(learning_rate)
 
-
 def add_decayed_weights_l1(
-    weight_decay: Union[float, jax.Array] = 0.0,
-    mask: Optional[Union[Any, Callable[[base.Params], Any]]] = None,
+    weight_decay: float | jax.Array = 0.0,
+    mask: Any | Callable[[base.Params], Any] | None = None,
 ) -> base.GradientTransformation:
     """Add the derivative of L1 loss of the params scaled by `weight_decay`.
 

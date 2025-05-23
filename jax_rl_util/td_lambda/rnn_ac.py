@@ -148,7 +148,10 @@ class AC(nn.Module):
         )
 
     def loss(self, x, action, critic_weight: float = 1.0):
-        """Compute loss."""
+        """Compute loss.
+
+        FIXME: This is not actually a loss since it should be maximized.
+        """
         critic_loss = self.value(x).mean()
         dist = self.actor(x)
         actor_loss = dist.log_prob(action).mean()

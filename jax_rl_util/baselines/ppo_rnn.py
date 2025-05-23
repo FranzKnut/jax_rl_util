@@ -265,7 +265,7 @@ class ActorCriticRNN(nn.Module):
         """Split the output of the actor into mean and std.
 
         Applies squashing to the normal distribution
-        
+
 
         Args:
         ----
@@ -407,12 +407,12 @@ class Transition(NamedTuple):
 def make_train(config: PPOParams, logger: DummyLogger):
     """Create the training function."""
     _rnn_model = globals()[config.MODEL](config)
-    
+
     batch_size = config.env_params.batch_size
     if config.env_params.batch_size is None:
         print("WARNING: batch_size was not configured: set it to 1.")
         batch_size = 1
-    
+
     env, env_info, eval_env = make_env(config.env_params, make_eval=True)
     eval_env = VmapWrapper(eval_env, config.eval_batch_size)
     _discrete = env_info["discrete"]
@@ -451,9 +451,7 @@ def make_train(config: PPOParams, logger: DummyLogger):
             jnp.zeros((1, batch_size, input_size)),
             jnp.zeros((1, batch_size)),
         )
-        init_hstate = _rnn_model.initialize_carry(
-            rng, (batch_size, input_size)
-        )
+        init_hstate = _rnn_model.initialize_carry(rng, (batch_size, input_size))
 
         network_params = network.init(_rng, init_hstate, init_x)
 
@@ -563,7 +561,7 @@ def make_train(config: PPOParams, logger: DummyLogger):
                     value=value,
                     reward=next_env_state.reward,
                     prev_reward=_env_state.reward,
-                    log_prob=log_prob, #.mean(axis=-1) if not _discrete else log_prob,
+                    log_prob=log_prob,  # .mean(axis=-1) if not _discrete else log_prob,
                     obs=_env_state.obs,
                     # next_obs= # next_env_state.obs,
                     hidden=prev_hstate,
@@ -643,7 +641,7 @@ def make_train(config: PPOParams, logger: DummyLogger):
                     value=value,
                     reward=next_env_state.reward,
                     prev_reward=env_state.reward,
-                    log_prob=log_prob, #.mean(axis=-1) if not _discrete else log_prob,
+                    log_prob=log_prob,  # .mean(axis=-1) if not _discrete else log_prob,
                     obs=env_state.obs,
                     # next_obs= # next_env_state.obs,
                     hidden=prev_hstate,
@@ -684,7 +682,14 @@ def make_train(config: PPOParams, logger: DummyLogger):
             # Compute the last value
             x = normalize(env_state.obs, _normalizer_state)
             if config.meta_rl:
-                x = jnp.concatenate([x, re_action, env_state.reward.reshape(config.env_params.batch_size, -1)], axis=-1)
+                x = jnp.concatenate(
+                    [
+                        x,
+                        re_action,
+                        env_state.reward.reshape(config.train_batch_size, -1),
+                    ],
+                    axis=-1,
+                )
             ac_in = (x[None], env_state.done[None, :])
             _, _, _last_val = network.apply(train_state.params, hstate, ac_in)
 
