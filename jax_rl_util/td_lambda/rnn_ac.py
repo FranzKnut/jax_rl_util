@@ -11,6 +11,7 @@ from flax import linen as nn
 from jax_rtrl.models.jax_util import sigmoid_between
 from jax_rtrl.models.mlp import MLP, FADense
 from jax_rtrl.models.seq_models import RNNEnsemble, RNNEnsembleConfig
+from sympy import total_degree
 
 
 # Actor
@@ -147,7 +148,7 @@ class AC(nn.Module):
             name="critic",
         )
 
-    def loss(self, x, action, critic_weight: float = 1.0):
+    def loss(self, x, action, critic_weight: float = 1.0, entropy_weight: float = 0.0):
         """Compute loss.
 
         FIXME: This is not actually a loss since it should be maximized.
@@ -155,7 +156,16 @@ class AC(nn.Module):
         critic_loss = self.value(x).mean()
         dist = self.actor(x)
         actor_loss = dist.log_prob(action).mean()
-        return actor_loss + critic_weight * critic_loss
+        # Add entropy to the actor loss
+        entropy = dist.entropy().mean()
+        total_loss = actor_loss + critic_weight * critic_loss - entropy_weight * entropy
+        info = {
+            "actor_loss": actor_loss,
+            "critic_loss": critic_loss,
+            "entropy": entropy,
+            "ac_total_loss": total_loss,
+        }
+        return total_loss, info
 
     def value(self, x):
         """Compute value from latent."""
