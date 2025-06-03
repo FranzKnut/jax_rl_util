@@ -41,7 +41,9 @@ def render_brax(env, states, render_steps=100, render_start=0, camera=None):
 
 
 @deprecated("Deprecated for Brax Envs. Will be removed in the future.")
-def make_obs_mask(base_obs_size: int, obs_mask: Iterable[int] | str | int | None = None):
+def make_obs_mask(
+    base_obs_size: int, obs_mask: Iterable[int] | str | int | None = None
+):
     """Get the observation mask from string description.
 
     obs_mask may take values ['odd', 'even', 'first_half', 'second_half'] or a list of indices.
@@ -90,18 +92,21 @@ def render_frames(
             for n in range(start_idx or 0, end_idx or states.time.shape[0])
         ]
 
-    from jax_rl_util.envs.wrappers import GymnaxBraxWrapper
-
     # Define rendering function for specific envs
     is_brax = _env.name.startswith("brax-") or _env.name in brax.envs._envs
     if _env.name == "dronegym":
         states = tree_stack(states)
         data = states.pipeline_state
         data["reward"] = states.reward
-        data["done"] = states.done[1:] # shift by 1 since 'done' always marks the obs after reset
+        data["done"] = states.done[
+            1:
+        ]  # shift by 1 since 'done' always marks the obs after reset
         return plot_drones(_env.params, data, obstacle=_env.obstacle)
     else:
-        states = jax.tree_map(lambda x: x[:, 0], states.pipeline_state)
+        states = [x.pipeline_state for x in states]
+        states = jax.tree.map(lambda x: x[0], states)
+
+    from jax_rl_util.envs.wrappers import GymnaxBraxWrapper
 
     if isinstance(_env.unwrapped, GymnaxBraxWrapper):
         if _env.name in [

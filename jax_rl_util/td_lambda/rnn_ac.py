@@ -11,7 +11,6 @@ from flax import linen as nn
 from jax_rtrl.models.jax_util import sigmoid_between
 from jax_rtrl.models.mlp import MLP, FADense
 from jax_rtrl.models.seq_models import RNNEnsemble, RNNEnsembleConfig
-from sympy import total_degree
 
 
 # Actor
@@ -148,25 +147,6 @@ class AC(nn.Module):
             name="critic",
         )
 
-    def loss(self, x, action, critic_weight: float = 1.0, entropy_weight: float = 0.0):
-        """Compute loss.
-
-        FIXME: This is not actually a loss since it should be maximized.
-        """
-        critic_loss = self.value(x).mean()
-        dist = self.actor(x)
-        actor_loss = dist.log_prob(action).mean()
-        # Add entropy to the actor loss
-        entropy = dist.entropy().mean()
-        total_loss = actor_loss + critic_weight * critic_loss - entropy_weight * entropy
-        info = {
-            "actor_loss": actor_loss,
-            "critic_loss": critic_loss,
-            "entropy": entropy,
-            "ac_total_loss": total_loss,
-        }
-        return total_loss, info
-
     def value(self, x):
         """Compute value from latent."""
         return self.critic(x)
@@ -186,6 +166,43 @@ class AC(nn.Module):
 
     def __call__(self, x, sample_act: bool = False, deterministic: bool = False):
         return self.policy(x, sample_act, deterministic), self.value(x)
+
+    @nn.nowrap
+    def loss(
+        self,
+        params,
+        x,
+        action=None,
+        critic_weight: float = 1.0,
+        entropy_weight: float = 0.0,
+        deterministic: bool = False,
+    ):
+        """Compute loss. Also returns sampled action if action is not provided.
+
+        FIXME: This is not actually a loss since it should be maximized.
+        """
+        sample_act = action is None
+        dist, value = self.apply(
+            params,
+            x,
+            sample_act=sample_act,
+            deterministic=deterministic,
+        )
+        if sample_act:
+            action, dist = dist
+        critic_loss = value.mean()
+        actor_loss = dist.log_prob(action).mean()
+        # Add entropy to the actor loss
+        entropy = dist.entropy().mean()
+        total_loss = actor_loss + critic_weight * critic_loss - entropy_weight * entropy
+        info = {
+            "actor_loss": actor_loss,
+            "critic_loss": critic_loss,
+            "entropy": entropy,
+            "ac_total_loss": total_loss,
+        }
+        aux = (value, action, info) if sample_act else (value, info)
+        return total_loss, aux
 
 
 class RNNActorCritic(nn.RNNCellBase):

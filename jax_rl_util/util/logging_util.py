@@ -179,7 +179,7 @@ def tree_stack(trees, axis=0):
     leaves_list = []
     treedef_list = []
     for tree in trees:
-        leaves, treedef = jax.tree_flatten(tree)
+        leaves, treedef = jax.tree.flatten(tree)
         leaves_list.append(leaves)
         treedef_list.append(treedef)
 
@@ -465,7 +465,7 @@ class WandbLogger(DummyLogger):
             Caption for the video, by default
         """
         self.run.log(
-            {name: wandb.Video(frames.transpose(0, 3, 1, 2), fps=fps, caption=caption)},
+            {name: wandb.Video(frames, fps=fps, caption=caption)},
             step=step,
         )
 
