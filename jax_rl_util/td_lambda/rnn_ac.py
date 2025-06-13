@@ -120,7 +120,7 @@ class AC(nn.Module):
     a_dim: int
     discrete: bool
     act_bounds: tuple[float, ...] | None = None
-    act_log_bounds: tuple[float, ...] = field(default_factory=lambda: [0.01, 5])
+    act_log_bounds: tuple[float, ...] = field(default_factory=lambda: [0.001, 2])
     act_dist_name: str = "normal"
     actor_layers: tuple[int, ...] = ()
     critic_layers: tuple[int, ...] = ()

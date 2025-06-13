@@ -28,7 +28,7 @@ class LoggableConfig(simple_parsing.Serializable):
     decode_into_subclasses = True
     logging: Literal["wandb", "aim", None] = "aim"
     repo: str | None = None
-    project_name: str | None = "DCM"
+    project_name: str | None = None
     debug: bool | int = False
     log_code: bool = False
 
@@ -130,9 +130,7 @@ class DummyLogger(dict, object):
             Are passed to the underlying logging method.
         """
         file_name = name.replace("/", "_")
-        file_name = (
-            f"{file_name}_{step}.gif" if step is not None else f"{file_name}.gif"
-        )
+        file_name = f"{file_name}_{step}.gif" if step is not None else f"{file_name}.gif"
         file_name = os.path.join(self.run_artifacts_dir, file_name)
         images = [Image.fromarray(frames[i]) for i in range(len(frames))]
         os.makedirs(self.run_artifacts_dir, exist_ok=True)
@@ -196,9 +194,7 @@ class AimLogger(DummyLogger):
         return "AimLogger"
 
     @override
-    def __init__(
-        self, hparams: LoggableConfig, run_name: str | None = None, run_hash=None
-    ):
+    def __init__(self, hparams: LoggableConfig, run_name: str | None = None, run_hash=None):
         """Create aim run."""
         global aim
         import aim
@@ -229,9 +225,7 @@ class AimLogger(DummyLogger):
     def log(self, metrics: dict, step=None, context=None):
         """Loop over scalars and track them with aim."""
         for k, v in metrics.items():
-            self.run.track(
-                v, name=k, epoch=None if step is None else int(step), context=context
-            )
+            self.run.track(v, name=k, epoch=None if step is None else int(step), context=context)
 
     @override
     def log_params(self, params_dict):
@@ -276,9 +270,7 @@ class AimLogger(DummyLogger):
             self.log(
                 {
                     f"Params/{k}": aim.Figure(
-                        px.line(
-                            x=x_vals, y=list(v.values()), title=k, labels=list(v.keys())
-                        )
+                        px.line(x=x_vals, y=list(v.values()), title=k, labels=list(v.keys()))
                     )
                     for k, v in all_param_norms.items()
                     if v
@@ -300,16 +292,12 @@ class AimLogger(DummyLogger):
         if isinstance(img, str):
             img = Image.open(img)
         elif isinstance(img, plt.Figure):
-            img.canvas.draw() # Needed on macOS
-            img = Image.fromarray(np.asarray(img.canvas.buffer_rgba() , dtype=np.uint8), mode="RGBa").convert(pil_mode)
+            img.canvas.draw()  # Needed on macOS
+            img = Image.fromarray(
+                np.asarray(img.canvas.buffer_rgba(), dtype=np.uint8), mode="RGBa"
+            ).convert(pil_mode)
         self.log(
-            {
-                name: aim.Image(
-                    img,
-                    caption=caption,
-                    format=format
-                )
-            },
+            {name: aim.Image(img, caption=caption, format=format)},
             step=step,
         )
 
@@ -319,11 +307,23 @@ class AimLogger(DummyLogger):
 
     @override
     def log_video(self, name, frames, step=None, fps=30, caption=""):
-        """Log a video to wandb."""
+        """Log a video to aim.
+
+        Parameters
+        ----------
+        name : str
+            Name of the logged object.
+        frames : array
+            dimension are (frames, height, width, channels)
+        step : int, optional
+            Step number, by default framework will use global step.
+        fps : int, optional
+            FPS for the video, by default 30
+        caption : str, optional
+            Caption for the video, by default
+        """
         file_name = name.replace("/", "_")
-        file_name = (
-            f"{file_name}_{step}.gif" if step is not None else f"{file_name}.gif"
-        )
+        file_name = f"{file_name}_{step}.gif" if step is not None else f"{file_name}.gif"
         file_name = os.path.join(self.run_artifacts_dir, file_name)
         images = [Image.fromarray(frames[i]) for i in range(len(frames))]
         os.makedirs(self.run_artifacts_dir, exist_ok=True)
@@ -464,6 +464,7 @@ class WandbLogger(DummyLogger):
         caption : str, optional
             Caption for the video, by default
         """
+        frames = frames.transpose(0, 3, 1, 2)  # Convert to (frames, channels, height, width)
         self.run.log(
             {name: wandb.Video(frames, fps=fps, caption=caption)},
             step=step,
@@ -548,9 +549,7 @@ def leaf_norms(tree):
 
 def tree_norm(tree, **kwargs):
     """Sum of the norm of all elements in the tree."""
-    return tree_reduce(
-        lambda x, y: x + jnp.linalg.norm(y, **kwargs), tree, initializer=0
-    )
+    return tree_reduce(lambda x, y: x + jnp.linalg.norm(y, **kwargs), tree, initializer=0)
 
 
 def calc_norms(norm_params: dict = {}, leaf_norm_params: dict = {}):
@@ -601,8 +600,9 @@ def count_combinations(config):
         return len(config)
     else:
         return 1
-    
-def extract_keys_with_values(d, parent_key=''):
+
+
+def extract_keys_with_values(d, parent_key=""):
     """Recursively extract keys with 'values' from sweep configuration."""
     result = {}
     for k, v in d.items():
@@ -627,13 +627,13 @@ def create_sweep_interactively(sweep_config, project=None, **kwargs):
 
     if name:
         sweep_config["name"] = name
-        
+
     print("---------------------------------------")
     print("### Sweep " + name)
     print("Est. runs:", est_runs)
     sweep_id = wandb.sweep(sweep_config, project=project, **kwargs)
     print("")
-    print(">   "+ sweep_id)
+    print(">   " + sweep_id)
     print("")
     print("**Description**")
     for k, v in extract_keys_with_values(sweep_config["parameters"]).items():
