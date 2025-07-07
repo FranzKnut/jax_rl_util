@@ -225,7 +225,7 @@ class AimLogger(DummyLogger):
     def log(self, metrics: dict, step=None, context=None):
         """Loop over scalars and track them with aim."""
         for k, v in metrics.items():
-            self.run.track(v, name=k, epoch=None if step is None else int(step), context=context)
+            self.run.track(np.array(v), name=k, epoch=None if step is None else int(step), context=context)
 
     @override
     def log_params(self, params_dict):
