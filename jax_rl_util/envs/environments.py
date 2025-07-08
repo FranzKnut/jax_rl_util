@@ -61,7 +61,6 @@ class EnvironmentConfig:
     env_kwargs: dict = field(default_factory=dict, hash=False)
     max_ep_length: int = 1000
     batch_size: int | None = None
-    render: bool = True
 
 
 def print_env_info(env_info):
