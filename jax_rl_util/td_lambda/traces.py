@@ -10,9 +10,7 @@ from jax_rtrl.models.mlp import FADense
 
 
 @partial(jax.jit, static_argnames=("trace_mode"))
-def trace_update(
-    grads, z, gamma_lambda, trace_mode: str = "accumulate", alpha=None, _I=1
-):
+def trace_update(grads, z, gamma_lambda, trace_mode: str = "accumulate", alpha=None, _I=1):
     """Update the eligibility trace. Also compute the gradients if d is given.
 
     See Sutton & Barto, 1998, p. 275
@@ -41,7 +39,10 @@ def trace_update(
 
         z ← γλz + α[1 - γλ e.T ∇f] ∇f
         """
-        return gamma_lambda * _z + (1 - alpha * gamma_lambda * (_z.T @ _g)) * _g
+        return (
+            gamma_lambda * _z
+            + (1 - alpha * gamma_lambda * (_z.reshape(-1).T @ _g.reshape(-1))) * _g
+        )
 
     return jax.tree.map(locals()[trace_mode], z, grads)
 
@@ -58,9 +59,7 @@ def compute_td_updates(
     # Multiply trace with TD-error.
     grads = jax.tree.map(lambda t: (d.T * t.T).T, z)
     if trace_mode == "dutch":
-        grads = jax.tree.map(
-            lambda _z, _g: _g + alpha * (dutch_diff.T * (_z - _g).T).T, z, grads
-        )
+        grads = jax.tree.map(lambda _z, _g: _g + alpha * (dutch_diff.T * (_z - _g).T).T, z, grads)
     return grads
 
 
@@ -77,9 +76,7 @@ class TraceModel(nn.Module):
 
     def setup(self):
         """Initialize a model for every component in the flattened example trace."""
-        self.models = [
-            FADense(np.prod(s), f_align=self.f_align) for s in self.flat_shapes
-        ]
+        self.models = [FADense(np.prod(s), f_align=self.f_align) for s in self.flat_shapes]
 
     def __call__(self, obs):
         """Flatten the given pytree and predict every component separately using Linear functions."""

@@ -225,7 +225,9 @@ class AimLogger(DummyLogger):
     def log(self, metrics: dict, step=None, context=None):
         """Loop over scalars and track them with aim."""
         for k, v in metrics.items():
-            self.run.track(np.array(v), name=k, epoch=None if step is None else int(step), context=context)
+            self.run.track(
+                np.array(v), name=k, epoch=None if step is None else int(step), context=context
+            )
 
     @override
     def log_params(self, params_dict):
@@ -464,9 +466,9 @@ class WandbLogger(DummyLogger):
         caption : str, optional
             Caption for the video, by default
         """
-        frames = frames.transpose(0, 3, 1, 2)  # Convert to (frames, channels, height, width)
+        # frames = frames.transpose(0, 3, 1, 2)  # Convert to (frames, channels, height, width)
         self.run.log(
-            {name: wandb.Video(frames, fps=fps, caption=caption)},
+            {name: wandb.Video(frames, fps=fps, caption=caption, format="gif")},
             step=step,
         )
 

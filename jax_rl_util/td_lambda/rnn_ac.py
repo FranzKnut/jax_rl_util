@@ -120,7 +120,7 @@ class AC(nn.Module):
     a_dim: int
     discrete: bool
     act_bounds: tuple[float, ...] | None = None
-    act_log_bounds: tuple[float, ...] = field(default_factory=lambda: [0.001, 2])
+    act_log_bounds: tuple[float, ...] = field(default_factory=lambda: [-3, 2])
     act_dist_name: str = "normal"
     actor_layers: tuple[int, ...] = ()
     critic_layers: tuple[int, ...] = ()
@@ -243,7 +243,7 @@ class RNNActorCritic(nn.RNNCellBase):
         #     methods=["actor", "critic"],
         #     axis_size=self.num_modules,
         # )
-        self.td = AC(
+        self.ac = AC(
             a_dim=self.a_dim,
             discrete=self.discrete,
             act_bounds=self.act_bounds,
@@ -283,7 +283,7 @@ class RNNActorCritic(nn.RNNCellBase):
             if len(x.shape) < len(hidden.shape):
                 x = jnp.expand_dims(x, -2)
             hidden = jnp.concatenate([hidden, x], axis=-1)
-        return self.td.value(hidden)
+        return self.ac.value(hidden)
 
     def obs_prediction(self, hidden, a, x=None):
         """Compute observation prediction from latent."""
@@ -319,7 +319,7 @@ class RNNActorCritic(nn.RNNCellBase):
         #         action = action[..., jnp.arange(batch_shape), selected_act]
         #     else:
         #         action = action[selected_act]
-        return self.td.policy(
+        return self.ac.policy(
             hidden, sample_act=sample_act, deterministic=deterministic
         )
 
