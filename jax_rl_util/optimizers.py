@@ -92,10 +92,8 @@ def make_optimizer(config=OptimizerConfig()) -> optax.GradientTransformation:
         learning_rate = optax.join_schedules(
             schedules=[
                 optax.warmup_cosine_decay_schedule(
-                    init_value=learning_rate
-                    * config.lr_kwargs.get("initial_multiplier", 0),
-                    peak_value=learning_rate
-                    * config.lr_kwargs.get("max_lr_base", 1) ** i,
+                    init_value=learning_rate * config.lr_kwargs.get("initial_multiplier", 0),
+                    peak_value=learning_rate * config.lr_kwargs.get("max_lr_base", 1) ** i,
                     end_value=learning_rate * config.lr_kwargs.get("end_multiplier", 0),
                     warmup_steps=config.lr_kwargs["warmup_steps"],
                     decay_steps=config.lr_kwargs["decay_steps"],
@@ -158,9 +156,7 @@ def make_optimizer(config=OptimizerConfig()) -> optax.GradientTransformation:
         print(f"WARNING: Decay type {config.lr_decay_type} unknown. Using no decay.")
 
     if weight_decay == "l2" and "adam" in config.opt_name:
-        print(
-            f"WARNING: Weight decay incorrect for {config.opt_name}, consider using adamw."
-        )
+        print(f"WARNING: Weight decay incorrect for {config.opt_name}, consider using adamw.")
 
     @optax.inject_hyperparams
     def _make_opt(learning_rate):
@@ -202,6 +198,7 @@ def make_optimizer(config=OptimizerConfig()) -> optax.GradientTransformation:
 
     return _make_opt(learning_rate)
 
+
 def add_decayed_weights_l1(
     weight_decay: float | jax.Array = 0.0,
     mask: Any | Callable[[base.Params], Any] | None = None,
@@ -231,9 +228,7 @@ def add_decayed_weights_l1(
     # If mask is not `None`, apply mask to the gradient transformation.
     # E.g. it is common to skip weight decay on bias units and batch stats.
     if mask is not None:
-        return wrappers.masked(
-            base.GradientTransformation(base.init_empty_state, update_fn), mask
-        )
+        return wrappers.masked(base.GradientTransformation(base.init_empty_state, update_fn), mask)
     return base.GradientTransformation(base.init_empty_state, update_fn)
 
 
@@ -281,21 +276,43 @@ def make_multi_transform(configs: dict, label_fn: callable = None):
     return optax.multi_transform(optimizers, label_fn)
 
 
-def get_current_lrs(opt_state, opt_config: OptimizerConfig | None = None):
+def get_current_lrs(
+    opt_state,
+    opt_config: OptimizerConfig | None | dict[str, OptimizerConfig] = None,
+    omit_static: bool = False,
+):
     """Get current learning rate from optimizer state."""
+    if omit_static and opt_config is None:
+        print(
+            "WARNING: omit_static is True, but no opt_config provided. Returning all learning rates."
+        )
+
     lrs = {}
-    _reduce_on_plateau = False if opt_config is None else opt_config.reduce_on_plateau
     if hasattr(opt_state, "inner_states"):
+        _opt_config = opt_config
         for k, s in opt_state.inner_states.items():
+            if isinstance(opt_config, dict):
+                _opt_config = opt_config.get(k, None)
+            # Determine if reduce_on_plateau is enabled for this subtree
+            if _opt_config is None:
+                _reduce_on_plateau = False
+            else:
+                _reduce_on_plateau = _opt_config.reduce_on_plateau
             reduce_on_plateau_lr = (
-                s.inner_state.inner_state.inner_opt_state[3].scale
-                if _reduce_on_plateau
-                else 1
+                s.inner_state.inner_state.inner_opt_state[3].scale if _reduce_on_plateau else 1
             )
-            lrs["LR/" + k] = (
-                s.inner_state.hyperparams["learning_rate"] * reduce_on_plateau_lr
-            )
+
+            # If omit_static is True, we skip the learning rate if no decay is applied
+            if (
+                not omit_static
+                or _opt_config is None
+                or _opt_config.reduce_on_plateau
+                or _opt_config.lr_decay_type
+            ):
+                # Get the learning rate for the subtree
+                lrs["LR/" + k] = s.inner_state.hyperparams["learning_rate"] * reduce_on_plateau_lr
     else:
+        _reduce_on_plateau = False if opt_config is None else opt_config.reduce_on_plateau
         reduce_on_plateau_lr = opt_state[3][3].scale if _reduce_on_plateau else 1
         lrs["LR/learning_rate"] = opt_state[1]["learning_rate"] * reduce_on_plateau_lr
     return lrs
@@ -308,17 +325,12 @@ def map_nested_fn(fn):
     """
 
     def map_fn(nested_dict):
-        return {
-            k: (map_fn(v) if hasattr(v, "keys") else fn(k, v))
-            for k, v in nested_dict.items()
-        }
+        return {k: (map_fn(v) if hasattr(v, "keys") else fn(k, v)) for k, v in nested_dict.items()}
 
     return map_fn
 
 
-def make_optimizer_for_model(
-    model_name: str, config=OptimizerConfig(), no_decay_lr_factor=1.0
-):
+def make_optimizer_for_model(model_name: str, config=OptimizerConfig(), no_decay_lr_factor=1.0):
     """Make optax optimizer for given model name and config."""
     if "s5" in model_name:
         no_decay_params = ["B", "Lambda_re", "Lambda_im", "log_step", "norm"]
@@ -329,13 +341,9 @@ def make_optimizer_for_model(
     else:
         return make_optimizer(config)
 
-    print(
-        "Making optimizer for", model_name, "model, no_decay_params:", no_decay_params
-    )
+    print("Making optimizer for", model_name, "model, no_decay_params:", no_decay_params)
     ssm_fn = map_nested_fn(
-        lambda k, _: "no_decay"
-        if k in no_decay_params
-        else ("none" if k in [] else "regular")
+        lambda k, _: "no_decay" if k in no_decay_params else ("none" if k in [] else "regular")
     )
     return make_multi_transform(
         {
