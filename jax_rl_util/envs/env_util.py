@@ -16,18 +16,32 @@ from jax_rl_util.util.logging_util import tree_stack
 def compute_agg_reward(states: brax.envs.State, agg_fn=jnp.mean):
     """Compute the average reward per episode from a batch of trajectories."""
     # For episodes that are done early, get the first occurence of done
-    ep_until = jnp.where(
-        states.done.any(axis=0), states.done.argmax(axis=0), states.done.shape[0]
-    )
+    ep_until = jnp.where(states.done.any(axis=0), states.done.argmax(axis=0), states.done.shape[0])
     # Compute cumsum and get value corresponding to end of episode per batch.
     # mean_reward = jnp.sum(traj_batch.reward) / jnp.max(jnp.array([jnp.sum(traj_batch.done), 1]))
-    return agg_fn(
-        states.reward.cumsum(axis=0)[ep_until, jnp.arange(ep_until.shape[-1])]
-    )
+    return agg_fn(states.reward.cumsum(axis=0)[ep_until, jnp.arange(ep_until.shape[-1])])
 
 
 def render_brax(env, states, render_steps=100, render_start=0, camera=None):
-    """Render a sequence of states from a Brax environment."""
+    """Render a sequence of states from a Brax environment.
+    Parameters
+    ----------
+    env : brax.envs.Env
+        The Brax environment to render.
+    states : brax.envs.State
+        The states to render, typically from a batch of trajectories.
+    render_steps : int, optional
+        Number of steps to render, by default 100.
+    render_start : int, optional
+        Start rendering from this step, by default 0.
+    camera : str or int, optional
+        Camera to use for rendering. If None, uses 'track' camera if available, otherwise
+        uses the first camera. If an integer, it specifies the camera index.
+    Returns
+    -------
+    np.ndarray
+        Rendered image as a numpy array of shape (height, width, 3).
+    """
     from brax.io import image
 
     steps = len(states.pipeline_state.q)
@@ -41,9 +55,7 @@ def render_brax(env, states, render_steps=100, render_start=0, camera=None):
 
 
 @deprecated("Deprecated for Brax Envs. Will be removed in the future.")
-def make_obs_mask(
-    base_obs_size: int, obs_mask: Iterable[int] | str | int | None = None
-):
+def make_obs_mask(base_obs_size: int, obs_mask: Iterable[int] | str | int | None = None):
     """Get the observation mask from string description.
 
     obs_mask may take values ['odd', 'even', 'first_half', 'second_half'] or a list of indices.
@@ -65,9 +77,7 @@ def make_obs_mask(
     return jnp.array(obs_mask, dtype=jnp.int32)
 
 
-def render_frames(
-    _env: gym.Env, states: list, start_idx: int = None, end_idx: int = None
-):
+def render_frames(_env: gym.Env, states: list, start_idx: int = None, end_idx: int = None):
     """Render the given states of the environment.
 
     Parameters
@@ -98,9 +108,7 @@ def render_frames(
         states = tree_stack(states)
         data = states.pipeline_state
         data["reward"] = states.reward
-        data["done"] = states.done[
-            1:
-        ]  # shift by 1 since 'done' always marks the obs after reset
+        data["done"] = states.done[1:]  # shift by 1 since 'done' always marks the obs after reset
         return plot_drones(_env.params, data, obstacle=_env.obstacle)
     else:
         states = [x.pipeline_state for x in states]
@@ -136,6 +144,7 @@ def render_frames(
         from brax.io import image
 
         def render_gym(_env, _state):
+            camera = ("track" if len(_env.sys.cam_bodyid) else -1)
             camera = "track" if "inverted_pendulum" not in _env.name else None
             return image.render_array(
                 _env.sys, _state, 256, 256, camera=camera

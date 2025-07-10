@@ -127,7 +127,7 @@ def make_optimizer(config=OptimizerConfig()) -> optax.GradientTransformation:
             A function that maps step counts to values.
         """
         learning_rate = optax.linear_schedule(
-            init_value=learning_rate * config.lr_kwargs["initial_multiplier"],
+            init_value=learning_rate * config.lr_kwargs.get("initial_multiplier", 0),
             end_value=learning_rate,
             transition_steps=config.lr_kwargs["warmup_steps"],
         )
@@ -193,7 +193,11 @@ def make_optimizer(config=OptimizerConfig()) -> optax.GradientTransformation:
             else optax.identity(),
         )
         if config.multi_step is not None and config.multi_step > 1:
-            optimizer = optax.MultiSteps(optimizer, every_k_schedule=config.multi_step)
+            optimizer = optax.MultiSteps(
+                optimizer,
+                every_k_schedule=config.multi_step,
+                use_grad_mean=False,
+            )
         return optimizer
 
     return _make_opt(learning_rate)

@@ -44,13 +44,17 @@ class Actor(nn.Module):
         if self.discrete:
             logits = model_out.mean(axis=-2)
             dist = distrax.Categorical(logits=logits)
+        elif self.act_dist_name == "deterministic":
+            # Deterministic action, no distribution
+            model_out = model_out.mean(axis=-2)
+            if self.act_bounds is not None:
+                model_out = sigmoid_between(model_out, *self.act_bounds)
+            dist = distrax.Deterministic(model_out)
         else:
             if self.act_dist_name == "beta":
                 if self.act_bounds:
                     # If action limits are defined we sample from [0, 1] and transform the event.
-                    act_range = jnp.array(self.act_bounds[1]) - jnp.array(
-                        self.act_bounds[0]
-                    )
+                    act_range = jnp.array(self.act_bounds[1]) - jnp.array(self.act_bounds[0])
                     act_min = jnp.array(self.act_bounds[0])
                     scaling_transform = distrax.ScalarAffine(act_min, act_range)
                 alpha = jax.nn.softplus(model_out[..., : model_out.shape[-1] // 2])
@@ -68,9 +72,7 @@ class Actor(nn.Module):
                     loc, log_std = jnp.split(model_out, 2, axis=-1)
                 else:
                     loc = model_out
-                    log_std = self.param(
-                        "log_std", nn.initializers.zeros_init(), self.a_dim
-                    )
+                    log_std = self.param("log_std", nn.initializers.zeros_init(), self.a_dim)
                 if len(loc.shape) > 1:
                     # Take mean of ... ensemble?
                     loc = loc.mean(axis=-2)
@@ -152,13 +154,37 @@ class AC(nn.Module):
         return self.critic(x)
 
     def policy(self, x, sample_act: bool = False, deterministic: bool = False):
-        """Compute action distribution form latent."""
+        """Compute action distribution or sample actions from the policy network.
+        This method processes latent representations through the actor network to produce
+        action distributions. Optionally samples actions from the distribution with
+        support for deterministic or stochastic sampling.
+        Args:
+            x: Latent representation or input features for the policy network.
+            sample_act (bool, optional): If True, returns sampled actions along with
+                the distribution. If False, returns only the distribution. Defaults to False.
+            deterministic (bool, optional): If True and sample_act is True, returns
+                the mode of the distribution (deterministic action). If False, samples
+                stochastically. Only applies when sample_act is True. Defaults to False.
+        Returns:
+            If sample_act is False:
+                Distribution: The action distribution from the actor network.
+            If sample_act is True:
+                tuple: A tuple containing:
+                    - action: Sampled action (clipped to action bounds if specified)
+                    - dist: The action distribution from the actor network
+        Notes:
+            - When sample_act is True, actions are automatically clipped to action bounds
+              if self.act_bounds is defined.
+            - For deterministic action distributions, sampling behavior may differ.
+            - Uses internal RNG state for stochastic sampling via self.make_rng("sampling").
+        """
         dist = self.actor(x)
         if sample_act:
-            if deterministic:
-                action = dist.mode()
-            else:
-                action = dist.sample(seed=self.make_rng("sampling"))
+            if not self.act_dist_name == "deterministic":
+                if deterministic:
+                    action = dist.mode()
+                else:
+                    action = dist.sample(seed=self.make_rng("sampling"))
             if self.act_bounds is not None:
                 action = jnp.clip(action, *self.act_bounds)
             return action, dist
@@ -230,9 +256,7 @@ class RNNActorCritic(nn.RNNCellBase):
                 self.rnn = RNNEnsemble(self.rnn_config, name="rnn")
             else:
                 if self.rnn_config.num_modules != 2:
-                    raise ValueError(
-                        "RNNActorCritic num_modules has to be 2 when shared is False."
-                    )
+                    raise ValueError("RNNActorCritic num_modules has to be 2 when shared is False.")
                 self.rnn = RNNEnsemble(self.rnn_config, name="rnn")
 
         # Make an ensemble of actor and critic using flax.linen.vmap
@@ -319,9 +343,7 @@ class RNNActorCritic(nn.RNNCellBase):
         #         action = action[..., jnp.arange(batch_shape), selected_act]
         #     else:
         #         action = action[selected_act]
-        return self.ac.policy(
-            hidden, sample_act=sample_act, deterministic=deterministic
-        )
+        return self.ac.policy(hidden, sample_act=sample_act, deterministic=deterministic)
 
     @nn.compact
     def __call__(self, carry, x, deterministic=False):

@@ -466,7 +466,7 @@ class WandbLogger(DummyLogger):
         caption : str, optional
             Caption for the video, by default
         """
-        # frames = frames.transpose(0, 3, 1, 2)  # Convert to (frames, channels, height, width)
+        frames = frames.transpose(0, 3, 1, 2)  # Convert to (frames, channels, height, width)
         self.run.log(
             {name: wandb.Video(frames, fps=fps, caption=caption, format="gif")},
             step=step,
