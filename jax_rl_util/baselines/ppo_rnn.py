@@ -873,6 +873,7 @@ def make_train(config: PPOParams, logger: DummyLogger):
                     loggables = {
                         **jax.tree.map(jnp.mean, loggables),
                         "eval/rewards": eval_reward,
+                        "eval/avg_num_steps": jnp.argmax(_traj.done, axis=0).mean(),
                         "runner_step": timestep,
                     }
                     if config.log_norms:

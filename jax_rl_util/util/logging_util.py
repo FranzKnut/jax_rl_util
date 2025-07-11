@@ -280,7 +280,7 @@ class AimLogger(DummyLogger):
             )
         if ret_code == 0:
             self.run.report_successful_finish()
-        self.run.finalize()
+        self.run.close()
 
     @override
     def log_model(self, name, path):

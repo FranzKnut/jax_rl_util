@@ -155,9 +155,7 @@ class AC(nn.Module):
 
     def policy(self, x, sample_act: bool = False, deterministic: bool = False):
         """Compute action distribution or sample actions from the policy network.
-        This method processes latent representations through the actor network to produce
-        action distributions. Optionally samples actions from the distribution with
-        support for deterministic or stochastic sampling.
+
         Args:
             x: Latent representation or input features for the policy network.
             sample_act (bool, optional): If True, returns sampled actions along with
@@ -165,6 +163,7 @@ class AC(nn.Module):
             deterministic (bool, optional): If True and sample_act is True, returns
                 the mode of the distribution (deterministic action). If False, samples
                 stochastically. Only applies when sample_act is True. Defaults to False.
+
         Returns:
             If sample_act is False:
                 Distribution: The action distribution from the actor network.
@@ -172,19 +171,18 @@ class AC(nn.Module):
                 tuple: A tuple containing:
                     - action: Sampled action (clipped to action bounds if specified)
                     - dist: The action distribution from the actor network
+
         Notes:
-            - When sample_act is True, actions are automatically clipped to action bounds
-              if self.act_bounds is defined.
-            - For deterministic action distributions, sampling behavior may differ.
+            - When sample_act is True and self.act_bounds is defined,
+                actions are automatically clipped to action bounds.
             - Uses internal RNG state for stochastic sampling via self.make_rng("sampling").
         """
         dist = self.actor(x)
         if sample_act:
-            if not self.act_dist_name == "deterministic":
-                if deterministic:
-                    action = dist.mode()
-                else:
-                    action = dist.sample(seed=self.make_rng("sampling"))
+            if deterministic:
+                action = dist.mode()
+            else:
+                action = dist.sample(seed=self.make_rng("sampling"))
             if self.act_bounds is not None:
                 action = jnp.clip(action, *self.act_bounds)
             return action, dist
@@ -295,7 +293,7 @@ class RNNActorCritic(nn.RNNCellBase):
         if carry is None:
             # Initialize seed and the carry
             carry = self.initialize_carry(self.make_rng(), obs.shape)
-        carry, hidden = self.rnn(carry, obs, **kwargs)
+        carry, hidden = self.rnn(carry, obs, training, **kwargs)
         return hidden, carry
 
     def value(self, hidden, x=None):
@@ -346,10 +344,10 @@ class RNNActorCritic(nn.RNNCellBase):
         return self.ac.policy(hidden, sample_act=sample_act, deterministic=deterministic)
 
     @nn.compact
-    def __call__(self, carry, x, deterministic=False):
+    def __call__(self, carry, x, training=True):
         """Step RNN and compute actor and critic."""
         # RNN
-        hidden, new_carry = self.rnn_step(carry, x)
+        hidden, new_carry = self.rnn_step(carry, x, training=training)
 
         # Critic
         v_hat = self.value(hidden, x)
@@ -357,7 +355,7 @@ class RNNActorCritic(nn.RNNCellBase):
         # selected_act = v_hat.argmax()
 
         # Actor
-        action, _ = self.policy(hidden, x, True, deterministic=deterministic)
+        action, _ = self.policy(hidden, x, True, deterministic=not training)
 
         if self.pred_obs:
             prediction = self.obs_prediction(hidden, action, x)
