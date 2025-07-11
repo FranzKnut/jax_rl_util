@@ -306,12 +306,15 @@ def get_current_lrs(
                 s.inner_state.inner_state.inner_opt_state[3].scale if _reduce_on_plateau else 1
             )
 
-            # If omit_static is True, we skip the learning rate if no decay is applied
+            # If omit_static is True and _opt_config is not None, 
+            # we skip the learning rate if it is zero or if no decay is applied
             if (
                 not omit_static
                 or _opt_config is None
-                or _opt_config.reduce_on_plateau
-                or _opt_config.lr_decay_type
+                or (
+                    _opt_config.learning_rate != 0
+                    and (_opt_config.reduce_on_plateau or _opt_config.lr_decay_type)
+                )
             ):
                 # Get the learning rate for the subtree
                 lrs["LR/" + k] = s.inner_state.hyperparams["learning_rate"] * reduce_on_plateau_lr
