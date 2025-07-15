@@ -23,9 +23,7 @@ def is_discrete(env: gym.Env):
     if not hasattr(env, "action_space"):
         # Should be a brax env, they are all continuous.
         return False
-    return isinstance(
-        env.action_space, (gym.spaces.Discrete, gymnax.environments.spaces.Discrete)
-    )
+    return isinstance(env.action_space, (gym.spaces.Discrete, gymnax.environments.spaces.Discrete))
 
 
 class Wrapper:
@@ -54,6 +52,15 @@ class Wrapper:
     def observation_size(self) -> int:
         """Only works for default_params envs."""
         return np.prod(self.observation_space.shape)
+
+    def __str__(self):
+        """String representation."""
+        params = [
+            f"{k}={getattr(self, k)}"
+            for k in dir(self)
+            if not k.startswith("__") and not k == "env" and not callable(getattr(self, k))
+        ]
+        return f"{self.__class__.__name__}[{', '.join(params)}]({self.env})"
 
 
 class GymBraxWrapper(Wrapper):
@@ -119,9 +126,7 @@ class GymnaxBraxWrapper(Wrapper):
         reward = jnp.array(reward, dtype=state.reward.dtype)
         if len(reward.shape) == 0:
             reward = jnp.expand_dims(reward, axis=0)
-        return state.replace(
-            pipeline_state=gymnax_state, obs=obs, reward=reward, done=done
-        )
+        return state.replace(pipeline_state=gymnax_state, obs=obs, reward=reward, done=done)
 
     @property
     def action_space(self, params=None) -> int:
@@ -296,9 +301,7 @@ class GymJaxWrapper(Wrapper):
                 jnp.array(done or truncated),
             )
 
-        obs, reward, done = jax.experimental.io_callback(
-            _step, result_shape_dtypes, action
-        )
+        obs, reward, done = jax.experimental.io_callback(_step, result_shape_dtypes, action)
         return obs, state, reward, done
 
     @property
@@ -522,9 +525,7 @@ class LogWrapper:
     @partial(jax.jit, static_argnums=(0,))
     def step(self, key, state: State, action):
         """Take a step and log the returns and lengths."""
-        obs, env_state, reward, done, info = self._env.step(
-            key, state.env_state, action
-        )
+        obs, env_state, reward, done, info = self._env.step(key, state.env_state, action)
         new_episode_return = state.episode_returns + reward
         new_episode_length = state.episode_lengths + 1
         state = LogEnvState(
