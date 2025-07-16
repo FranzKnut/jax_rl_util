@@ -73,20 +73,20 @@ class Actor(nn.Module):
                 else:
                     loc = model_out
                     log_std = self.param("log_std", nn.initializers.zeros_init(), self.a_dim)
-                if len(loc.shape) > 1:
-                    # Take mean of ... ensemble?
-                    loc = loc.mean(axis=-2)
-                    if self.act_dist_name == "normal_scale":
-                        log_std = log_std.mean(axis=-2)
+                # if len(loc.shape) > 1:
+                #     # Take mean of ... ensemble?
+                #     loc = loc.mean(axis=-2)
+                #     if self.act_dist_name == "normal_scale":
+                #         log_std = log_std.mean(axis=-2)
 
-                # scale = sigmoid_between(scale, *self.act_log_bounds)
+                log_std = sigmoid_between(log_std, *self.act_log_bounds)
                 # scale = jnp.exp(scale) + self.act_log_bounds[0]
                 # scale = jax.nn.softplus(scale) + self.act_log_bounds[0]
                 if self.act_bounds is not None:
                     loc = sigmoid_between(loc, *self.act_bounds)
                 dist = distrax.LogStddevNormal(
                     loc,
-                    log_std + self.act_log_bounds[0],
+                    log_std,
                     max_scale=self.act_log_bounds[1],
                 )
 
@@ -96,8 +96,8 @@ class Actor(nn.Module):
 class Critic(nn.Module):
     """Critic network."""
 
-    layers: list[int]
-    f_align: bool
+    layers: list[int] = field(default_factory=list)
+    f_align: bool = False
 
     @nn.compact
     def __call__(self, x):
@@ -106,11 +106,11 @@ class Critic(nn.Module):
             x = MLP(
                 self.layers,
                 f_align=self.f_align,
-                name="critic",
+                name="mlp",
             )(x)
         return FADense(
             1,
-            kernel_init=nn.initializers.lecun_normal(),
+            kernel_init=nn.initializers.orthogonal(scale=0.01),
             bias_init=nn.initializers.zeros_init(),
             name="critic_head",
         )(x)

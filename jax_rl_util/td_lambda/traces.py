@@ -57,7 +57,7 @@ def compute_td_updates(
 ):
     """Compute gradients given the eligibility trace."""
     # Multiply trace with TD-error.
-    grads = jax.tree.map(lambda t: (d.T * t.T).T, z)
+    grads = jax.tree.map(lambda t: (d * t.T).T, z)
     if trace_mode == "dutch":
         grads = jax.tree.map(lambda _z, _g: _g + alpha * (dutch_diff.T * (_z - _g).T).T, z, grads)
     return grads
