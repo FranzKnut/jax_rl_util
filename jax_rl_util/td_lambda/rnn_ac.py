@@ -87,7 +87,7 @@ class Actor(nn.Module):
                 dist = distrax.LogStddevNormal(
                     loc,
                     log_std,
-                    max_scale=self.act_log_bounds[1],
+                    # max_scale=self.act_log_bounds[1],
                 )
 
         return dist
