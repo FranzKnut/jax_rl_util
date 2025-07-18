@@ -42,11 +42,11 @@ class Actor(nn.Module):
         )(hidden)
 
         if self.discrete:
-            logits = model_out.mean(axis=-2)
-            dist = distrax.Categorical(logits=logits)
+            # logits = model_out.mean(axis=-2)
+            dist = distrax.Categorical(logits=model_out)
         elif self.act_dist_name == "deterministic":
             # Deterministic action, no distribution
-            model_out = model_out.mean(axis=-2)
+            # model_out = model_out.mean(axis=-2)
             if self.act_bounds is not None:
                 model_out = sigmoid_between(model_out, *self.act_bounds)
             dist = distrax.Deterministic(model_out)
@@ -332,15 +332,6 @@ class RNNActorCritic(nn.RNNCellBase):
             if len(x.shape) < len(hidden.shape):
                 x = jnp.expand_dims(x, -2)
             hidden = jnp.concatenate([hidden, x], axis=-1)
-        # if self.num_modules > 1:
-        #     # Select action corresponding to the module predicting the highest value
-        #     batch_shape = () if action.ndim == 1 else action.shape[-2]
-        #     if selected_act is None:
-        #         selected_act = jrandom.randint(self.make_rng("sampling"), batch_shape, 0, self.num_modules)
-        #     if action.ndim > 1:
-        #         action = action[..., jnp.arange(batch_shape), selected_act]
-        #     else:
-        #         action = action[selected_act]
         return self.ac.policy(hidden, sample_act=sample_act, deterministic=deterministic)
 
     @nn.compact
