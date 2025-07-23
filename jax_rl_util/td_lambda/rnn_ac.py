@@ -19,7 +19,7 @@ class Actor(nn.Module):
     f_align: bool
     discrete: bool
     a_dim: int
-    act_log_bounds: tuple[float, ...]
+    act_log_bounds: tuple[float, ...] | None = None
     act_bounds: tuple[float, ...] | None = None
     act_dist_name: str = "normal"
 
@@ -72,14 +72,15 @@ class Actor(nn.Module):
                     loc, log_std = jnp.split(model_out, 2, axis=-1)
                 else:
                     loc = model_out
-                    log_std = self.param("log_std", nn.initializers.zeros_init(), self.a_dim)
+                    log_std = self.param("log_std", nn.initializers.ones_init(), self.a_dim)
                 # if len(loc.shape) > 1:
                 #     # Take mean of ... ensemble?
                 #     loc = loc.mean(axis=-2)
                 #     if self.act_dist_name == "normal_scale":
                 #         log_std = log_std.mean(axis=-2)
 
-                log_std = sigmoid_between(log_std, *self.act_log_bounds)
+                if self.act_log_bounds is not None:
+                    log_std = sigmoid_between(log_std, *self.act_log_bounds)
                 # scale = jnp.exp(scale) + self.act_log_bounds[0]
                 # scale = jax.nn.softplus(scale) + self.act_log_bounds[0]
                 if self.act_bounds is not None:
@@ -110,7 +111,7 @@ class Critic(nn.Module):
             )(x)
         return FADense(
             1,
-            kernel_init=nn.initializers.orthogonal(scale=0.01),
+            # kernel_init=nn.initializers.zeros_init(),
             bias_init=nn.initializers.zeros_init(),
             name="critic_head",
         )(x)

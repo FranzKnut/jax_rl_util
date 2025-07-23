@@ -163,3 +163,5 @@ cython_debug/
 
 .aim/
 artifacts/
+tmp/
+logs/
