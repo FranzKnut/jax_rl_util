@@ -19,8 +19,8 @@ class Actor(nn.Module):
     f_align: bool
     discrete: bool
     a_dim: int
-    act_log_bounds: tuple[float, ...] | None = None
-    act_bounds: tuple[float, ...] | None = None
+    act_log_bounds: float | tuple[float, float] | None = -5
+    act_bounds: tuple[float, float] | None = None
     act_dist_name: str = "normal"
 
     @nn.compact
@@ -79,10 +79,10 @@ class Actor(nn.Module):
                 #     if self.act_dist_name == "normal_scale":
                 #         log_std = log_std.mean(axis=-2)
 
-                if self.act_log_bounds is not None:
+                if isinstance(self.act_log_bounds, tuple):
                     log_std = sigmoid_between(log_std, *self.act_log_bounds)
-                # scale = jnp.exp(scale) + self.act_log_bounds[0]
-                # scale = jax.nn.softplus(scale) + self.act_log_bounds[0]
+                elif isinstance(self.act_log_bounds, float):
+                    log_std = jax.nn.softplus(log_std) + self.act_log_bounds
                 if self.act_bounds is not None:
                     loc = sigmoid_between(loc, *self.act_bounds)
                 dist = distrax.LogStddevNormal(
