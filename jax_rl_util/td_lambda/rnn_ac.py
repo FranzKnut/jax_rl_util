@@ -9,7 +9,7 @@ import jax.numpy as jnp
 from chex import PRNGKey
 from flax import linen as nn
 from jax_rtrl.models.jax_util import sigmoid_between
-from jax_rtrl.models.mlp import MLP, FADense
+from jax_rtrl.models.feedforward import MLP, FADense
 from jax_rtrl.models.seq_models import RNNEnsemble, RNNEnsembleConfig
 
 
@@ -19,9 +19,10 @@ class Actor(nn.Module):
     f_align: bool
     discrete: bool
     a_dim: int
-    act_log_bounds: float | tuple[float, float] | None = -5
+    act_log_bounds: float | tuple[float, float] | None = -1
     act_bounds: tuple[float, float] | None = None
     act_dist_name: str = "normal"
+    norm: str | None = None  # Normalization type, e.g., "layer", "batch"
 
     @nn.compact
     def __call__(self, hidden):
@@ -32,11 +33,10 @@ class Actor(nn.Module):
                 self.layers,
                 f_align=self.f_align,
                 name="mean",
+                norm=self.norm,
             )(hidden)
         model_out = FADense(
-            self.a_dim * 2
-            if self.act_dist_name in ["beta", "brax", "normal_scale"]
-            else self.a_dim,
+            self.a_dim * 2 if self.act_dist_name in ["beta", "brax", "normal_scale"] else self.a_dim,
             kernel_init=nn.initializers.lecun_normal(),
             bias_init=nn.initializers.zeros_init(),
         )(hidden)
@@ -99,6 +99,7 @@ class Critic(nn.Module):
 
     layers: list[int] = field(default_factory=list)
     f_align: bool = False
+    norm: str | None = None  # Normalization type, e.g., "layer", "batch"
 
     @nn.compact
     def __call__(self, x):
@@ -108,6 +109,7 @@ class Critic(nn.Module):
                 self.layers,
                 f_align=self.f_align,
                 name="mlp",
+                norm=self.norm,
             )(x)
         return FADense(
             1,
@@ -129,6 +131,7 @@ class AC(nn.Module):
     critic_layers: tuple[int, ...] = ()
     f_align: bool = False
     action_noise: float = 0.0  # TODO: Implement action noise for exploration
+    norm: str | None = None  # Normalization type, e.g., "layer", "batch"
 
     def setup(self) -> None:
         """Initialize components."""
@@ -141,12 +144,14 @@ class AC(nn.Module):
             act_bounds=self.act_bounds,
             act_log_bounds=self.act_log_bounds,
             act_dist_name=self.act_dist_name,
+            norm=self.norm,
             name="actor",
         )
         # Critic
         self.critic = Critic(
             self.critic_layers,
             self.f_align,
+            norm=self.norm,
             name="critic",
         )
 

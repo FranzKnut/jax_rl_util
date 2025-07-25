@@ -6,7 +6,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from flax import linen as nn
-from jax_rtrl.models.mlp import FADense
+from jax_rtrl.models.feedforward import FADense
 
 
 @partial(jax.jit, static_argnames=("trace_mode"))
