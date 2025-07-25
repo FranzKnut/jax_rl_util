@@ -8,7 +8,7 @@ import jax
 import jax.numpy as jnp
 from chex import PRNGKey
 from flax import linen as nn
-from jax_rtrl.models.jax_util import sigmoid_between
+from jax_rtrl.models.jax_util import get_normalization_fn, sigmoid_between
 from jax_rtrl.models.feedforward import MLP, FADense
 from jax_rtrl.models.seq_models import RNNEnsemble, RNNEnsembleConfig
 
@@ -25,7 +25,7 @@ class Actor(nn.Module):
     norm: str | None = None  # Normalization type, e.g., "layer", "batch"
 
     @nn.compact
-    def __call__(self, hidden):
+    def __call__(self, hidden, training=True):
         """Compute action distribution form latent."""
         # actor_out_dim = self.a_dim if self.discrete else 2 * self.a_dim
         if self.layers:
@@ -35,6 +35,7 @@ class Actor(nn.Module):
                 name="mean",
                 norm=self.norm,
             )(hidden)
+        hidden = get_normalization_fn(self.norm, training=training)(hidden)
         model_out = FADense(
             self.a_dim * 2 if self.act_dist_name in ["beta", "brax", "normal_scale"] else self.a_dim,
             kernel_init=nn.initializers.lecun_normal(),
@@ -102,7 +103,7 @@ class Critic(nn.Module):
     norm: str | None = None  # Normalization type, e.g., "layer", "batch"
 
     @nn.compact
-    def __call__(self, x):
+    def __call__(self, x, training=True):
         """Compute value from latent."""
         if self.layers:
             x = MLP(
@@ -111,6 +112,8 @@ class Critic(nn.Module):
                 name="mlp",
                 norm=self.norm,
             )(x)
+        x = get_normalization_fn(self.norm, training=training)(x)
+        
         return FADense(
             1,
             # kernel_init=nn.initializers.zeros_init(),
@@ -156,11 +159,11 @@ class AC(nn.Module):
             name="critic",
         )
 
-    def value(self, x):
+    def value(self, x, training: bool = True):
         """Compute value from latent."""
-        return self.critic(x)
+        return self.critic(x, training=training)
 
-    def policy(self, x, sample_act: bool = False, deterministic: bool = False):
+    def policy(self, x, sample_act: bool = False, training: bool = True):
         """Compute action distribution or sample actions from the policy network.
 
         Args:
@@ -184,9 +187,9 @@ class AC(nn.Module):
                 actions are automatically clipped to action bounds.
             - Uses internal RNG state for stochastic sampling via self.make_rng("sampling").
         """
-        dist = self.actor(x)
+        dist = self.actor(x, training=training)
         if sample_act:
-            if deterministic:
+            if not training:
                 action = dist.mode()
             else:
                 action = dist.sample(seed=self.make_rng("sampling"))
@@ -195,8 +198,8 @@ class AC(nn.Module):
             return action, dist
         return dist
 
-    def __call__(self, x, sample_act: bool = False, deterministic: bool = False):
-        return self.policy(x, sample_act, deterministic), self.value(x)
+    def __call__(self, x, sample_act: bool = False, training: bool = True):
+        return self.policy(x, sample_act, training), self.value(x)
 
     @nn.nowrap
     def loss(
@@ -206,7 +209,7 @@ class AC(nn.Module):
         action=None,
         critic_weight: float = 1.0,
         entropy_weight: float = 0.0,
-        deterministic: bool = False,
+        training: bool = True,
     ):
         """Compute loss. Also returns sampled action if action is not provided.
 
@@ -217,7 +220,7 @@ class AC(nn.Module):
             params,
             x,
             sample_act=sample_act,
-            deterministic=deterministic,
+            training=training,
         )
         if sample_act:
             action, dist = dist
@@ -303,7 +306,7 @@ class RNNActorCritic(nn.RNNCellBase):
         carry, hidden = self.rnn(carry, obs, training, **kwargs)
         return hidden, carry
 
-    def value(self, hidden, x=None):
+    def value(self, hidden, x=None, training=True):
         """Compute value from latent."""
         if not self.shared:
             # hidden = jnp.concatenate([jax.lax.stop_gradient(hidden[0]), hidden[1]], axis=-1)
@@ -312,7 +315,7 @@ class RNNActorCritic(nn.RNNCellBase):
             if len(x.shape) < len(hidden.shape):
                 x = jnp.expand_dims(x, -2)
             hidden = jnp.concatenate([hidden, x], axis=-1)
-        return self.ac.value(hidden)
+        return self.ac.value(hidden, training=training)
 
     def obs_prediction(self, hidden, a, x=None):
         """Compute observation prediction from latent."""
@@ -328,7 +331,7 @@ class RNNActorCritic(nn.RNNCellBase):
         hidden,
         x=None,
         sample_act: bool = False,
-        deterministic: bool = False,
+        training: bool = True,
         selected_act=None,
     ):
         """Compute action distribution form latent."""
@@ -339,7 +342,7 @@ class RNNActorCritic(nn.RNNCellBase):
             if len(x.shape) < len(hidden.shape):
                 x = jnp.expand_dims(x, -2)
             hidden = jnp.concatenate([hidden, x], axis=-1)
-        return self.ac.policy(hidden, sample_act=sample_act, deterministic=deterministic)
+        return self.ac.policy(hidden, sample_act=sample_act, training=training)
 
     @nn.compact
     def __call__(self, carry, x, training=True):
@@ -348,12 +351,12 @@ class RNNActorCritic(nn.RNNCellBase):
         hidden, new_carry = self.rnn_step(carry, x, training=training)
 
         # Critic
-        v_hat = self.value(hidden, x)
+        v_hat = self.value(hidden, x, training=training)
 
         # selected_act = v_hat.argmax()
 
         # Actor
-        action, _ = self.policy(hidden, x, True, deterministic=not training)
+        action, _ = self.policy(hidden, x, True, training=training)
 
         if self.pred_obs:
             prediction = self.obs_prediction(hidden, action, x)

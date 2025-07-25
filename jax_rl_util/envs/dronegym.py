@@ -61,7 +61,7 @@ class EnvParams:
     # Difficulties
     obstacle_size: float = 0.5
     solved_reward: float = 5
-    failed_penalty: float = -1
+    failed_penalty: float = -0.2
 
     starting_pos_ego: tuple[float, float, float] = (8.0, 0.0, 0.0)
     starting_pos_goal: tuple[float, float, float] = (-7.0, 0.0, 0.0)
@@ -122,13 +122,11 @@ class DroneGym(GymnaxEnv):
 
     def observation_space(self, params: EnvParams):
         """Observation space of the environment."""
-        return gymnax.environments.spaces.Box(
-            -params.plot_range,
-            params.plot_range,
-            shape=2
-            + (self.n_dim if self.include_pos_in_obs else 0)
-            + (self.n_dim if self.include_vel_in_obs else 0),
-        )
+        shape = 2 + (self.n_dim if self.include_pos_in_obs else 0) + (self.n_dim if self.include_vel_in_obs else 0)
+        if self.obstacle == "flappy":
+            shape += 4 * len(params.flappy_obstacle_positions)  # add distances to all obstacles
+
+        return gymnax.environments.spaces.Box(-params.plot_range, params.plot_range, shape)
 
     def state_space(self, params):
         """State space of the environment."""
@@ -162,8 +160,7 @@ class DroneGym(GymnaxEnv):
         )
         initial_vel = jnp.concatenate(
             [
-                params.initial_vel_stddev
-                * jrandom.normal(k_vel, [self.n_drones, self.n_dim]),
+                params.initial_vel_stddev * jrandom.normal(k_vel, [self.n_drones, self.n_dim]),
                 jnp.zeros_like(jnp.array(params.starting_pos_goal)[None, : self.n_dim]),
             ],
             axis=0,
@@ -177,6 +174,7 @@ class DroneGym(GymnaxEnv):
                 "vel": initial_vel,
                 "goto": jnp.zeros([self.n_drones, self.n_dim]),
                 "reached_goal": False,
+                "closest_dist": jnp.inf,
                 "filtered_dist": true_distance,
                 "rng": k_step,
             }
@@ -202,17 +200,13 @@ class DroneGym(GymnaxEnv):
             rand_value = params.noise_stddev * jrandom.normal(k1)
             params.noise_iir_value = 0.99 * params.noise_iir_value + 0.01 * rand_value
             rand_value = params.noise_stddev * jrandom.normal(k2)
-            return (
-                distance + (params.noise_iir_value + rand_value / 100) * 12
-            )  # add distance noise
+            return distance + (params.noise_iir_value + rand_value / 100) * 12  # add distance noise
         elif self.noise_color == 3:  # use pink noise B
             k1, k2 = jrandom.split(rng_key)
             rand_value = params.noise_stddev * jrandom.normal(k1)
             params.noise_iir_value = 0.995 * params.noise_iir_value + 0.005 * rand_value
             rand_value = params.noise_stddev * jrandom.normal(k2)
-            return (
-                distance + (params.noise_iir_value + rand_value / 30) * 19.7
-            )  # add distance noise
+            return distance + (params.noise_iir_value + rand_value / 30) * 19.7  # add distance noise
         else:
             assert False, "Invalid noise option!"
 
@@ -235,17 +229,12 @@ class DroneGym(GymnaxEnv):
         - info: Additional information about the step.
         """
         # perform ego and other drone movement for next step
-        step, prev_pos, prev_vel, goto, reached_goal, filtered_dist, key = (
-            state.values()
-        )
+        step, prev_pos, prev_vel, goto, reached_goal, closest_dist, filtered_dist, key = state.values()
         ego_key, obs_key, drone_key, next_key = jrandom.split(key, 4)
         ego_vel = prev_vel[0]
 
         # Random movement for other drones
-        drones_acc = (
-            jrandom.normal(drone_key, [self.n_drones, self.n_dim])
-            * params.change_velocity_stddev
-        )
+        drones_acc = jrandom.normal(drone_key, [self.n_drones, self.n_dim]) * params.change_velocity_stddev
         drones_vel = prev_vel[1:] + drones_acc
 
         # controlled movement for ego drone
@@ -289,7 +278,10 @@ class DroneGym(GymnaxEnv):
         is_out_of_time = step >= params.max_steps
 
         # Reward for coming closer to target
-        reward = 1 / jnp.max(jnp.array([1, goal_distance.squeeze()]))
+        reward = jnp.where(
+            goal_distance.squeeze() < closest_dist, 1 / jnp.maximum(goal_distance.squeeze(), 1) ** 1.5, 0
+        )
+        closest_dist = jnp.minimum(goal_distance, closest_dist).squeeze()
         # Reward for moving without turning
         # reward += jnp.sign(jnp.dot(vel, prev_vel).sum()) * 0.01
 
@@ -307,9 +299,7 @@ class DroneGym(GymnaxEnv):
         failed = is_outside
 
         if self.obstacle == "center":
-            dist_to_obstacle = jnp.linalg.norm(
-                pos[0] - jnp.array(params.obstacle_pos[: self.n_dim])
-            )
+            dist_to_obstacle = jnp.linalg.norm(pos[0] - jnp.array(params.obstacle_pos[: self.n_dim]))
             hit_obstacle = dist_to_obstacle <= params.obstacle_size
             done |= hit_obstacle
             failed |= hit_obstacle
@@ -329,20 +319,13 @@ class DroneGym(GymnaxEnv):
                 # Simple bounding box intersection check
                 min_x, max_x = jnp.minimum(px, cx), jnp.maximum(px, cx)
                 min_y, max_y = jnp.minimum(py, cy), jnp.maximum(py, cy)
-                intersects = (
-                    (x_min <= max_x)
-                    & (x_max >= min_x)
-                    & (y_min <= max_y)
-                    & (y_max >= min_y)
-                )
+                intersects = (x_min <= max_x) & (x_max >= min_x) & (y_min <= max_y) & (y_max >= min_y)
 
                 # Check if current point is inside the rectangle
                 inside = (x_min <= px) & (px <= x_max) & (y_min <= py) & (py <= y_max)
                 return intersects | inside
 
-            hit_obstacle = jax.vmap(
-                partial(detect_collision, pos[0][:2], prev_pos[0][:2])
-            )(corners).any()
+            hit_obstacle = jax.vmap(partial(detect_collision, pos[0][:2], prev_pos[0][:2]))(corners).any()
             done |= hit_obstacle
             failed |= hit_obstacle
 
@@ -355,6 +338,7 @@ class DroneGym(GymnaxEnv):
                 "vel": vel,
                 "goto": goto,
                 "reached_goal": reached_goal | is_at_target,
+                "closest_dist": closest_dist.squeeze(),
                 "filtered_dist": filtered_dist,
                 "rng": next_key,
             }
@@ -396,14 +380,11 @@ class DroneGym(GymnaxEnv):
                 [obstacle_pos[:, :2], obstacle_pos[:, :2] + obstacle_pos[:, 2:]],
                 axis=-1,
             )
-            obstacle_distance = jnp.linalg.norm(
-                pos[:1][:2] - corners.reshape((-1, 2, 2)), axis=-1
-            ).min()
+            obstacle_distances = pos[:1][:2] - corners.reshape((-1, 2, 2))
+            obstacle_distance = jnp.linalg.norm(obstacle_distances, axis=-1).min()
             # obstacle_distance = jnp.zeros_like(obstacle_distance)
         else:
-            obstacle_distance = jnp.linalg.norm(
-                pos[0] - jnp.array(params.obstacle_pos)[: self.n_dim]
-            )
+            obstacle_distance = jnp.linalg.norm(pos[0] - jnp.array(params.obstacle_pos)[: self.n_dim])
         noisy_obstacle_dist = self.apply_noise(obstacle_distance, rng_key, params)
 
         goal_distance = jnp.linalg.norm(pos[0] - pos[1:], axis=-1)
@@ -414,6 +395,10 @@ class DroneGym(GymnaxEnv):
             obs = jnp.append(pos[0], obs)
         if self.include_vel_in_obs:
             obs = jnp.append(vel[0], obs)
+
+        if self.obstacle == "flappy":
+            # Add distances to all obstacles
+            obs = jnp.concatenate([obs, obstacle_distances.flatten()])
 
         return (
             obs,
@@ -479,9 +464,7 @@ def run_dronegym(args, out_file: str = "data/dronegym_output.csv"):
 
     with open(out_file, "w", newline="") as csvfile:
         # Output file
-        pos_writer = csv.writer(
-            csvfile, delimiter=",", quotechar='"', quoting=csv.QUOTE_MINIMAL
-        )
+        pos_writer = csv.writer(csvfile, delimiter=",", quotechar='"', quoting=csv.QUOTE_MINIMAL)
         # Write header
         pos_writer.writerow(["v_x", "v_y", "v_z", "distance_noisy", "distance_true"])
 
@@ -497,10 +480,7 @@ def run_dronegym(args, out_file: str = "data/dronegym_output.csv"):
             if step % 1000 == 0:  # just to print some progress
                 print("step: {:3d}".format(step))
             rng_key, step_key = jrandom.split(rng_key)
-            action = (
-                jrandom.normal(step_key, [dronegym.n_dim])
-                * params.change_velocity_stddev
-            )
+            action = jrandom.normal(step_key, [dronegym.n_dim]) * params.change_velocity_stddev
             action = jnp.zeros(dronegym.n_dim)
             obs, state, _, _, info = dronegym.step(step_key, state, action)
 
@@ -533,9 +513,7 @@ def run_dronegym(args, out_file: str = "data/dronegym_output.csv"):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(
-        prog="sim", description="simulate random drone movements and distance changes"
-    )
+    parser = argparse.ArgumentParser(prog="sim", description="simulate random drone movements and distance changes")
     parser.add_argument(
         "-o",
         "--output",
@@ -543,15 +521,9 @@ if __name__ == "__main__":
         default="data/output.csv",
         help="output file name",
     )
-    parser.add_argument(
-        "-d", "--dims", choices=[2, 3], default=2, help="number of dimenstions"
-    )
-    parser.add_argument(
-        "-s", "--steps", type=int, default=3000, help="number of simulation steps"
-    )
-    parser.add_argument(
-        "-n", "--ndrones", type=int, default=1, help="number of other drones"
-    )
+    parser.add_argument("-d", "--dims", choices=[2, 3], default=2, help="number of dimenstions")
+    parser.add_argument("-s", "--steps", type=int, default=3000, help="number of simulation steps")
+    parser.add_argument("-n", "--ndrones", type=int, default=1, help="number of other drones")
     parser.add_argument(
         "-f",
         "--frequency",
@@ -559,9 +531,7 @@ if __name__ == "__main__":
         default=15,
         help="unit: Hz, used to convert from steps to actual time",
     )
-    parser.add_argument(
-        "-z", "--noise", type=float, default=0.15, help="distance measurement noise"
-    )
+    parser.add_argument("-z", "--noise", type=float, default=0.15, help="distance measurement noise")
     parser.add_argument(
         "-c",
         "--noise_color",
