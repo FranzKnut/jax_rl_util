@@ -1,7 +1,7 @@
 """RNN Actor-Critic flax Module."""
 
 from dataclasses import field
-from typing import Tuple
+from numbers import Number
 
 import distrax
 import jax
@@ -65,7 +65,7 @@ class Actor(nn.Module):
 
                 return NormalTanhDistribution(
                     event_size=self.a_dim,
-                    min_std=jnp.exp(self.act_log_bounds[0]),
+                    min_std=jnp.exp(self.act_log_bounds),
                 ).create_dist(model_out)
             else:
                 if self.act_dist_name == "normal_scale":
@@ -81,7 +81,7 @@ class Actor(nn.Module):
 
                 if isinstance(self.act_log_bounds, tuple):
                     log_std = sigmoid_between(log_std, *self.act_log_bounds)
-                elif isinstance(self.act_log_bounds, float):
+                elif isinstance(self.act_log_bounds, Number):
                     log_std = jax.nn.softplus(log_std) + self.act_log_bounds
                 if self.act_bounds is not None:
                     loc = sigmoid_between(loc, *self.act_bounds)
@@ -125,13 +125,14 @@ class AC(nn.Module):
     a_dim: int
     discrete: bool
     act_bounds: tuple[float, ...] | None = None
-    act_log_bounds: tuple[float, ...] = field(default_factory=lambda: [-3, 2])
+    act_log_bounds: tuple[float, float] | float | None = None
     act_dist_name: str = "normal"
     actor_layers: tuple[int, ...] = ()
     critic_layers: tuple[int, ...] = ()
     f_align: bool = False
-    action_noise: float = 0.0  # TODO: Implement action noise for exploration
     norm: str | None = None  # Normalization type, e.g., "layer", "batch"
+
+    # action_noise: float = 0.0  # TODO: Implement action noise for exploration
 
     def setup(self) -> None:
         """Initialize components."""
@@ -243,7 +244,7 @@ class RNNActorCritic(nn.RNNCellBase):
     obs_dim: int = None
     rnn_config: RNNEnsembleConfig = field(default_factory=RNNEnsembleConfig)
     f_align: bool = True
-    act_log_bounds: tuple[float] = field(default_factory=lambda: [0.01, 1])
+    act_log_bounds: tuple[float, float] | float | None = -1
     shared: bool = False
     act_bounds: tuple[float] | None = None
     act_dist_name: str = "normal"
@@ -280,7 +281,7 @@ class RNNActorCritic(nn.RNNCellBase):
             critic_layers=self.critic_layers,
             f_align=self.f_align,
             act_dist_name=self.act_dist_name,
-            name="td",
+            name="ac",
         )
 
         if self.pred_obs:
@@ -366,7 +367,7 @@ class RNNActorCritic(nn.RNNCellBase):
         """Returns the number of feature axes of the RNN cell."""
         return 1
 
-    def initialize_carry(self, rng: PRNGKey, input_shape: Tuple[int, ...]):
+    def initialize_carry(self, rng: PRNGKey, input_shape: tuple[int, ...]):
         """Initialize the Worldmodel cell carry."""
         if not self.rnn_config.model_name:
             return None
