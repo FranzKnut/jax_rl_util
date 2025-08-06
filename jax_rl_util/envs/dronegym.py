@@ -60,8 +60,8 @@ class EnvParams:
 
     # Difficulties
     obstacle_size: float = 0.5
-    solved_reward: float = 5
-    failed_penalty: float = -0.2
+    solved_reward: float = 10
+    failed_penalty: float = -1
 
     starting_pos_ego: tuple[float, float, float] = (8.0, 0.0, 0.0)
     starting_pos_goal: tuple[float, float, float] = (-7.0, 0.0, 0.0)
@@ -160,7 +160,12 @@ class DroneGym(GymnaxEnv):
         )
         initial_vel = jnp.concatenate(
             [
-                params.initial_vel_stddev * jrandom.normal(k_vel, [self.n_drones, self.n_dim]),
+                jrandom.uniform(
+                    k_vel,
+                    [self.n_drones, self.n_dim],
+                    minval=-jnp.array(params.initial_vel_stddev),
+                    maxval=jnp.array(params.initial_vel_stddev),
+                ),
                 jnp.zeros_like(jnp.array(params.starting_pos_goal)[None, : self.n_dim]),
             ],
             axis=0,
@@ -326,10 +331,10 @@ class DroneGym(GymnaxEnv):
                 return intersects | inside
 
             hit_obstacle = jax.vmap(partial(detect_collision, pos[0][:2], prev_pos[0][:2]))(corners).any()
-            done |= hit_obstacle
+            done |= hit_obstacle | is_at_target | reached_goal
             failed |= hit_obstacle
 
-        reward = jnp.where(failed, reward + params.failed_penalty, reward)
+        reward = jnp.where(failed, params.failed_penalty, reward)
 
         state = OrderedDict(
             {
