@@ -16,6 +16,7 @@ popjym    = { git = "https://github.com/EdanToledo/popjym.git", branch = "main" 
 # mujoco_menagerie         = { git = "https://github.com/google-deepmind/mujoco_menagerie", branch = "main" }
 simple-parsing = "^0.1.6"
 jaxtyping      = "*"
+jax         = "<0.7.0"
 
 
 [build-system]
