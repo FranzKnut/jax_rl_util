@@ -130,7 +130,9 @@ class DummyLogger(dict, object):
             Are passed to the underlying logging method.
         """
         file_name = name.replace("/", "_")
-        file_name = f"{file_name}_{step}.gif" if step is not None else f"{file_name}.gif"
+        file_name = (
+            f"{file_name}_{step}.gif" if step is not None else f"{file_name}.gif"
+        )
         file_name = os.path.join(self.run_artifacts_dir, file_name)
         images = [Image.fromarray(frames[i]) for i in range(len(frames))]
         os.makedirs(self.run_artifacts_dir, exist_ok=True)
@@ -174,16 +176,15 @@ def tree_stack(trees, axis=0):
     Useful for turning a list of objects into something you can feed to a
     vmapped function. Taken from https://gist.github.com/willwhitney/dd89cac6a5b771ccff18b06b33372c75
     """
-    leaves_list = []
-    treedef_list = []
-    for tree in trees:
-        leaves, treedef = jax.tree.flatten(tree)
+    leaves, treedef = jax.tree.flatten(trees[0])
+    leaves_list = [leaves]
+    for tree in trees[1:]:
+        leaves, _ = jax.tree.flatten(tree)
         leaves_list.append(leaves)
-        treedef_list.append(treedef)
 
     grouped_leaves = zip(*leaves_list)
     result_leaves = [jnp.stack(leaf, axis=axis) for leaf in grouped_leaves]
-    return treedef_list[0].unflatten(result_leaves)
+    return treedef.unflatten(result_leaves)
 
 
 class AimLogger(DummyLogger):
@@ -194,7 +195,9 @@ class AimLogger(DummyLogger):
         return "AimLogger"
 
     @override
-    def __init__(self, hparams: LoggableConfig, run_name: str | None = None, run_hash=None):
+    def __init__(
+        self, hparams: LoggableConfig, run_name: str | None = None, run_hash=None
+    ):
         """Create aim run."""
         global aim
         import aim
@@ -226,7 +229,10 @@ class AimLogger(DummyLogger):
         """Loop over scalars and track them with aim."""
         for k, v in metrics.items():
             self.run.track(
-                np.array(v), name=k, epoch=None if step is None else int(step), context=context
+                np.array(v),
+                name=k,
+                epoch=None if step is None else int(step),
+                context=context,
             )
 
     @override
@@ -272,7 +278,9 @@ class AimLogger(DummyLogger):
             self.log(
                 {
                     f"Params/{k}": aim.Figure(
-                        px.line(x=x_vals, y=list(v.values()), title=k, labels=list(v.keys()))
+                        px.line(
+                            x=x_vals, y=list(v.values()), title=k, labels=list(v.keys())
+                        )
                     )
                     for k, v in all_param_norms.items()
                     if v
@@ -325,7 +333,9 @@ class AimLogger(DummyLogger):
             Caption for the video, by default
         """
         file_name = name.replace("/", "_")
-        file_name = f"{file_name}_{step}.gif" if step is not None else f"{file_name}.gif"
+        file_name = (
+            f"{file_name}_{step}.gif" if step is not None else f"{file_name}.gif"
+        )
         file_name = os.path.join(self.run_artifacts_dir, file_name)
         images = [Image.fromarray(frames[i]) for i in range(len(frames))]
         os.makedirs(self.run_artifacts_dir, exist_ok=True)
@@ -466,7 +476,9 @@ class WandbLogger(DummyLogger):
         caption : str, optional
             Caption for the video, by default
         """
-        frames = frames.transpose(0, 3, 1, 2)  # Convert to (frames, channels, height, width)
+        frames = frames.transpose(
+            0, 3, 1, 2
+        )  # Convert to (frames, channels, height, width)
         self.run.log(
             {name: wandb.Video(frames, fps=fps, caption=caption, format="gif")},
             step=step,
@@ -551,7 +563,9 @@ def leaf_norms(tree):
 
 def tree_norm(tree, **kwargs):
     """Sum of the norm of all elements in the tree."""
-    return tree_reduce(lambda x, y: x + jnp.linalg.norm(y, **kwargs), tree, initializer=0)
+    return tree_reduce(
+        lambda x, y: x + jnp.linalg.norm(y, **kwargs), tree, initializer=0
+    )
 
 
 def calc_norms(norm_params: dict = {}, leaf_norm_params: dict = {}):
