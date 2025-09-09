@@ -6,6 +6,7 @@ from typing import Any, Callable
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 import optax
 from optax._src import base, wrappers
 
@@ -89,23 +90,23 @@ def make_optimizer(config=OptimizerConfig()) -> optax.GradientTransformation:
 
     elif config.lr_decay_type == "cosine_restarts":
         """See above."""
+        warmup_steps = config.lr_kwargs.get("warmup_steps", 0)
+        decay_steps = config.lr_kwargs["decay_steps"]
+        num_cycles = config.lr_kwargs["num_cycles"]
         learning_rate = optax.join_schedules(
             schedules=[
                 optax.warmup_cosine_decay_schedule(
-                    init_value=learning_rate * config.lr_kwargs.get("initial_multiplier", 0),
-                    peak_value=learning_rate * config.lr_kwargs.get("max_lr_base", 1) ** i,
+                    init_value=learning_rate
+                    * config.lr_kwargs.get("initial_multiplier", 0),
+                    peak_value=learning_rate
+                    * config.lr_kwargs.get("max_lr_base", 1) ** i,
                     end_value=learning_rate * config.lr_kwargs.get("end_multiplier", 0),
-                    warmup_steps=config.lr_kwargs["warmup_steps"],
-                    decay_steps=config.lr_kwargs["decay_steps"],
+                    warmup_steps=warmup_steps,
+                    decay_steps=decay_steps,
                 )
-                for i in range(config.lr_kwargs["num_cycles"])
+                for i in range(num_cycles)
             ],
-            boundaries=jnp.cumsum(
-                jnp.array(
-                    [config.lr_kwargs["warmup_steps"] + config.lr_kwargs["decay_steps"]]
-                    * config.lr_kwargs["num_cycles"]
-                )
-            ),
+            boundaries=np.cumsum([warmup_steps + decay_steps] * num_cycles),
         )
 
     elif config.lr_decay_type == "warmup":
@@ -156,7 +157,9 @@ def make_optimizer(config=OptimizerConfig()) -> optax.GradientTransformation:
         print(f"WARNING: Decay type {config.lr_decay_type} unknown. Using no decay.")
 
     if weight_decay == "l2" and "adam" in config.opt_name:
-        print(f"WARNING: Weight decay incorrect for {config.opt_name}, consider using adamw.")
+        print(
+            f"WARNING: Weight decay incorrect for {config.opt_name}, consider using adamw."
+        )
 
     @optax.inject_hyperparams
     def _make_opt(learning_rate):
@@ -174,7 +177,9 @@ def make_optimizer(config=OptimizerConfig()) -> optax.GradientTransformation:
             if config.opt_name not in ["adamw"]
             else optax.identity(),  # , mask=decay_mask
             # Gradient clipping
-            optax.clip_by_block_rms(config.gradient_clip) if config.gradient_clip else optax.identity(),
+            optax.clip_by_block_rms(config.gradient_clip)
+            if config.gradient_clip
+            else optax.identity(),
             # Optimizer
             _opt(learning_rate, **config.kwargs)
             if config.opt_name not in ["adamw"]
@@ -182,10 +187,10 @@ def make_optimizer(config=OptimizerConfig()) -> optax.GradientTransformation:
             # Reduce on Plateau
             optax.contrib.reduce_on_plateau(
                 patience=config.lr_kwargs.get("patience", 100),
-                factor=config.lr_kwargs.get("factor", 0.5),
-                min_scale=config.lr_kwargs.get("min_scale", 1e-6),
-                accumulation_size=config.lr_kwargs.get("accumulation_size", 10),
-                cooldown=config.lr_kwargs.get("cooldown", 10),
+                factor=config.lr_kwargs.get("factor", 0.9),
+                min_scale=config.lr_kwargs.get("min_scale", 1e-3),
+                accumulation_size=config.lr_kwargs.get("accumulation_size", 20),
+                cooldown=config.lr_kwargs.get("cooldown", 100),
             )
             if config.reduce_on_plateau
             else optax.identity(),
@@ -194,7 +199,7 @@ def make_optimizer(config=OptimizerConfig()) -> optax.GradientTransformation:
             optimizer = optax.MultiSteps(
                 optimizer,
                 every_k_schedule=config.multi_step,
-                use_grad_mean=False,
+                use_grad_mean=True,
             )
         return optimizer
 
@@ -230,7 +235,9 @@ def add_decayed_weights_l1(
     # If mask is not `None`, apply mask to the gradient transformation.
     # E.g. it is common to skip weight decay on bias units and batch stats.
     if mask is not None:
-        return wrappers.masked(base.GradientTransformation(base.init_empty_state, update_fn), mask)
+        return wrappers.masked(
+            base.GradientTransformation(base.init_empty_state, update_fn), mask
+        )
     return base.GradientTransformation(base.init_empty_state, update_fn)
 
 
@@ -285,7 +292,9 @@ def get_current_lrs(
 ):
     """Get current learning rate from optimizer state."""
     if omit_static and opt_config is None:
-        print("WARNING: omit_static is True, but no opt_config provided. Returning all learning rates.")
+        print(
+            "WARNING: omit_static is True, but no opt_config provided. Returning all learning rates."
+        )
 
     lrs = {}
     if hasattr(opt_state, "inner_states"):
@@ -298,27 +307,44 @@ def get_current_lrs(
                 _reduce_on_plateau = False
             else:
                 _reduce_on_plateau = _opt_config.reduce_on_plateau
-            reduce_on_plateau_lr = s.inner_state.inner_state.inner_opt_state[3].scale if _reduce_on_plateau else 1
 
             # If omit_static is True and _opt_config is not None,
             # we skip the learning rate if it is zero or if no decay is applied
             if (
                 not omit_static
                 or _opt_config is None
-                or (_opt_config.learning_rate != 0 and (_opt_config.reduce_on_plateau or _opt_config.lr_decay_type))
+                or (
+                    _opt_config.learning_rate != 0
+                    and (_opt_config.reduce_on_plateau or _opt_config.lr_decay_type)
+                )
             ):
                 # Get the learning rate for the subtree
                 if hasattr(s.inner_state, "inner_states"):
+                    reduce_on_plateau_lr = (
+                        s.inner_state.inner_states["regular"].inner_state[3].scale
+                        if _reduce_on_plateau
+                        else 1
+                    )
                     # HACK: we assume that the nested struture is always one created by make_optimizer_for_model
                     lrs["LR/" + k] = (
-                        s.inner_state.inner_states["regular"].inner_state.hyperparams["learning_rate"]
+                        s.inner_state.inner_states["regular"].inner_state.hyperparams[
+                            "learning_rate"
+                        ]
                         * reduce_on_plateau_lr
                     )
 
                 else:
-                    lrs["LR/" + k] = s.inner_state.hyperparams["learning_rate"] * reduce_on_plateau_lr
+                    reduce_on_plateau_lr = (
+                        s.inner_state.inner_state[3].scale if _reduce_on_plateau else 1
+                    )
+                    lrs["LR/" + k] = (
+                        s.inner_state.hyperparams["learning_rate"]
+                        * reduce_on_plateau_lr
+                    )
     else:
-        _reduce_on_plateau = False if opt_config is None else opt_config.reduce_on_plateau
+        _reduce_on_plateau = (
+            False if opt_config is None else opt_config.reduce_on_plateau
+        )
         reduce_on_plateau_lr = opt_state[3][3].scale if _reduce_on_plateau else 1
         lrs["LR/learning_rate"] = opt_state[1]["learning_rate"] * reduce_on_plateau_lr
     return lrs
@@ -331,24 +357,35 @@ def map_nested_fn(fn):
     """
 
     def map_fn(nested_dict):
-        return {k: (map_fn(v) if hasattr(v, "keys") else fn(k, v)) for k, v in nested_dict.items()}
+        return {
+            k: (map_fn(v) if hasattr(v, "keys") else fn(k, v))
+            for k, v in nested_dict.items()
+        }
 
     return map_fn
 
 
-def make_optimizer_for_model(model_name: str, config=OptimizerConfig(), no_decay_lr_factor=1.0):
+def make_optimizer_for_model(
+    model_name: str, config=OptimizerConfig(), no_decay_lr_factor=1.0
+):
     """Make optax optimizer for given model name and config."""
     if "s5" in model_name:
         no_decay_params = ["B", "Lambda_re", "Lambda_im", "log_step", "norm"]
     elif "lru" in model_name:
         no_decay_params = ["B_re", "B_im", "nu_log", "theta_log", "gamma_log"]
     elif model_name in ["ctrnn", "rflo", "bptt"]:
-        no_decay_params = ["W", "tau"]
+        no_decay_params = ["tau"]
     else:
         return make_optimizer(config)
 
-    print("Making optimizer for", model_name, "model, no_decay_params:", no_decay_params)
-    ssm_fn = map_nested_fn(lambda k, _: "no_decay" if k in no_decay_params else ("none" if k in [] else "regular"))
+    print(
+        "Making optimizer for", model_name, "model, no_decay_params:", no_decay_params
+    )
+    ssm_fn = map_nested_fn(
+        lambda k, _: "no_decay"
+        if k in no_decay_params
+        else ("none" if k in [] else "regular")
+    )
     return make_multi_transform(
         {
             "none": replace(config, learning_rate=0.0),
