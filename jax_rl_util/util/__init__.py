@@ -1,6 +1,7 @@
 """RL utilities module."""
 
 from contextlib import contextmanager
+import os
 
 import jax
 
@@ -19,3 +20,16 @@ def run_on_gpu():
             device = None
     with jax.default_device(device):
         yield
+
+
+def try_init_metal():
+    try:
+        # Figure out if we are on Apple Silicon
+        if "arm64" in os.popen("uname -m").read() and not os.system(
+            "ioreg -l | grep gpu-core-count"
+        ):
+            # Activate METAL platform
+            jax.config.update("jax_platforms", "cpu,METAL")
+    finally:
+        # Set default device to CPU
+        jax.config.update("jax_default_device", jax.devices("cpu")[0])

@@ -19,6 +19,7 @@ from jax import numpy as jnp
 from jax_rl_util.util.logging_util import DummyLogger, LoggableConfig, with_logger
 
 import jax_rl_util.envs  # noqa
+from jax_rl_util.util import try_init_metal
 from jax_rl_util.envs.env_util import render_brax
 from jax_rl_util.envs.wrappers import POBraxWrapper
 
@@ -28,15 +29,17 @@ TRAIN = True
 
 os.environ["XLA_FLAGS"] = "--xla_gpu_triton_gemm_any=true"
 
+# try_init_metal()
+
 
 @dataclass
 class BraxBaselineParams(LoggableConfig):
     """Class representing the training parameters for reinforcement learning."""
 
     project_name: str = "brax_baselines"
-    env_name: str = "inverted_double_pendulum"
+    env_name: str = "humanoid"
     backend: str = "spring"
-    force: bool = False
+    force: bool = True
     env_kwargs: dict = field(default_factory=dict)
     obs_mask: str | Iterable[int] | None = None
     render: bool = True
@@ -351,7 +354,9 @@ def train_brax_baseline(config: BraxBaselineParams, logger=DummyLogger()):
         debug.callback(print_progress, num_steps, metrics["eval/episode_reward"])
 
     file_dir = os.path.dirname(os.path.abspath(__file__))
-    model_filename = file_dir + f"/trained/brax_baselines/{config.backend}/{env_name}.ckpt"
+    model_filename = (
+        file_dir + f"/trained/brax_baselines/{config.backend}/{env_name}.ckpt"
+    )
     if os.path.exists(model_filename) and not config.force:
         print("Loading existing model")
         params = model.load_params(model_filename)
@@ -416,7 +421,7 @@ def load_brax_model(path, env_name: str, obs_size: int, act_size: int):
                 sac.sac_networks.make_sac_networks(*args, **kwargs)
             )
 
-    _fn = make_inference_fn(
-        obs_size, act_size, preprocess_observations_fn=normalize
-    )(params)
+    _fn = make_inference_fn(obs_size, act_size, preprocess_observations_fn=normalize)(
+        params
+    )
     return jax.jit(lambda obs, key: _fn(obs, key)[0])
