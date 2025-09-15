@@ -164,6 +164,7 @@ def make_env(
     elif env_name.startswith("brax-") or env_name in brax.envs._envs:
         # Create entrypoint for brax env
         env = brax.envs.get_environment(env_name=env_name.replace("brax-", ""), **params.env_kwargs)
+        env.env_name = env_name  # Make sure it knows its name
     else:
         # Create gym environment
         env = gym.make(env_name, disable_env_checker=debug < 3, **params.init_kwargs)
