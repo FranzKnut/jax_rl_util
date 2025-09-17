@@ -30,6 +30,9 @@ def try_init_metal():
         ):
             # Activate METAL platform
             jax.config.update("jax_platforms", "cpu,METAL")
-    finally:
-        # Set default device to CPU
-        jax.config.update("jax_default_device", jax.devices("cpu")[0])
+            jax.devices("METAL")
+    except Exception as e:
+        print(f"Failed to initialize METAL: {e}")
+    # finally:
+    #     # Set default device to CPU
+    #     jax.config.update("jax_default_device", jax.devices("cpu")[0])

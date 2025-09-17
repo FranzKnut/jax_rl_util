@@ -22,6 +22,7 @@ import brax
 import gymnasium as gym
 import gymnax
 import popjym
+import mujoco_playground
 from brax.envs.base import Env as BraxEnv  # noqa
 from jax import numpy as jnp
 
@@ -143,36 +144,46 @@ def make_env(
     # TODO refactor:
     # Make env_info a field of the env.
     # Unify env and eval_env creation.
+    
     env: BraxEnv
     env_name = params.env_name
-    if env_name in gymnax.registered_envs:
-        # Set params for gymnax envs
-        params.env_kwargs["max_steps_in_episode"] = params.max_ep_length
+    
+    def _get_env():
+        
+    
+    
+        if env_name in gymnax.registered_envs:
+            # Set params for gymnax envs
+            params.env_kwargs["max_steps_in_episode"] = params.max_ep_length
 
-        # create a gym environment
-        env, gymnax_params = gymnax.make(env_name, **params.init_kwargs)
-        env = GymnaxBraxWrapper(env, params.env_kwargs)
-    elif env_name in popjym.registration.REGISTERED_ENVS:
-        env, env_params = popjym.make(env_name)
-        env = PopJymBraxWrapper(env, params.env_kwargs)
-    elif "dronegym" in env_name.lower():
-        env = DroneGym(**params.init_kwargs)
-        env = GymnaxBraxWrapper(env, params.env_kwargs)
-    elif "tribead" in env_name.lower():
-        env = TriangleJax(**params.init_kwargs)
-        env = GymnaxBraxWrapper(env, params.env_kwargs)
-    elif env_name.startswith("brax-") or env_name in brax.envs._envs:
-        # Create entrypoint for brax env
-        env = brax.envs.get_environment(env_name=env_name.replace("brax-", ""), **params.env_kwargs)
-        env.env_name = env_name  # Make sure it knows its name
-    else:
-        # Create gym environment
-        env = gym.make(env_name, disable_env_checker=debug < 3, **params.init_kwargs)
+            # create a gym environment
+            env, gymnax_params = gymnax.make(env_name, **params.init_kwargs)
+            env = GymnaxBraxWrapper(env, params.env_kwargs)
+        elif env_name in popjym.registration.REGISTERED_ENVS:
+            env, env_params = popjym.make(env_name)
+            env = PopJymBraxWrapper(env, params.env_kwargs)
+        elif "dronegym" in env_name.lower():
+            env = DroneGym(**params.init_kwargs)
+            env = GymnaxBraxWrapper(env, params.env_kwargs)
+        elif "tribead" in env_name.lower():
+            env = TriangleJax(**params.init_kwargs)
+            env = GymnaxBraxWrapper(env, params.env_kwargs)
+        elif env_name.startswith("brax-") or env_name in brax.envs._envs:
+            # Create entrypoint for brax env
+            env = brax.envs.get_environment(env_name=env_name.replace("brax-", ""), **params.env_kwargs)
+            env.env_name = env_name  # Make sure it knows its name
+        elif env_name.startswith("playground-") or env_name in mujoco_playground.registry.ALL_ENVS:
+            env = mujoco_playground.registry.load(env_name.replace("playground-", ""))
+        else:
+            # Create gym environment
+            env = gym.make(env_name, disable_env_checker=debug < 3, **params.init_kwargs)
 
-        if not (env_name.startswith("brax-") or env_name in brax.envs._envs):
-            # probably a gym env
-            env = GymBraxWrapper(env, params.env_kwargs)
-
+            if not (env_name.startswith("brax-") or env_name in brax.envs._envs):
+                # probably a gym env
+                env = GymBraxWrapper(env, params.env_kwargs)
+        return env
+    
+    env = _get_env()
     OBS_SIZE, DISCRETE, ACT_SIZE, obs_mask, act_clip = get_env_specs(env, params.obs_mask)
     env.name = env_name
     
@@ -188,25 +199,7 @@ def make_env(
     env_info = dict(obs_size=OBS_SIZE, discrete=DISCRETE, act_size=ACT_SIZE, obs_mask=obs_mask, act_clip=act_clip)
 
     if make_eval:
-        if env_name in gymnax.registered_envs:
-            eval_env, _ = gymnax.make(env_name, **params.init_kwargs)
-            eval_env = GymnaxBraxWrapper(eval_env, params.env_kwargs)
-        elif "dronegym" in env_name.lower():
-            eval_env = DroneGym(**params.init_kwargs)
-            eval_env = GymnaxBraxWrapper(eval_env, params.env_kwargs)
-        elif "tribead" in env_name.lower():
-            eval_env = TriangleJax(**params.init_kwargs)
-            eval_env = GymnaxBraxWrapper(eval_env, params.env_kwargs)
-        elif env_name in popjym.registration.REGISTERED_ENVS:
-            eval_env, _ = popjym.make(env_name)
-            eval_env = PopJymBraxWrapper(eval_env, params.env_kwargs)
-        elif env_name.startswith("brax-") or env_name in brax.envs._envs:
-            # Create entrypoint for brax env
-            eval_env = brax.envs.get_environment(env_name=env_name.replace("brax-", ""), **params.env_kwargs)
-        else:
-            eval_env = gym.make(env_name, disable_env_checker=getattr(params, "debug", 0) < 3, **params.init_kwargs)
-            eval_env = GymBraxWrapper(eval_env, params.env_kwargs)
-
+        eval_env = _get_env()
         eval_env.name = env_name
         eval_env = EpisodeWrapper(eval_env, params.max_ep_length, action_repeat=1)
         eval_env = FlatObsBraxWrapper(eval_env)
