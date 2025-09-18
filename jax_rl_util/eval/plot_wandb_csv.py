@@ -12,7 +12,7 @@ class Arguments:
 
     file_name: str = "data/eval/Sweep3_halfcheetah.csv"
     column: str = "best_eval"
-    by: list[str] = simple_parsing.list_field("policy_config.agent_type")
+    by: list[str] = simple_parsing.list_field("policy_config.model_name")
     title: str = "Boxplot"
     save: bool = True
     filters: str = ""  # see pandas query documentation

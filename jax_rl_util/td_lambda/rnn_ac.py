@@ -37,7 +37,9 @@ class Actor(nn.Module):
             )(hidden)
         hidden = get_normalization_fn(self.norm, training=training)(hidden)
         model_out = FADense(
-            self.a_dim * 2 if self.act_dist_name in ["beta", "brax", "normal_scale"] else self.a_dim,
+            self.a_dim * 2
+            if self.act_dist_name in ["beta", "brax", "normal_scale"]
+            else self.a_dim,
             kernel_init=nn.initializers.lecun_normal(),
             bias_init=nn.initializers.zeros_init(),
         )(hidden)
@@ -55,7 +57,9 @@ class Actor(nn.Module):
             if self.act_dist_name == "beta":
                 if self.act_bounds:
                     # If action limits are defined we sample from [0, 1] and transform the event.
-                    act_range = jnp.array(self.act_bounds[1]) - jnp.array(self.act_bounds[0])
+                    act_range = jnp.array(self.act_bounds[1]) - jnp.array(
+                        self.act_bounds[0]
+                    )
                     act_min = jnp.array(self.act_bounds[0])
                     scaling_transform = distrax.ScalarAffine(act_min, act_range)
                 alpha = jax.nn.softplus(model_out[..., : model_out.shape[-1] // 2])
@@ -73,7 +77,9 @@ class Actor(nn.Module):
                     loc, log_std = jnp.split(model_out, 2, axis=-1)
                 else:
                     loc = model_out
-                    log_std = self.param("log_std", nn.initializers.ones_init(), self.a_dim)
+                    log_std = self.param(
+                        "log_std", nn.initializers.ones_init(), self.a_dim
+                    )
                 # if len(loc.shape) > 1:
                 #     # Take mean of ... ensemble?
                 #     loc = loc.mean(axis=-2)
@@ -113,7 +119,7 @@ class Critic(nn.Module):
                 norm=self.norm,
             )(x)
         x = get_normalization_fn(self.norm, training=training)(x)
-        
+
         return FADense(
             1,
             # kernel_init=nn.initializers.zeros_init(),
@@ -127,6 +133,7 @@ class AC(nn.Module):
 
     a_dim: int
     discrete: bool
+    split_actor: bool = False
     act_bounds: tuple[float, ...] | None = None
     act_log_bounds: tuple[float, float] | float | None = None
     act_dist_name: str = "normal"
@@ -187,6 +194,9 @@ class AC(nn.Module):
                 actions are automatically clipped to action bounds.
             - Uses internal RNG state for stochastic sampling via self.make_rng("sampling").
         """
+        if not self.split_actor:
+            # First module of the ensemble is used for the actor
+            x = x[..., 0, :]  # Assume first axis is ensemble axis
         dist = self.actor(x, training=training)
         if sample_act:
             if not training:
@@ -246,6 +256,7 @@ class RNNActorCritic(nn.RNNCellBase):
     discrete: bool
     obs_dim: int = None
     rnn_config: RNNEnsembleConfig = field(default_factory=RNNEnsembleConfig)
+    split_actor: bool = False
     f_align: bool = True
     act_log_bounds: tuple[float, float] | float | None = -1
     shared: bool = False
@@ -264,7 +275,9 @@ class RNNActorCritic(nn.RNNCellBase):
                 self.rnn = RNNEnsemble(self.rnn_config, name="rnn")
             else:
                 if self.rnn_config.num_modules != 2:
-                    raise ValueError("RNNActorCritic num_modules has to be 2 when shared is False.")
+                    raise ValueError(
+                        "RNNActorCritic num_modules has to be 2 when shared is False."
+                    )
                 self.rnn = RNNEnsemble(self.rnn_config, name="rnn")
 
         # Make an ensemble of actor and critic using flax.linen.vmap
@@ -278,6 +291,7 @@ class RNNActorCritic(nn.RNNCellBase):
         self.ac = AC(
             a_dim=self.a_dim,
             discrete=self.discrete,
+            split_actor=self.split_actor,
             act_bounds=self.act_bounds,
             act_log_bounds=self.act_log_bounds,
             actor_layers=self.actor_layers,
