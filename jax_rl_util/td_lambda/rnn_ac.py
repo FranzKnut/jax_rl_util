@@ -26,7 +26,7 @@ class Actor(nn.Module):
 
     @nn.compact
     def __call__(self, hidden, training=True):
-        """Compute action distribution form latent."""
+        """Compute action distribution from latent."""
         # actor_out_dim = self.a_dim if self.discrete else 2 * self.a_dim
         if self.layers:
             hidden = MLP(
@@ -168,6 +168,9 @@ class AC(nn.Module):
 
     def value(self, x, training: bool = True):
         """Compute value from latent."""
+        if not self.split_actor and x.shape[-2] > 1:
+            # First module of the ensemble is used for the actor
+            x = x[..., 1:, :]  # Assume first axis is ensemble axis
         return self.critic(x, training=training)
 
     def policy(self, x, sample_act: bool = False, training: bool = True):
