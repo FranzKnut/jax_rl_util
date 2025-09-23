@@ -1,6 +1,7 @@
 """Wrappers for gym environments."""
 
 import importlib
+from math import trunc
 import os
 from dataclasses import dataclass
 from functools import partial
@@ -23,7 +24,9 @@ def is_discrete(env: gym.Env):
     if not hasattr(env, "action_space"):
         # Should be a brax env, they are all continuous.
         return False
-    return isinstance(env.action_space, (gym.spaces.Discrete, gymnax.environments.spaces.Discrete))
+    return isinstance(
+        env.action_space, (gym.spaces.Discrete, gymnax.environments.spaces.Discrete)
+    )
 
 
 class Wrapper:
@@ -58,7 +61,9 @@ class Wrapper:
         params = [
             f"{k}={getattr(self, k)}"
             for k in dir(self)
-            if not k.startswith("__") and not k == "env" and not callable(getattr(self, k))
+            if not k.startswith("__")
+            and not k == "env"
+            and not callable(getattr(self, k))
         ]
         return f"{self.__class__.__name__}[{', '.join(params)}]({self.env})"
 
@@ -69,7 +74,7 @@ class GymBraxWrapper(Wrapper):
     def __init__(self, env, params=None):
         """Set Env params at initialization."""
         self.env = env
-        self.params = params
+        self.params = params  # Unused?
 
     @property
     def unwrapped(self):
@@ -79,20 +84,86 @@ class GymBraxWrapper(Wrapper):
     def reset(self, rng: jnp.ndarray) -> State:
         """Make brax state from gym reset output."""
         reset_key, step_key = jrandom.split(rng)
-        obs, env_info = self.env.reset(reset_key)
+        # FIXME: return info
+        obs = self.env.reset(reset_key)
         state = State(obs, obs, jnp.zeros(1), jnp.zeros((), dtype=jnp.bool))
         state.info["rng"] = step_key
         return state
 
     def step(self, state: State, action: jnp.ndarray) -> State:
         """Make gymnax step and wrap in brax state."""
-        obs, reward, done, *_ = self.env.step(state.pipeline_state, action, self.params)
+        # FIXME: Info dict cannot be passed outside since this function is jitted.
+        obs, reward, done, truncated, *_ = self.env.step(action)
+        done = done | truncated
         # for k, v in state_gymnax[4].items():
         #     state.info[k] = v
         reward = jnp.array(reward, dtype=jnp.float32)
         if len(reward.shape) == 0:
             reward = jnp.expand_dims(reward, axis=0)
         return state.replace(pipeline_state=obs, obs=obs, reward=reward, done=done)
+
+
+class GymJaxWrapper(Wrapper):
+    """Wrap Gym envs for use with Jax."""
+
+    @property
+    def unwrapped(self):
+        """Unwrapped is self to stop recursion."""
+        return self
+
+    def reset(self, rng: jnp.ndarray):
+        """Call gym reset as external callback."""
+        # FIXME: return info
+        # info = self.env.reset()[-1]
+
+        result_shape_dtypes = (
+            jax.ShapeDtypeStruct(
+                self.env.observation_space.shape, dtype=self.env.observation_space.dtype
+            )
+            # {k: jax.ShapeDtypeStruct((), dtype=type(v)) for k, v in info.items()},
+        )
+
+        def _reset(seed):
+            return self.env.reset(seed=int(np.sum(seed)))[0]
+
+        return jax.experimental.io_callback(_reset, result_shape_dtypes, seed=rng)
+
+    def step(self, action: jnp.ndarray, key: jrandom.PRNGKey = None):
+        """Make gymnax step and wrap in brax state."""
+        result_shape_dtypes = (
+            jax.ShapeDtypeStruct(
+                self.env.observation_space.shape, dtype=self.env.observation_space.dtype
+            ),
+            jax.ShapeDtypeStruct((), dtype=jnp.float32),
+            jax.ShapeDtypeStruct((), dtype=jnp.bool),
+            jax.ShapeDtypeStruct((), dtype=jnp.bool),
+        )
+
+        def _step(action):
+            obs, reward, done, truncated, info = self.env.step(action)
+            # FIXME: Cannot pass back info with autoreset since shape changes
+            return (
+                obs,
+                jnp.array(reward, dtype=jnp.float32),
+                jnp.array(done),
+                jnp.array(truncated),
+            )
+
+        obs, reward, done, truncated = jax.experimental.io_callback(
+            _step, result_shape_dtypes, action
+        )
+        return obs, reward, done, truncated
+
+    @property
+    def action_size(self) -> int:
+        """Get action size."""
+        act_space = self.action_space
+        return act_space.n if self.discrete else act_space.shape[-1]
+
+    @property
+    def observation_size(self) -> int:
+        """Get observation size."""
+        return self.observation_space.shape
 
 
 class GymnaxBraxWrapper(Wrapper):
@@ -126,7 +197,9 @@ class GymnaxBraxWrapper(Wrapper):
         reward = jnp.array(reward, dtype=state.reward.dtype)
         if len(reward.shape) == 0:
             reward = jnp.expand_dims(reward, axis=0)
-        return state.replace(pipeline_state=gymnax_state, obs=obs, reward=reward, done=done)
+        return state.replace(
+            pipeline_state=gymnax_state, obs=obs, reward=reward, done=done
+        )
 
     @property
     def action_space(self, params=None) -> int:
@@ -204,7 +277,9 @@ class EpisodeWrapper(Wrapper):
         episode_length = jnp.array(self.episode_length, dtype=jnp.int32)
         done = jnp.where(steps >= episode_length, jnp.ones_like(state.done), state.done)
         state.info["truncation"] = jnp.int32(
-            jnp.where(steps >= episode_length, 1 - state.done, jnp.zeros_like(state.done))
+            jnp.where(
+                steps >= episode_length, 1 - state.done, jnp.zeros_like(state.done)
+            )
         )
         state.info["steps"] = steps
         return state.replace(done=done)
@@ -226,6 +301,29 @@ class VmapWrapper(Wrapper):
     def step(self, state: State, action: jnp.ndarray) -> State:
         """Vmap over step."""
         return jax.vmap(self.env.step)(state, action)
+
+
+class FakeVmapWrapper(Wrapper):
+    """Expands the dimension of the underlying state.
+
+    This wrapper is useful when a VmapWrapper with a batch size of 1 is expected, but the underlying env does not work with vmap (e.g. GymJaxWrapper)."""
+
+    def __init__(self, env, batch_size: int = None):
+        """Set batch size."""
+        super().__init__(env)
+        self.batch_size = batch_size or 1
+        assert self.batch_size == 1, "FakeVmapWrapper only supports batch_size=1"
+
+    def reset(self, rng: jnp.ndarray) -> State:
+        """Split rng and vmap over reset."""
+        out = self.env.reset(rng)
+        return jax.tree.map(lambda x: x[None], out)
+
+    def step(self, state: State, action: jnp.ndarray) -> State:
+        """Vmap over step."""
+        state, action = jax.tree.map(lambda x: x[0], (state, action))
+        out = self.env.step(state, action)
+        return jax.tree.map(lambda x: x[None], out)
 
 
 class EfficientAutoResetWrapper(Wrapper):
@@ -264,58 +362,6 @@ class EfficientAutoResetWrapper(Wrapper):
         return state.replace(pipeline_state=pipeline_state, obs=obs, reward=reward)
 
 
-class GymJaxWrapper(Wrapper):
-    """Wrap Gym envs for use with Jax."""
-
-    @property
-    def unwrapped(self):
-        """Unwrapped is self to stop recursion."""
-        return self
-
-    def reset(self, rng: jnp.ndarray):
-        """Call gym reset as external callback."""
-        result_shape_dtypes = (
-            jax.ShapeDtypeStruct(
-                self.env.observation_space.shape, dtype=self.env.observation_space.dtype
-            ),
-            {},
-        )
-        return jax.experimental.io_callback(self.env.reset, result_shape_dtypes)
-
-    def step(self, state, action: jnp.ndarray, key: jrandom.PRNGKey = None):
-        """Make gymnax step and wrap in brax state."""
-        result_shape_dtypes = (
-            jax.ShapeDtypeStruct(
-                self.env.observation_space.shape, dtype=self.env.observation_space.dtype
-            ),
-            jax.ShapeDtypeStruct((), dtype=jnp.float32),
-            jax.ShapeDtypeStruct((), dtype=jnp.bool),
-        )
-
-        def _step(action):
-            obs, reward, done, truncated, info = self.env.step(action)
-            # FIXME: Cannot pass back info with autoreset since shape changes
-            return (
-                obs,
-                jnp.array(reward, dtype=jnp.float32),
-                jnp.array(done or truncated),
-            )
-
-        obs, reward, done = jax.experimental.io_callback(_step, result_shape_dtypes, action)
-        return obs, state, reward, done
-
-    @property
-    def action_size(self) -> int:
-        """Get action size."""
-        act_space = self.action_space
-        return act_space.n if self.discrete else act_space.shape[-1]
-
-    @property
-    def observation_size(self) -> int:
-        """Get observation size."""
-        return self.observation_space.shape
-
-
 class RandomizedAutoResetWrapper(Wrapper):
     """Automatically resets Brax envs that are done.
 
@@ -347,7 +393,13 @@ class RandomizedAutoResetWrapper(Wrapper):
                 reset_state.info["full_obs"] = reset_state.obs
             return reset_state
 
-        state = jax.lax.cond(state.done, _reset, lambda: state)
+        try:
+            state = jax.lax.cond(state.done, _reset, lambda: state)
+        except Exception as e:
+            print(
+                "not supported vmap-of-cond error is likely due to using a GymJaxWrapper. Make sure to not use the vmap wrapper."
+            )
+            raise e
         return state.replace(done=done, reward=reward)
 
 
@@ -439,7 +491,9 @@ class POBraxWrapper(Wrapper):
         if isinstance(obs_mask, str) and "q" in obs_mask:
             self.obs_mask = obs_mask.split("+")
             assert any([x in ["q", "qd"] for x in self.obs_mask]), (
-                "obs_mask must be of the form 'f(\+f)*' where f is a field in brax.base.State ('q' or 'qd')"
+                "obs_mask must be of the form 'f(\\+f)*' where f is a field in brax.base.State ('q' or 'qd'). obs_mask given: {}".format(
+                    obs_mask
+                )
             )
             self.env: BraxEnv = env
         else:
@@ -525,7 +579,9 @@ class LogWrapper:
     @partial(jax.jit, static_argnums=(0,))
     def step(self, key, state: State, action):
         """Take a step and log the returns and lengths."""
-        obs, env_state, reward, done, info = self._env.step(key, state.env_state, action)
+        obs, env_state, reward, done, info = self._env.step(
+            key, state.env_state, action
+        )
         new_episode_return = state.episode_returns + reward
         new_episode_length = state.episode_lengths + 1
         state = LogEnvState(
