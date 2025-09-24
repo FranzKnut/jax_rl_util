@@ -37,9 +37,9 @@ class BraxBaselineParams(LoggableConfig):
     """Class representing the training parameters for reinforcement learning."""
 
     project_name: str = "brax_baselines"
-    env_name: str = "humanoid"
+    env_name: str = "walker2d"
     backend: str = "spring"
-    force: bool = True
+    force: bool = False
     env_kwargs: dict = field(default_factory=dict)
     obs_mask: str | Iterable[int] | None = None
     render: bool = True
@@ -156,42 +156,42 @@ TRAIN_FNS = {
         batch_size=1024,
         seed=1,
     ),
-    # "hopper": functools.partial(
-    #     sac.train,
-    #     num_timesteps=6_553_600,
-    #     num_evals=20,
-    #     reward_scaling=30,
-    #     episode_length=1000,
-    #     normalize_observations=True,
-    #     action_repeat=1,
-    #     discounting=0.997,
-    #     learning_rate=6e-4,
-    #     num_envs=128,
-    #     batch_size=512,
-    #     grad_updates_per_step=64,
-    #     max_devices_per_host=1,
-    #     max_replay_size=1048576,
-    #     min_replay_size=8192,
-    #     seed=1,
-    # ),
-    # "walker2d": functools.partial(
-    #     ppo.train,
-    #     num_timesteps=7_864_320,
-    #     num_evals=20,
-    #     reward_scaling=5,
-    #     episode_length=1000,
-    #     normalize_observations=True,
-    #     action_repeat=1,
-    #     discounting=0.997,
-    #     learning_rate=6e-4,
-    #     num_envs=128,
-    #     batch_size=128,
-    #     # grad_updates_per_step=32,
-    #     # max_devices_per_host=1,
-    #     # max_replay_size=1048576,
-    #     # min_replay_size=8192,
-    #     seed=1,
-    # ),
+    "hopper": functools.partial(
+        sac.train,
+        num_timesteps=6_553_600,
+        num_evals=20,
+        reward_scaling=30,
+        episode_length=1000,
+        normalize_observations=True,
+        action_repeat=1,
+        discounting=0.997,
+        learning_rate=6e-4,
+        num_envs=128,
+        batch_size=512,
+        grad_updates_per_step=64,
+        max_devices_per_host=1,
+        max_replay_size=1048576,
+        min_replay_size=8192,
+        seed=1,
+    ),
+    "walker2d": functools.partial(
+        sac.train,
+        num_timesteps=7_864_320,
+        num_evals=20,
+        reward_scaling=5,
+        episode_length=1000,
+        normalize_observations=True,
+        action_repeat=1,
+        discounting=0.997,
+        learning_rate=6e-4,
+        num_envs=128,
+        batch_size=128,
+        grad_updates_per_step=32,
+        max_devices_per_host=1,
+        max_replay_size=1048576,
+        min_replay_size=8192,
+        seed=1,
+    ),
     "halfcheetah": functools.partial(
         ppo.train,
         num_timesteps=50_000_000,

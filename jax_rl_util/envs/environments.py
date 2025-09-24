@@ -22,6 +22,7 @@ import brax
 import gymnasium as gym
 from brax.envs.base import Env as BraxEnv  # noqa
 from jax import numpy as jnp
+import numpy as np
 
 # Try importing optional dependencies
 try:
@@ -49,7 +50,7 @@ except ImportError:
     print("gymnax not installed. Skipping gymnax envs.")
 
 try:
-    import highway_env
+    import highway_env # noqa
 
     HIGHWAY_ENV_INSTALLED = True
 except ImportError:
@@ -70,7 +71,6 @@ from .wrappers import (
     PopJymBraxWrapper,
     RandomizedAutoResetWrapper,
     VmapWrapper,
-    FakeVmapWrapper,
 )
 
 
@@ -122,9 +122,9 @@ def get_env_specs(env: gym.Env, obs_mask=None):
     _type_
         _description_
     """
-    is_gymnax = hasattr(env, "observation_space")
+    is_gym = hasattr(env, "observation_space")
     ACT_SIZE = env.action_size
-    if is_gymnax:
+    if is_gym:
         env: GymnaxBraxWrapper
         DISCRETE = env.discrete
         act_space = env.action_space
@@ -133,7 +133,7 @@ def get_env_specs(env: gym.Env, obs_mask=None):
                 act_clip = (act_space.low, act_space.high)
             else:
                 act_clip = tuple(
-                    map(tuple, (act_space.low._value, act_space.high._value))
+                    map(tuple, (np.array(act_space.low), np.array(act_space.high)))
                 )
         else:
             act_clip = None
@@ -213,7 +213,9 @@ def make_env(
         else:
             # Create gym environment
             env = gym.make(
-                env_name, disable_env_checker=debug < 3, **params.init_kwargs
+                env_name,
+                disable_env_checker=debug < 3,
+                **params.init_kwargs,
             )
             env = GymJaxWrapper(env)
             env = GymBraxWrapper(env, params.env_kwargs)
@@ -233,10 +235,7 @@ def make_env(
     env = RandomizedAutoResetWrapper(env)
     # env = EfficientAutoResetWrapper(env)
     if (params.batch_size is not None and (params.batch_size > 1)) or use_vmap_wrapper:
-        if params.batch_size is not None and (params.batch_size > 1):
-            env = VmapWrapper(env, batch_size=params.batch_size)
-        else:
-            env = FakeVmapWrapper(env)
+        env = VmapWrapper(env, batch_size=params.batch_size)
     env_info = dict(
         obs_size=OBS_SIZE,
         discrete=DISCRETE,

@@ -51,7 +51,7 @@ class EnvParams:
     change_velocity_stddev: float = 0
 
     # distance measurement noise
-    noise_stddev: float = 0.0
+    noise_stddev: float = 0.1
     noise_iir_value: float = 0  # FIXME: Noises other than white noise need a state
 
     # initial position distribution for other drones
@@ -92,12 +92,14 @@ class DroneGym(GymnaxEnv):
         self,
         include_pos_in_obs: bool = False,
         include_vel_in_obs: bool = False,
+        terminate_at_goal: bool = False,
         n_drones: int = 1,
         n_dim: int = 2,
         fps=30,
         noise_color=0,
         action_mode: int = 0,  # 0 = acc, 1 = vel
         action_scale: float = 1,
+        action_noise: float = 0.0,
         obstacle: str = "center",
     ):
         """Initialize the DroneGym object."""
@@ -111,6 +113,8 @@ class DroneGym(GymnaxEnv):
         self.noise_color = noise_color
         self.action_mode = action_mode
         self.action_scale = action_scale
+        self.action_noise = action_noise
+        self.terminate_at_goal = terminate_at_goal
         self.obstacle = obstacle
         self.dt = 1 / fps
         # initialize ego and other drones
@@ -279,12 +283,18 @@ class DroneGym(GymnaxEnv):
         #         self.velocity[1] -= self.position[1] / lim_factor
         #     if (abs(self.position[2]) > jrandom.normal(0.0, lim_stddev)):
         #         self.velocity[2] -= self.position[2] / lim_factor
+        action *= self.action_scale
+        if self.action_noise > 0:
+            print("Adding action noise:", self.action_noise)
+            action += (
+                jrandom.normal(ego_key, [self.n_dim]) * self.action_noise
+            )  # add action noise
 
         # controlled_movement_b
         if self.action_mode == 0:
-            ego_vel += action * self.action_scale
+            ego_vel += action
         elif self.action_mode == 1:
-            ego_vel = action * self.action_scale
+            ego_vel = action
         else:
             raise ValueError("Unknown action_mode")
         # goto = ego_vel + jnp.where(step % 10 == 0, jrandom.normal(ego_key, [params.n_dim]) * params.goto_stddev, goto)
@@ -367,7 +377,9 @@ class DroneGym(GymnaxEnv):
             hit_obstacle = jax.vmap(
                 partial(detect_collision, pos[0][:2], prev_pos[0][:2])
             )(corners).any()
-            done |= hit_obstacle | is_at_target | reached_goal
+            done |= hit_obstacle
+            if self.terminate_at_goal:
+                done |= is_at_target | reached_goal
             failed |= hit_obstacle
 
         reward = jnp.where(failed, params.failed_penalty, reward)

@@ -40,7 +40,7 @@ class Actor(nn.Module):
             self.a_dim * 2
             if self.act_dist_name in ["beta", "brax", "normal_scale"]
             else self.a_dim,
-            kernel_init=nn.initializers.lecun_normal(),
+            kernel_init=nn.initializers.zeros_init(),
             bias_init=nn.initializers.zeros_init(),
         )(hidden)
 
@@ -55,7 +55,7 @@ class Actor(nn.Module):
             dist = distrax.Deterministic(model_out)
         else:
             if self.act_dist_name == "beta":
-                if self.act_bounds:
+                if self.act_bounds is not None:
                     # If action limits are defined we sample from [0, 1] and transform the event.
                     act_range = jnp.array(self.act_bounds[1]) - jnp.array(
                         self.act_bounds[0]
@@ -78,7 +78,7 @@ class Actor(nn.Module):
                 else:
                     loc = model_out
                     log_std = self.param(
-                        "log_std", nn.initializers.ones_init(), self.a_dim
+                        "log_std", nn.initializers.zeros_init(), self.a_dim
                     )
                 # if len(loc.shape) > 1:
                 #     # Take mean of ... ensemble?

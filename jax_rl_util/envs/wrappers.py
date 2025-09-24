@@ -76,10 +76,10 @@ class GymBraxWrapper(Wrapper):
         self.env = env
         self.params = params  # Unused?
 
-    @property
-    def unwrapped(self):
-        """Unwrapped is self to stop recursion."""
-        return self
+    # @property
+    # def unwrapped(self):
+    #     """Unwrapped is self to stop recursion."""
+    #     return self
 
     def reset(self, rng: jnp.ndarray) -> State:
         """Make brax state from gym reset output."""
@@ -103,13 +103,35 @@ class GymBraxWrapper(Wrapper):
         return state.replace(pipeline_state=obs, obs=obs, reward=reward, done=done)
 
 
+class GymWrapper(Wrapper, gym.Env):
+    """A wrapper that converts BraxEnv to one that follows Gym API."""
+
+    def __init__(self, env: BraxEnv, render_mode: str = None):
+        Wrapper.__init__(self, env)
+        self.render_mode = render_mode
+
+    def reset(self, seed: int = None, options=None):
+        self._seed = jrandom.PRNGKey(seed or 0)
+        self._state = self.env.reset(self._seed)
+        return self._state.obs, self._state.info
+
+    def step(self, action):
+        self._state = self.env.step(self._state, action)
+        # We return device arrays for pytorch users.
+        return (
+            self._state.obs,
+            self._state.reward,
+            bool(self._state.done),
+            bool(self._state.info["truncation"]),
+            self._state.info,
+        )
+
+    def render(self):
+        return self.env.render()
+
+
 class GymJaxWrapper(Wrapper):
     """Wrap Gym envs for use with Jax."""
-
-    @property
-    def unwrapped(self):
-        """Unwrapped is self to stop recursion."""
-        return self
 
     def reset(self, rng: jnp.ndarray):
         """Call gym reset as external callback."""
@@ -126,7 +148,9 @@ class GymJaxWrapper(Wrapper):
         def _reset(seed):
             return self.env.reset(seed=int(np.sum(seed)))[0]
 
-        return jax.experimental.io_callback(_reset, result_shape_dtypes, seed=rng)
+        return jax.experimental.io_callback(
+            _reset, result_shape_dtypes, rng, ordered=True
+        )
 
     def step(self, action: jnp.ndarray, key: jrandom.PRNGKey = None):
         """Make gymnax step and wrap in brax state."""
@@ -150,7 +174,7 @@ class GymJaxWrapper(Wrapper):
             )
 
         obs, reward, done, truncated = jax.experimental.io_callback(
-            _step, result_shape_dtypes, action
+            _step, result_shape_dtypes, action, ordered=True
         )
         return obs, reward, done, truncated
 
@@ -293,37 +317,22 @@ class VmapWrapper(Wrapper):
         super().__init__(env)
         self.batch_size = batch_size or 1
 
-    def reset(self, rng: jnp.ndarray) -> State:
+    def reset(self, seed: jnp.ndarray) -> State:
         """Split rng and vmap over reset."""
-        rng = jax.random.split(rng, self.batch_size)
-        return jax.vmap(self.env.reset)(rng)
+        if self.batch_size == 1:
+            # Fake vmap with batch size 1 to allow io_callback.
+            return jax.tree.map(lambda x: x[None], self.env.reset(seed))
+        seed = jax.random.split(seed, self.batch_size)
+        return jax.vmap(self.env.reset)(seed)
 
     def step(self, state: State, action: jnp.ndarray) -> State:
         """Vmap over step."""
+        if self.batch_size == 1:
+            # Fake vmap with batch size 1 to allow io_callback.
+            state, action = jax.tree.map(lambda x: x[0], (state, action))
+            out = self.env.step(state, action)
+            return jax.tree.map(lambda x: x[None], out)
         return jax.vmap(self.env.step)(state, action)
-
-
-class FakeVmapWrapper(Wrapper):
-    """Expands the dimension of the underlying state.
-
-    This wrapper is useful when a VmapWrapper with a batch size of 1 is expected, but the underlying env does not work with vmap (e.g. GymJaxWrapper)."""
-
-    def __init__(self, env, batch_size: int = None):
-        """Set batch size."""
-        super().__init__(env)
-        self.batch_size = batch_size or 1
-        assert self.batch_size == 1, "FakeVmapWrapper only supports batch_size=1"
-
-    def reset(self, rng: jnp.ndarray) -> State:
-        """Split rng and vmap over reset."""
-        out = self.env.reset(rng)
-        return jax.tree.map(lambda x: x[None], out)
-
-    def step(self, state: State, action: jnp.ndarray) -> State:
-        """Vmap over step."""
-        state, action = jax.tree.map(lambda x: x[0], (state, action))
-        out = self.env.step(state, action)
-        return jax.tree.map(lambda x: x[None], out)
 
 
 class EfficientAutoResetWrapper(Wrapper):
@@ -332,9 +341,9 @@ class EfficientAutoResetWrapper(Wrapper):
     Attention! The first state is remembered and used to reset the env.
     """
 
-    def reset(self, rng: jnp.ndarray) -> State:
+    def reset(self, seed: jnp.ndarray) -> State:
         """Remember first state."""
-        state = self.env.reset(rng)
+        state = self.env.reset(seed)
         state.info["first_pipeline_state"] = state.pipeline_state
         state.info["first_obs"] = state.obs
         return state
@@ -397,7 +406,7 @@ class RandomizedAutoResetWrapper(Wrapper):
             state = jax.lax.cond(state.done, _reset, lambda: state)
         except Exception as e:
             print(
-                "not supported vmap-of-cond error is likely due to using a GymJaxWrapper. Make sure to not use the vmap wrapper."
+                "not supported vmap-of-cond error is likely due to using a GymJaxWrapper. Use a batch_size of 1."
             )
             raise e
         return state.replace(done=done, reward=reward)
@@ -713,7 +722,7 @@ class SaveToFileWrapper(Wrapper):
         self.rew_buffer = [0]
 
     def reset(self, *args, **kwargs):
-        """Reset the environment using kwargs and then starts recording if video enabled."""
+        """Reset the environment using kwargs and then starts recording."""
         self._save_rollout()
         state = self.env.reset(*args, **kwargs)
         self.obs_buffer.append(state.obs)

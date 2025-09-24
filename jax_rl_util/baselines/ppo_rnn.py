@@ -37,7 +37,7 @@ warnings.simplefilter(action="ignore", category=FutureWarning)
 
 DISABLE_JIT = False
 # jax.config.update("jax_disable_jit", True)
-jax.config.update("jax_debug_nans", True)
+# jax.config.update("jax_debug_nans", True)
 # jax.config.update("jax_enable_x64", True)
 os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
 os.environ["XLA_FLAGS"] = "--xla_gpu_triton_gemm_any=true"
@@ -48,12 +48,12 @@ class PPOParams(LoggableConfig):
     """Parameters for PPO."""
 
     # General settings
-    project_name: str | None = "PPO RNN"
+    project_name: str | None = "highway-env"
     logging: str = "aim"
     debug: int = 0
     seed: int = -1
-    MODEL: str = "LSTM"
-    NUM_UNITS: int = 64
+    MODEL: str = "MLP"
+    NUM_UNITS: int = 256
     meta_rl: bool = False
     act_dist_name: str = "normal"
     log_norms: bool = False
@@ -64,7 +64,7 @@ class PPOParams(LoggableConfig):
     patience: int | None = None
     eval_every: int | None = 10
     eval_steps: int = 1000
-    eval_batch_size: int = 10
+    eval_batch_size: int = 1
     collect_horizon: int = 20
     rollout_horizon: int = 10
     train_batch_size: int = 32
@@ -84,8 +84,8 @@ class PPOParams(LoggableConfig):
     # Env settings
     env_params: EnvironmentConfig = field(
         default_factory=lambda: EnvironmentConfig(
-            env_name="dronegym",
-            batch_size=512,
+            env_name="highway-fast-v0",
+            batch_size=1,
         )
     )
     dt: float = 1.0

@@ -16,10 +16,14 @@ from jax_rl_util.util.logging_util import tree_stack
 def compute_agg_reward(states: brax.envs.State, agg_fn=jnp.mean):
     """Compute the average reward per episode from a batch of trajectories."""
     # For episodes that are done early, get the first occurence of done
-    ep_until = jnp.where(states.done.any(axis=0), states.done.argmax(axis=0), states.done.shape[0])
+    ep_until = jnp.where(
+        states.done.any(axis=0), states.done.argmax(axis=0), states.done.shape[0]
+    )
     # Compute cumsum and get value corresponding to end of episode per batch.
     # mean_reward = jnp.sum(traj_batch.reward) / jnp.max(jnp.array([jnp.sum(traj_batch.done), 1]))
-    return agg_fn(states.reward.cumsum(axis=0)[ep_until, jnp.arange(ep_until.shape[-1])])
+    return agg_fn(
+        states.reward.cumsum(axis=0)[ep_until, jnp.arange(ep_until.shape[-1])]
+    )
 
 
 def render_brax(env, states, render_steps=100, render_start=0, camera=None):
@@ -55,7 +59,9 @@ def render_brax(env, states, render_steps=100, render_start=0, camera=None):
 
 
 @deprecated("Deprecated for Brax Envs. Will be removed in the future.")
-def make_obs_mask(base_obs_size: int, obs_mask: Iterable[int] | str | int | None = None):
+def make_obs_mask(
+    base_obs_size: int, obs_mask: Iterable[int] | str | int | None = None
+):
     """Get the observation mask from string description.
 
     obs_mask may take values ['odd', 'even', 'first_half', 'second_half'] or a list of indices.
@@ -77,7 +83,9 @@ def make_obs_mask(base_obs_size: int, obs_mask: Iterable[int] | str | int | None
     return jnp.array(obs_mask, dtype=jnp.int32)
 
 
-def render_frames(_env: gym.Env, states: list, start_idx: int = None, end_idx: int = None):
+def render_frames(
+    _env: gym.Env, states: list, start_idx: int = None, end_idx: int = None
+):
     """Render the given states of the environment.
 
     Parameters
@@ -108,7 +116,9 @@ def render_frames(_env: gym.Env, states: list, start_idx: int = None, end_idx: i
         states = tree_stack(states)
         data = states.pipeline_state
         data["reward"] = states.reward
-        data["done"] = states.done[1:]  # shift by 1 since 'done' always marks the obs after reset
+        data["done"] = states.done[
+            1:
+        ]  # shift by 1 since 'done' always marks the obs after reset
         return plot_drones(_env.params, data, obstacle=_env.obstacle)
     else:
         states = [x.pipeline_state for x in states]
@@ -116,54 +126,47 @@ def render_frames(_env: gym.Env, states: list, start_idx: int = None, end_idx: i
 
     from jax_rl_util.envs.wrappers import GymnaxBraxWrapper
 
-    if isinstance(_env.unwrapped, GymnaxBraxWrapper):
-        if _env.name in [
-            "CartPole-v1",
-            "MountainCarContinuous-v0",
-            "MountainCar-v0",
-            "Pendulum-v1",
-            "Acrobot-v1",
-        ]:
+    frames = []
+    try:
+        if isinstance(_env.unwrapped, GymnaxBraxWrapper):
             from gymnax.visualize.vis_gym import get_gym_state
 
-            gym__env = gym.make(_env.name, render_mode="rgb_array").unwrapped
+            gym_env = gym.make(_env.name, render_mode="rgb_array").unwrapped
 
-            def render_gym(_env, _state):
+            def render_gym(_state):
                 """Taken from gymnax.visualize.vis_gym."""
                 gym_state = get_gym_state(_state, _env.name)
                 if _env.name == "Pendulum-v1":
-                    gym__env.last_u = gym_state[-1]
-                gym__env.state = gym_state
-                rgb_array = gym__env.render()
+                    gym_env.last_u = gym_state[-1]
+                gym_env.state = gym_state
+                rgb_array = gym_env.render()
                 return rgb_array.transpose(2, 0, 1)
+
+        elif is_brax:
+            from brax.io import image
+
+            def render_gym(_state):
+                camera = "track" if len(_env.sys.cam_bodyid) else -1
+                camera = "track" if "inverted_pendulum" not in _env.name else None
+                return image.render_array(
+                    _env.sys, _state, 256, 256, camera=camera
+                )  # .transpose(2, 0, 1)
         else:
-            print("Cannot render env: ", _env.name)
-            return []
+            gym_env = gym.make(_env.name, render_mode="rgb_array").unwrapped
 
-    elif is_brax:
-        from brax.io import image
+            def render_gym(_state):
+                gym_env.state = _state
+                if _env.name == "Pendulum-v1":
+                    gym_env.unwrapped.env.last_u = _state[-1]
+                return gym_env.render()  # .transpose(2, 0, 1)
 
-        def render_gym(_env, _state):
-            camera = ("track" if len(_env.sys.cam_bodyid) else -1)
-            camera = "track" if "inverted_pendulum" not in _env.name else None
-            return image.render_array(
-                _env.sys, _state, 256, 256, camera=camera
-            )  # .transpose(2, 0, 1)
-    else:
+        for _state in states:
+            if is_brax and len(_state.q.shape) >= 2:
+                _state = jax.tree.map(lambda x: x[0], _state)
+            frames.append(render_gym(_state))
 
-        def render_gym(_env, _state):
-            _env.unwrapped.env.state = _state
-            if _env.name == "Pendulum-v1":
-                _env.unwrapped.env.last_u = _state[-1]
-            return _env.render()  # .transpose(2, 0, 1)
-
-    frames = []
-    for _state in states:
-        if is_brax and len(_state.q.shape) >= 2:
-            _state = jax.tree.map(lambda x: x[0], _state)
-        frames.append(render_gym(_env, _state))
-
-    if isinstance(_env.unwrapped, GymnaxBraxWrapper):
-        gym__env.close()
-
+        if isinstance(_env.unwrapped, GymnaxBraxWrapper) or not is_brax:
+            gym_env.close()
+    except Exception as e:
+        print(f"Rendering failed with error: {e}")
     return frames
