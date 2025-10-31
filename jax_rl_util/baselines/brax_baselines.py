@@ -37,7 +37,7 @@ class BraxBaselineParams(LoggableConfig):
     """Class representing the training parameters for reinforcement learning."""
 
     project_name: str = "brax_baselines"
-    env_name: str = "walker2d"
+    env_name: str = "ant"
     backend: str = "spring"
     force: bool = False
     env_kwargs: dict = field(default_factory=dict)
@@ -258,8 +258,37 @@ MAX_YS = {
 MIN_YS = {"reacher": -100, "pusher": -150}
 
 
+def load_brax_model(path, env_name: str, obs_size: int, act_size: int):
+    """Load a trained model from given path."""
+    params = model.load_params(path)
+
+    def normalize(x, y):
+        return x  # noqa
+
+    if TRAIN_FNS[env_name].keywords["normalize_observations"]:
+        normalize = acme.running_statistics.normalize  # noqa
+
+    if TRAIN_FNS[env_name].func.__module__.split(".")[-2] == "ppo":
+
+        def make_inference_fn(*args, **kwargs):  # noqa
+            return ppo.ppo_networks.make_inference_fn(
+                ppo.ppo_networks.make_ppo_networks(*args, **kwargs)
+            )
+    elif TRAIN_FNS[env_name].func.__module__.split(".")[-2] == "sac":
+
+        def make_inference_fn(*args, **kwargs):  # noqa
+            return sac.sac_networks.make_inference_fn(
+                sac.sac_networks.make_sac_networks(*args, **kwargs)
+            )
+
+    _fn = make_inference_fn(obs_size, act_size, preprocess_observations_fn=normalize)(
+        params
+    )
+    return jax.jit(lambda obs, key: _fn(obs, key)[0])
+
+
 def eval_baseline(
-    params,
+    path: str,
     env_name: str,
     env_kwargs: dict = {},
     steps=10000,
@@ -276,38 +305,16 @@ def eval_baseline(
     jit_env_step = jax.jit(env.step)
     rng = jax.random.PRNGKey(seed=1)
     state = jit_env_reset(rng=rng)
-
-    if TRAIN_FNS[env_name].func.__module__.split(".")[-2] == "ppo":
-
-        def make_inference_fn(*args, **kwargs):  # noqa
-            return ppo.ppo_networks.make_inference_fn(
-                ppo.ppo_networks.make_ppo_networks(*args, **kwargs)
-            )
-    elif TRAIN_FNS[env_name].func.__module__.split(".")[-2] == "sac":
-
-        def make_inference_fn(*args, **kwargs):  # noqa
-            return sac.sac_networks.make_inference_fn(
-                sac.sac_networks.make_sac_networks(*args, **kwargs)
-            )
-
-    def normalize(x, y):
-        return x  # noqa
-
-    if TRAIN_FNS[env_name].keywords["normalize_observations"]:
-        normalize = acme.running_statistics.normalize  # noqa
-
-    inference_fn = make_inference_fn(
-        state.obs.shape[-1], env.action_size, preprocess_observations_fn=normalize
-    )(params)
-
-    jit_inference_fn = jax.jit(inference_fn)
+    jit_inference_fn = load_brax_model(
+        path, env_name, env.observation_size, env.action_size
+    )
 
     print(f"Running {steps} steps of {env_name} environment")
 
     def eval_step(carry, n):
         state, rng = carry
         act_rng, rng = jax.random.split(rng)
-        act, _ = jit_inference_fn(state.obs, act_rng)
+        act = jit_inference_fn(state.obs, act_rng)
         state = jit_env_step(state, act)
         return (state, rng), state
 
@@ -370,9 +377,8 @@ def train_brax_baseline(config: BraxBaselineParams, logger=DummyLogger()):
     model.save_params(model_filename, params)
     # logger.save_model(model_filename)
     print(f"Saved model to {model_filename}")
-    params = model.load_params(model_filename)
     avg_reward = eval_baseline(
-        params,
+        model_filename,
         env_name,
         config.env_kwargs,
         brax_backend=config.backend,
@@ -396,32 +402,3 @@ if __name__ == "__main__" and TRAIN:
     for env in envs_list:
         params.env_name = env
         with_logger(train_brax_baseline, params, run_name=params.env_name + " baseline")
-
-
-def load_brax_model(path, env_name: str, obs_size: int, act_size: int):
-    """Load a trained model from given path."""
-    params = model.load_params(path)
-
-    def normalize(x, y):
-        return x  # noqa
-
-    if TRAIN_FNS[env_name].keywords["normalize_observations"]:
-        normalize = acme.running_statistics.normalize  # noqa
-
-    if TRAIN_FNS[env_name].func.__module__.split(".")[-2] == "ppo":
-
-        def make_inference_fn(*args, **kwargs):  # noqa
-            return ppo.ppo_networks.make_inference_fn(
-                ppo.ppo_networks.make_ppo_networks(*args, **kwargs)
-            )
-    elif TRAIN_FNS[env_name].func.__module__.split(".")[-2] == "sac":
-
-        def make_inference_fn(*args, **kwargs):  # noqa
-            return sac.sac_networks.make_inference_fn(
-                sac.sac_networks.make_sac_networks(*args, **kwargs)
-            )
-
-    _fn = make_inference_fn(obs_size, act_size, preprocess_observations_fn=normalize)(
-        params
-    )
-    return jax.jit(lambda obs, key: _fn(obs, key)[0])

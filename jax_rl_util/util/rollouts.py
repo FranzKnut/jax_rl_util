@@ -28,13 +28,13 @@ class RolloutConfig:
     """
 
     policy_path: str | None = (
-        None  # defaults to "artifacts/baselines/{backend}/{env_name}.ckpt"
+        None  # defaults to "jax_rl_util/baselines/trained/brax_baselines/{backend}/{env_name}.ckpt"
     )
     ckpt_type: str = "brax"
     output_dir: str = "data"
     env_config: EnvironmentConfig = field(
         default_factory=lambda: EnvironmentConfig(
-            env_name="ant",
+            env_name="halfcheetah",
             init_kwargs={
                 "backend": "spring",
             },
@@ -64,7 +64,7 @@ def collect_rollouts(
     backend = config.env_config.init_kwargs.get("backend", "none")
     policy_path = (
         config.policy_path
-        or f"artifacts/baselines/{backend}/{config.env_config.env_name}.ckpt"
+        or f"{os.path.dirname(__file__)}/../baselines/trained/brax_baselines/{backend}/{config.env_config.env_name}.ckpt"
     )
 
     if config.ckpt_type == "brax":
@@ -122,8 +122,8 @@ def collect_rollouts(
         )
         states, actions = jax.tree.map(lambda x: x.swapaxes(0, 1), (states, actions))
         episode_ends = jnp.where(
-            jnp.any(states.done, axis=1),
-            jnp.array([jnp.where(d, size=1)[0][0] for d in states.done]),
+            jnp.any(states.done[:, 1:], axis=1),
+            jnp.array([jnp.where(d, size=1)[0][0] + 1 for d in states.done[:, 1:]]),
             states.done.shape[-1],
         )
         num_episodes = max(1, len(episode_ends))

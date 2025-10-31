@@ -92,11 +92,7 @@ class Actor(nn.Module):
                     log_std = jax.nn.softplus(log_std) + self.act_log_bounds
                 if self.act_bounds is not None:
                     loc = sigmoid_between(loc, *self.act_bounds)
-                dist = distrax.LogStddevNormal(
-                    loc,
-                    log_std,
-                    # max_scale=self.act_log_bounds[1],
-                )
+                dist = distrax.LogStddevNormal(loc, log_std)
 
         return dist
 
