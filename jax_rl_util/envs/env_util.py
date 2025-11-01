@@ -3,6 +3,7 @@
 from typing import Iterable
 
 import brax.envs
+import mujoco_playground
 import gymnasium as gym
 import jax
 import numpy as np
@@ -109,26 +110,32 @@ def render_frames(
             jax.tree.map(lambda x: x[n], states)
             for n in range(start_idx or 0, end_idx or states.time.shape[0])
         ]
-
-    # Define rendering function for specific envs
-    is_brax = _env.name.startswith("brax-") or _env.name in brax.envs._envs
-    if _env.name == "dronegym":
-        states = tree_stack(states)
-        data = states.pipeline_state
-        data["reward"] = states.reward
-        data["done"] = states.done[
-            1:
-        ]  # shift by 1 since 'done' always marks the obs after reset
-        return plot_drones(_env.params, data, obstacle=_env.obstacle)
-    else:
-        states = [x.pipeline_state for x in states]
-        states = jax.tree.map(lambda x: x[0], states)
-
     from jax_rl_util.envs.wrappers import GymnaxBraxWrapper
 
     frames = []
     try:
-        if isinstance(_env.unwrapped, GymnaxBraxWrapper):
+        # Define rendering function for specific envs
+        is_playground = (
+            _env.name.startswith("playground-")
+            or _env.name in mujoco_playground.registry.ALL_ENVS
+        )
+        is_brax = _env.name.startswith("brax-") or _env.name in brax.envs._envs
+        if _env.name == "dronegym":
+            states = tree_stack(states)
+            data = states.pipeline_state
+            data["reward"] = states.reward
+            data["done"] = states.done[
+                1:
+            ]  # shift by 1 since 'done' always marks the obs after reset
+            return plot_drones(_env.params, data, obstacle=_env.obstacle)
+        else:
+            if not is_playground:
+                states = [x.pipeline_state for x in states]
+            states = jax.tree.map(lambda x: x[0], states)
+
+        if is_playground:
+            return _env.render(states)
+        elif isinstance(_env.unwrapped, GymnaxBraxWrapper):
             from gymnax.visualize.vis_gym import get_gym_state
 
             gym_env = gym.make(_env.name, render_mode="rgb_array").unwrapped

@@ -50,7 +50,7 @@ except ImportError:
     print("gymnax not installed. Skipping gymnax envs.")
 
 try:
-    import highway_env # noqa
+    import highway_env  # noqa
 
     HIGHWAY_ENV_INSTALLED = True
 except ImportError:
@@ -210,6 +210,7 @@ def make_env(
             or env_name in mujoco_playground.registry.ALL_ENVS
         ):
             env = mujoco_playground.registry.load(env_name.replace("playground-", ""))
+            # env = GymnaxBraxWrapper(env, params.env_kwargs)
         else:
             # Create gym environment
             env = gym.make(
