@@ -331,7 +331,7 @@ class VmapWrapper(Wrapper):
             # Fake vmap with batch size 1 to allow io_callback.
             state, action = jax.tree.map(lambda x: x[0], (state, action))
             out = self.env.step(state, action)
-            return jax.tree.map(lambda x: x[None], out)
+            return jax.tree.map(lambda x: jnp.expand_dims(x, axis=0), out)
         return jax.vmap(self.env.step)(state, action)
 
 

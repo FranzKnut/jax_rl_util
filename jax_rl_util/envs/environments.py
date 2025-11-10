@@ -202,7 +202,7 @@ def make_env(
         elif env_name.startswith("brax-") or env_name in brax.envs._envs:
             # Create entrypoint for brax env
             env = brax.envs.get_environment(
-                env_name=env_name.replace("brax-", ""), **params.env_kwargs
+                env_name=env_name.replace("brax-", ""), **params.init_kwargs
             )
             env.env_name = env_name  # Make sure it knows its name
         elif MUJOCO_PLAYGROUND_INSTALLED and (

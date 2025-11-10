@@ -38,7 +38,7 @@ class RolloutConfig:
             init_kwargs={
                 "backend": "spring",
             },
-            batch_size=10,
+            batch_size=1,
         )
     )
     num_rollouts: int = 10
