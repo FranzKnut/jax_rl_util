@@ -3,7 +3,6 @@
 from typing import Iterable
 
 import brax.envs
-import mujoco_playground
 import gymnasium as gym
 import jax
 import numpy as np
@@ -114,6 +113,7 @@ def render_frames(
 
     frames = []
     try:
+        import mujoco_playground
         # Define rendering function for specific envs
         is_playground = (
             _env.name.startswith("playground-")
@@ -146,8 +146,7 @@ def render_frames(
                 if _env.name == "Pendulum-v1":
                     gym_env.last_u = gym_state[-1]
                 gym_env.state = gym_state
-                rgb_array = gym_env.render()
-                return rgb_array.transpose(2, 0, 1)
+                return gym_env.render()
 
         elif is_brax:
             from brax.io import image
