@@ -8,6 +8,7 @@ import jax
 import jax.numpy as jnp
 from chex import PRNGKey
 from flax import linen as nn
+from jax_rtrl.models.autoencoders import ConvEncoder
 from jax_rtrl.models.jax_util import get_normalization_fn, sigmoid_between
 from jax_rtrl.models.feedforward import MLP, FADense
 from jax_rtrl.models.seq_models import RNNEnsemble, RNNEnsembleConfig
@@ -40,7 +41,7 @@ class Actor(nn.Module):
             self.a_dim * 2
             if self.act_dist_name in ["beta", "brax", "normal_scale"]
             else self.a_dim,
-            kernel_init=nn.initializers.zeros_init(),
+            # kernel_init=nn.initializers.zeros_init(),
             bias_init=nn.initializers.zeros_init(),
         )(hidden)
 
@@ -255,6 +256,7 @@ class RNNActorCritic(nn.RNNCellBase):
     discrete: bool
     obs_dim: int = None
     rnn_config: RNNEnsembleConfig = field(default_factory=RNNEnsembleConfig)
+    use_cnn: bool = True
     split_actor: bool = False
     f_align: bool = True
     act_log_bounds: tuple[float, float] | float | None = -1
@@ -309,8 +311,13 @@ class RNNActorCritic(nn.RNNCellBase):
                 name="obs",
             )
 
-    def rnn_step(self, carry, obs, training=True, **kwargs):
+        if self.use_cnn:
+            self.enc = ConvEncoder(latent_size=16, c_hid=8)
+
+    def encode(self, carry, obs, training=True, **kwargs):
         """Step RNN."""
+        if self.use_cnn:
+            obs = self.enc(obs)
         if not self.rnn_config.model_name:
             return obs, carry
         if carry is None:
@@ -361,7 +368,7 @@ class RNNActorCritic(nn.RNNCellBase):
     def __call__(self, carry, x, training=True):
         """Step RNN and compute actor and critic."""
         # RNN
-        hidden, new_carry = self.rnn_step(carry, x, training=training)
+        hidden, new_carry = self.encode(carry, x, training=training)
 
         # Critic
         v_hat = self.value(hidden, x, training=training)

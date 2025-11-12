@@ -214,7 +214,7 @@ def make_env(
         else:
             # Create gym environment
             env = gym.make(
-                env_name,
+                env_name.replace("gym-", ""),
                 disable_env_checker=debug < 3,
                 **params.init_kwargs,
             )
@@ -230,7 +230,7 @@ def make_env(
 
     # Wrap with the brax wrappers
     env = EpisodeWrapper(env, params.max_ep_length, action_repeat=1)
-    env = FlatObsBraxWrapper(env)
+    # env = FlatObsBraxWrapper(env)
     if obs_mask is not None:
         env = POBraxWrapper(env, obs_mask)
     env = RandomizedAutoResetWrapper(env)
@@ -249,7 +249,7 @@ def make_env(
         eval_env = _get_env()
         eval_env.name = env_name
         eval_env = EpisodeWrapper(eval_env, params.max_ep_length, action_repeat=1)
-        eval_env = FlatObsBraxWrapper(eval_env)
+        # eval_env = FlatObsBraxWrapper(eval_env)
         if obs_mask is not None:
             eval_env = POBraxWrapper(eval_env, obs_mask)
         eval_env = RandomizedAutoResetWrapper(eval_env)

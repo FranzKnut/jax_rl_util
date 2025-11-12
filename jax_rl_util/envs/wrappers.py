@@ -164,7 +164,7 @@ class GymJaxWrapper(Wrapper):
         )
 
         def _step(action):
-            obs, reward, done, truncated, info = self.env.step(action)
+            obs, reward, done, truncated, info = self.env.step(action._value)
             # FIXME: Cannot pass back info with autoreset since shape changes
             return (
                 obs,
@@ -321,7 +321,9 @@ class VmapWrapper(Wrapper):
         """Split rng and vmap over reset."""
         if self.batch_size == 1:
             # Fake vmap with batch size 1 to allow io_callback.
-            return jax.tree.map(lambda x: jnp.expand_dims(x, axis=0), self.env.reset(seed))
+            return jax.tree.map(
+                lambda x: jnp.expand_dims(x, axis=0), self.env.reset(seed)
+            )
         seed = jax.random.split(seed, self.batch_size)
         return jax.vmap(self.env.reset)(seed)
 
