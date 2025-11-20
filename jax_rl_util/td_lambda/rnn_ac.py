@@ -12,6 +12,7 @@ from jax_rtrl.models.autoencoders import ConvEncoder
 from jax_rtrl.models.jax_util import get_normalization_fn, sigmoid_between
 from jax_rtrl.models.feedforward import MLP, FADense
 from jax_rtrl.models.seq_models import RNNEnsemble, RNNEnsembleConfig
+from jax_rtrl.networks.policies import PolicyRNN
 
 
 # Actor
@@ -138,7 +139,6 @@ class AC(nn.Module):
     critic_layers: tuple[int, ...] = ()
     f_align: bool = False
     norm: str | None = None  # Normalization type, e.g., "layer", "batch"
-
     # action_noise: float = 0.0  # TODO: Implement action noise for exploration
 
     def setup(self) -> None:
@@ -170,7 +170,9 @@ class AC(nn.Module):
             x = x[..., 1:, :]  # Assume first axis is ensemble axis
         return self.critic(x, training=training)
 
-    def policy(self, x, sample_act: bool = False, training: bool = True):
+    def policy(
+        self, x, sample_act: bool = False, training: bool = True, epsilon: float = 0.0
+    ):
         """Compute action distribution or sample actions from the policy network.
 
         Args:
@@ -199,17 +201,27 @@ class AC(nn.Module):
             x = x[..., 0, :]  # Assume first axis is ensemble axis
         dist = self.actor(x, training=training)
         if sample_act:
+            greedy_action = dist.mode()
             if not training:
-                action = dist.mode()
+                action = greedy_action
             else:
-                action = dist.sample(seed=self.make_rng("sampling"))
+                _rnd = jax.random.uniform(
+                    self.make_rng("sampling"), shape=greedy_action.shape
+                )
+                # Epsilon-greedy action selection
+                greedy_action = dist.mode()
+                action = jnp.where(
+                    _rnd < epsilon,
+                    greedy_action,
+                    dist.sample(seed=self.make_rng("sampling")),
+                )
             if self.act_bounds is not None:
                 action = jnp.clip(action, *self.act_bounds)
             return action, dist
         return dist
 
-    def __call__(self, x, sample_act: bool = False, training: bool = True):
-        return self.policy(x, sample_act, training), self.value(x)
+    def __call__(self, x, sample_act: bool = False, training: bool = True, epsilon: float = 0.0):
+        return self.policy(x, sample_act, training, epsilon=epsilon), self.value(x)
 
     @nn.nowrap
     def loss(
@@ -256,7 +268,7 @@ class RNNActorCritic(nn.RNNCellBase):
     discrete: bool
     obs_dim: int = None
     rnn_config: RNNEnsembleConfig = field(default_factory=RNNEnsembleConfig)
-    use_cnn: bool = True
+    use_cnn: bool = False
     split_actor: bool = False
     f_align: bool = True
     act_log_bounds: tuple[float, float] | float | None = -1
@@ -314,15 +326,18 @@ class RNNActorCritic(nn.RNNCellBase):
         if self.use_cnn:
             self.enc = ConvEncoder(latent_size=16, c_hid=8)
 
-    def encode(self, carry, obs, training=True, **kwargs):
+    def encode(self, carry, obs, reset=False, training=True, **kwargs):
         """Step RNN."""
         if self.use_cnn:
             obs = self.enc(obs)
         if not self.rnn_config.model_name:
             return obs, carry
+        h0 = self.initialize_carry(self.make_rng("reset"), obs.shape)
         if carry is None:
             # Initialize seed and the carry
-            carry = self.initialize_carry(self.make_rng(), obs.shape)
+            carry = h0
+        else:
+            carry = jax.tree.map(lambda a, b: jnp.where(reset, a, b), h0, carry)
         carry, hidden = self.rnn(carry, obs, training, **kwargs)
         return hidden, carry
 
@@ -353,6 +368,7 @@ class RNNActorCritic(nn.RNNCellBase):
         sample_act: bool = False,
         training: bool = True,
         selected_act=None,
+        epsilon: float = 0.0,
     ):
         """Compute action distribution form latent."""
         if not self.shared:
@@ -362,13 +378,15 @@ class RNNActorCritic(nn.RNNCellBase):
             if len(x.shape) < len(hidden.shape):
                 x = jnp.expand_dims(x, -2)
             hidden = jnp.concatenate([hidden, x], axis=-1)
-        return self.ac.policy(hidden, sample_act=sample_act, training=training)
+        return self.ac.policy(
+            hidden, sample_act=sample_act, training=training, epsilon=epsilon
+        )
 
     @nn.compact
-    def __call__(self, carry, x, training=True):
+    def __call__(self, carry, x, reset=False, training=True, epsilon: float = 0.0):
         """Step RNN and compute actor and critic."""
         # RNN
-        hidden, new_carry = self.encode(carry, x, training=training)
+        hidden, new_carry = self.encode(carry, x, reset=reset, training=training)
 
         # Critic
         v_hat = self.value(hidden, x, training=training)
@@ -376,7 +394,7 @@ class RNNActorCritic(nn.RNNCellBase):
         # selected_act = v_hat.argmax()
 
         # Actor
-        action, _ = self.policy(hidden, x, True, training=training)
+        action, _ = self.policy(hidden, x, True, training=training, epsilon=epsilon)
 
         if self.pred_obs:
             prediction = self.obs_prediction(hidden, action, x)

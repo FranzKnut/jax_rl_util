@@ -1,7 +1,6 @@
 """Wrappers for gym environments."""
 
 import importlib
-from math import trunc
 import os
 from dataclasses import dataclass
 from functools import partial

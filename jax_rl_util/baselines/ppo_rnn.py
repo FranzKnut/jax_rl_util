@@ -12,7 +12,7 @@ import flashbax as fbx
 import jax
 import jax.numpy as jnp
 import jax.random as jrandom
-from jax_rtrl.models.regularization import sparsity_log_penalty
+
 from matplotlib import pyplot as plt
 import numpy as np
 import optax
@@ -21,7 +21,7 @@ from flax.linen.initializers import constant, orthogonal
 from flax.training.train_state import TrainState
 import wandb
 
-from logging_util import (
+from jax_rl_util.util.logging_util import (
     DummyLogger,
     LoggableConfig,
     checkpointing,
@@ -32,7 +32,6 @@ from logging_util import (
 
 from jax_rl_util.envs.env_util import compute_agg_reward
 from jax_rl_util.envs.environments import EnvironmentConfig, make_env, print_env_info
-from jax_rl_util.envs.plot_drones import plot_from_file
 from jax_rl_util.envs.wrappers import VmapWrapper
 from jax_rl_util.util import running_statistics
 
@@ -826,24 +825,29 @@ def make_train(config: PPOParams, logger: DummyLogger):
                         if config.ent_coef:
                             total_loss -= entropy_schedule(epoch) * entropy
 
-                        sparsity_loss = sparsity_log_penalty(
-                            {
-                                k: v["kernel"]
-                                for k, v in params["params"].items()
-                                if "actor" in k
-                            }
-                        )
-                        if config.sparsity_penalty:
-                            total_loss += config.sparsity_penalty * sparsity_loss
-
-                        return total_loss, {
+                        loss_info = {
                             "value_loss": value_loss,
                             "loss_actor": loss_actor,
                             "entropy": entropy,
                             "gae": _gae,
                             "log_prob_diff": diff,
-                            "sparsity_loss": sparsity_loss,
                         }
+                        if config.sparsity_penalty:
+                            from jax_rtrl.models.regularization import (
+                                sparsity_log_penalty,
+                            )
+
+                            sparsity_loss = sparsity_log_penalty(
+                                {
+                                    k: v["kernel"]
+                                    for k, v in params["params"].items()
+                                    if "actor" in k
+                                }
+                            )
+                            loss_info["sparsity_loss"] = sparsity_loss
+                            total_loss += config.sparsity_penalty * sparsity_loss
+
+                        return total_loss, loss_info
 
                     grad_fn = jax.value_and_grad(_loss_fn, has_aux=True)
                     (total_loss, loss_info), grads = grad_fn(train_state.params)
@@ -995,6 +999,8 @@ def train_and_eval(config: PPOParams, logger=DummyLogger()):
         result = make_train(config, logger)(rng)
 
         if config.env_params.env_name == "dronegym":
+            from jax_rl_util.envs.plot_drones import plot_from_file
+
             # CUSTOM Plotting
             out_dir = f"data/{config.env_params.env_name}"
             # Plot best trajectory
