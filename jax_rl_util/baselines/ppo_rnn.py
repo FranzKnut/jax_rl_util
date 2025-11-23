@@ -30,7 +30,7 @@ from jax_rl_util.util.logging_util import (
 )
 
 from jax_rl_util.envs.env_util import compute_agg_reward
-from jax_rl_util.envs.environments import EnvironmentConfig, make_env, print_env_info
+from jax_rl_util.envs.environments import EnvironmentConfig, make_wrapped_env, print_env_info
 from jax_rl_util.envs.wrappers import VmapWrapper
 from jax_rl_util.util import running_statistics
 
@@ -452,7 +452,7 @@ def make_train(config: PPOParams, logger: DummyLogger):
         print("WARNING: batch_size was not configured: set it to 1.")
         batch_size = 1
 
-    env, env_info, eval_env = make_env(config.env_params, make_eval=True)
+    env, env_info, eval_env = make_wrapped_env(config.env_params, make_eval=True)
     eval_env = VmapWrapper(eval_env, config.eval_batch_size)
     _discrete = env_info["discrete"]
     if env_info["act_clip"]:

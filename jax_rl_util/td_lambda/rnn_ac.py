@@ -8,7 +8,7 @@ import jax
 import jax.numpy as jnp
 from chex import PRNGKey
 from flax import linen as nn
-from jax_rtrl.models.autoencoders import ConvEncoder
+from jax_rtrl.models.autoencoders import ConvEncoder, ConvParams
 from jax_rtrl.models.jax_util import get_normalization_fn, sigmoid_between
 from jax_rtrl.models.feedforward import MLP, FADense
 from jax_rtrl.models.seq_models import RNNEnsemble, RNNEnsembleConfig
@@ -220,7 +220,9 @@ class AC(nn.Module):
             return action, dist
         return dist
 
-    def __call__(self, x, sample_act: bool = False, training: bool = True, epsilon: float = 0.0):
+    def __call__(
+        self, x, sample_act: bool = False, training: bool = True, epsilon: float = 0.0
+    ):
         return self.policy(x, sample_act, training, epsilon=epsilon), self.value(x)
 
     @nn.nowrap
@@ -269,6 +271,7 @@ class RNNActorCritic(nn.RNNCellBase):
     obs_dim: int = None
     rnn_config: RNNEnsembleConfig = field(default_factory=RNNEnsembleConfig)
     use_cnn: bool = False
+    cnn_config: ConvParams = field(default_factory=ConvParams)
     split_actor: bool = False
     f_align: bool = True
     act_log_bounds: tuple[float, float] | float | None = -1
@@ -324,15 +327,16 @@ class RNNActorCritic(nn.RNNCellBase):
             )
 
         if self.use_cnn:
-            self.enc = ConvEncoder(latent_size=16, c_hid=8)
+            self.enc = ConvEncoder(self.cnn_config, name="enc")
 
     def encode(self, carry, obs, reset=False, training=True, **kwargs):
         """Step RNN."""
+        h0 = self.initialize_carry(self.make_rng("reset"), obs.shape)
+
         if self.use_cnn:
             obs = self.enc(obs)
         if not self.rnn_config.model_name:
             return obs, carry
-        h0 = self.initialize_carry(self.make_rng("reset"), obs.shape)
         if carry is None:
             # Initialize seed and the carry
             carry = h0
@@ -412,5 +416,8 @@ class RNNActorCritic(nn.RNNCellBase):
         """Initialize the Worldmodel cell carry."""
         if not self.rnn_config.model_name:
             return None
+
+        if self.use_cnn:
+            input_shape = input_shape[:-3] + (self.cnn_config.latent_size,)
 
         return self.rnn.initialize_carry(rng, input_shape)

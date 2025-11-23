@@ -80,15 +80,16 @@ class EnvironmentConfig:
 
     Attributes
     ----------
+        env_name (str): Environment name. Supported are brax, gymnax, popjym, highway_env, mujoco_playgound and gym envs.
         obs_mask (Union[str, Iterable[int]]): Mask for the observation space.
-        env_kwargs (dict): Arguments for the env step function.
         init_kwargs (dict): Initialization arguments for the environment.
+        env_kwargs (dict): Arguments for the env step function.
+        max_ep_length (int): Maximum episode length.
         batch_size (int): Number of parallel environments.
-        render (bool): Whether to render the environment during training.
     """
 
     env_name: str = "CartPole-v1"
-    reward_scaling: int = 1
+    # reward_scaling: int = 1
     obs_mask: str | Iterable[int] | None = None
     init_kwargs: dict = field(default_factory=dict, hash=False)
     env_kwargs: dict = field(default_factory=dict, hash=False)
@@ -150,8 +151,70 @@ def get_env_specs(env: gym.Env, obs_mask=None):
     return OBS_SIZE, DISCRETE, ACT_SIZE, obs_mask, act_clip
 
 
-def make_env(
-    params: EnvironmentConfig, debug=0, make_eval=False, use_vmap_wrapper=True
+def get_env(config: EnvironmentConfig, debug=0) -> gym.Env:
+    """Get a brax or gymnax env from config.
+
+    Parameters
+    ----------
+    config : EnvironmentConfig
+        Environment configuration.
+
+    Returns
+    -------
+    envs.Env
+        Environment.
+    """
+    env_name = config.env_name
+    if GYMNAX_INSTALLED and env_name in gymnax.registered_envs:
+        # Set params for gymnax envs
+        config.env_kwargs["max_steps_in_episode"] = config.max_ep_length
+
+        # create a gym environment
+        env, gymnax_params = gymnax.make(env_name, **config.init_kwargs)
+        env = GymnaxBraxWrapper(env, config.env_kwargs)
+        env.package_name = "gymnax"
+    elif POPJYM_INSTALLED and env_name in popjym.registration.REGISTERED_ENVS:
+        env, env_params = popjym.make(env_name)
+        env = PopJymBraxWrapper(env, config.env_kwargs)
+        env.package_name = "popjym"
+    elif "dronegym" in env_name.lower():
+        env = DroneGym(**config.init_kwargs)
+        env = GymnaxBraxWrapper(env, config.env_kwargs)
+        env.package_name = "misc"
+    elif "tribead" in env_name.lower():
+        env = TriangleJax(**config.init_kwargs)
+        env = GymnaxBraxWrapper(env, config.env_kwargs)
+        env.package_name = "misc"
+    elif env_name.startswith("brax-") or env_name in brax.envs._envs:
+        # Create entrypoint for brax env
+        env = brax.envs.get_environment(
+            env_name=env_name.replace("brax-", ""), **config.init_kwargs
+        )
+
+    elif MUJOCO_PLAYGROUND_INSTALLED and (
+        env_name.startswith("playground-")
+        or env_name in mujoco_playground.registry.ALL_ENVS
+    ):
+        env = mujoco_playground.registry.load(env_name.replace("playground-", ""))
+        # env = GymnaxBraxWrapper(env, params.env_kwargs)
+        env.package_name = "mujoco_playground"
+    else:
+        # Create gym environment
+        env = gym.make(
+            env_name.replace("gym-", ""),
+            disable_env_checker=debug < 3,
+            **config.init_kwargs,
+        )
+        env = GymJaxWrapper(env)
+        env = GymBraxWrapper(env, config.env_kwargs)
+        env.package_name = "gym"
+
+    env.env_name = env_name  # Make sure it knows its name
+    return env
+
+
+def make_wrapped_env(
+    config: EnvironmentConfig, debug=0, make_eval=False, use_vmap_wrapper=True
 ) -> tuple[BraxEnv, dict] | tuple[BraxEnv, dict, BraxEnv]:
     """Make brax or gymnax env.
 
@@ -180,78 +243,39 @@ def make_env(
     # Unify env and eval_env creation.
 
     env: BraxEnv
-    env_name = params.env_name
+    env_name = config.env_name
 
-    def _get_env():
-        if GYMNAX_INSTALLED and env_name in gymnax.registered_envs:
-            # Set params for gymnax envs
-            params.env_kwargs["max_steps_in_episode"] = params.max_ep_length
-
-            # create a gym environment
-            env, gymnax_params = gymnax.make(env_name, **params.init_kwargs)
-            env = GymnaxBraxWrapper(env, params.env_kwargs)
-        elif POPJYM_INSTALLED and env_name in popjym.registration.REGISTERED_ENVS:
-            env, env_params = popjym.make(env_name)
-            env = PopJymBraxWrapper(env, params.env_kwargs)
-        elif "dronegym" in env_name.lower():
-            env = DroneGym(**params.init_kwargs)
-            env = GymnaxBraxWrapper(env, params.env_kwargs)
-        elif "tribead" in env_name.lower():
-            env = TriangleJax(**params.init_kwargs)
-            env = GymnaxBraxWrapper(env, params.env_kwargs)
-        elif env_name.startswith("brax-") or env_name in brax.envs._envs:
-            # Create entrypoint for brax env
-            env = brax.envs.get_environment(
-                env_name=env_name.replace("brax-", ""), **params.init_kwargs
-            )
-            env.env_name = env_name  # Make sure it knows its name
-        elif MUJOCO_PLAYGROUND_INSTALLED and (
-            env_name.startswith("playground-")
-            or env_name in mujoco_playground.registry.ALL_ENVS
-        ):
-            env = mujoco_playground.registry.load(env_name.replace("playground-", ""))
-            # env = GymnaxBraxWrapper(env, params.env_kwargs)
-        else:
-            # Create gym environment
-            env = gym.make(
-                env_name.replace("gym-", ""),
-                disable_env_checker=debug < 3,
-                **params.init_kwargs,
-            )
-            env = GymJaxWrapper(env)
-            env = GymBraxWrapper(env, params.env_kwargs)
-        return env
-
-    env = _get_env()
+    env = get_env(config)
     OBS_SIZE, DISCRETE, ACT_SIZE, obs_mask, act_clip = get_env_specs(
-        env, params.obs_mask
+        env, config.obs_mask
     )
     env.name = env_name
 
     # Wrap with the brax wrappers
-    env = EpisodeWrapper(env, params.max_ep_length, action_repeat=1)
+    env = EpisodeWrapper(env, config.max_ep_length, action_repeat=1)
     # env = FlatObsBraxWrapper(env)
-    if obs_mask is not None:
-        env = POBraxWrapper(env, obs_mask)
+    if config.obs_mask is not None:
+        env = POBraxWrapper(env, config.obs_mask)
     env = RandomizedAutoResetWrapper(env)
     # env = EfficientAutoResetWrapper(env)
-    if (params.batch_size is not None and (params.batch_size > 1)) or use_vmap_wrapper:
-        env = VmapWrapper(env, batch_size=params.batch_size)
+    if (config.batch_size is not None and (config.batch_size > 1)) or use_vmap_wrapper:
+        env = VmapWrapper(env, batch_size=config.batch_size)
     env_info = dict(
         obs_size=OBS_SIZE,
         discrete=DISCRETE,
         act_size=ACT_SIZE,
-        obs_mask=obs_mask,
+        obs_mask=config.obs_mask,
         act_clip=act_clip,
+        package_name=env.package_name,
     )
 
     if make_eval:
-        eval_env = _get_env()
+        eval_env = get_env(config=config, debug=debug)
         eval_env.name = env_name
-        eval_env = EpisodeWrapper(eval_env, params.max_ep_length, action_repeat=1)
+        eval_env = EpisodeWrapper(eval_env, config.max_ep_length, action_repeat=1)
         # eval_env = FlatObsBraxWrapper(eval_env)
-        if obs_mask is not None:
-            eval_env = POBraxWrapper(eval_env, obs_mask)
+        if config.obs_mask is not None:
+            eval_env = POBraxWrapper(eval_env, config.obs_mask)
         eval_env = RandomizedAutoResetWrapper(eval_env)
         return env, env_info, eval_env
 

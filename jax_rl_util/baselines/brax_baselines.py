@@ -4,9 +4,7 @@ import functools
 import os
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Iterable
 
-import brax.envs
 import jax
 import numpy as np
 import simple_parsing
@@ -16,12 +14,11 @@ from brax.training.agents.ppo import train as ppo
 from brax.training.agents.sac import train as sac
 from jax import debug
 from jax import numpy as jnp
+from wrapt import wrap_function_wrapper
+from jax_rl_util.envs.environments import EnvironmentConfig, get_env, make_wrapped_env
 from jax_rl_util.util.logging_util import DummyLogger, LoggableConfig, with_logger
 
-import jax_rl_util.envs  # noqa
-from jax_rl_util.util import try_init_metal
 from jax_rl_util.envs.env_util import render_brax
-from jax_rl_util.envs.wrappers import POBraxWrapper
 
 DEBUG = False
 TRAIN = True
@@ -33,17 +30,21 @@ os.environ["XLA_FLAGS"] = "--xla_gpu_triton_gemm_any=true"
 
 
 @dataclass
-class BraxBaselineParams(LoggableConfig):
+class BraxBaselineConfig(LoggableConfig):
     """Class representing the training parameters for reinforcement learning."""
 
     project_name: str = "brax_baselines"
-    env_name: str = "ant"
-    backend: str = "spring"
     force: bool = False
-    env_kwargs: dict = field(default_factory=dict)
-    obs_mask: str | Iterable[int] | None = None
+    env_config: EnvironmentConfig = field(
+        default_factory=lambda: EnvironmentConfig(env_name="AlohaSinglePegInsertion")
+    )
     render: bool = True
 
+
+ppo_defaults = {
+    "num_timesteps": 1_000_000,
+    "episode_length": 1000,
+}
 
 # We determined some reasonable hyperparameters offline and share them here.
 TRAIN_FNS = {
@@ -288,28 +289,25 @@ def load_brax_model(path, env_name: str, obs_size: int, act_size: int):
 
 
 def eval_baseline(
+    env_config,
     path: str,
-    env_name: str,
-    env_kwargs: dict = {},
     steps=10000,
     render=True,
     render_start=0,
     render_steps=1000,
-    brax_backend="generalized",
 ):
     """Evaluate a baseline model on the given environment."""
     # create an env with auto-reset
-
-    env = brax.envs.create(env_name=env_name, backend=brax_backend, **env_kwargs)
+    env = make_wrapped_env(env_config)[0]
     jit_env_reset = jax.jit(env.reset)
     jit_env_step = jax.jit(env.step)
     rng = jax.random.PRNGKey(seed=1)
     state = jit_env_reset(rng=rng)
     jit_inference_fn = load_brax_model(
-        path, env_name, env.observation_size, env.action_size
+        path, env_config.env_name, env.observation_size, env.action_size
     )
 
-    print(f"Running {steps} steps of {env_name} environment")
+    print(f"Running {steps} steps of {env_config.env_name} environment")
 
     def eval_step(carry, n):
         state, rng = carry
@@ -329,15 +327,10 @@ def eval_baseline(
         return avg_reward
 
 
-def train_brax_baseline(config: BraxBaselineParams, logger=DummyLogger()):
+def train_brax_baseline(config: BraxBaselineConfig, logger=DummyLogger()):
     """Train a baseline model for control of a brax physics simulation."""
-    env_name = config.env_name.replace("brax-", "")
-    obs_mask = config.obs_mask
-    env = brax.envs.get_environment(
-        env_name=env_name, backend=config.backend, **config.env_kwargs
-    )
-    if obs_mask:
-        env = POBraxWrapper(env, obs_mask)
+    env_name = config.env_config.env_name
+    env = get_env(config.env_config)
 
     xdata, ydata = [], []
     times = [datetime.now()]
@@ -361,15 +354,32 @@ def train_brax_baseline(config: BraxBaselineParams, logger=DummyLogger()):
         debug.callback(print_progress, num_steps, metrics["eval/episode_reward"])
 
     file_dir = os.path.dirname(os.path.abspath(__file__))
-    model_filename = (
-        file_dir + f"/trained/brax_baselines/{config.backend}/{env_name}.ckpt"
-    )
+    model_filename = file_dir + f"/trained/brax_baselines/{env.package_name}"
+    if env.package_name == "brax":
+        model_filename += (
+            f"/{config.env_config.env_kwargs.get('backend', 'generalized')}"
+        )
+    model_filename += f"/{env_name}.ckpt"
+
+    wrap_env_fn = None
+    if env.package_name == "mujoco_playground":
+        from mujoco_playground import wrapper
+
+        wrap_env_fn = wrapper.wrap_for_brax_training
+
     if os.path.exists(model_filename) and not config.force:
         print("Loading existing model")
         params = model.load_params(model_filename)
     else:
         print(f"Starting training for {env_name} environment")
-        _, params, _ = TRAIN_FNS[env_name](environment=env, progress_fn=progress)
+        _train_fn = TRAIN_FNS.get(
+            env_name, functools.partial(ppo.train, **ppo_defaults)
+        )
+        _, params, _ = _train_fn(
+            environment=env,
+            progress_fn=progress,
+            wrap_env_fn=wrap_env_fn,
+        )
         print(f"time to jit: {times[1] - times[0]}")
         print(f"time to train: {times[-1] - times[1]}")
 
@@ -377,13 +387,7 @@ def train_brax_baseline(config: BraxBaselineParams, logger=DummyLogger()):
     model.save_params(model_filename, params)
     # logger.save_model(model_filename)
     print(f"Saved model to {model_filename}")
-    avg_reward = eval_baseline(
-        model_filename,
-        env_name,
-        config.env_kwargs,
-        brax_backend=config.backend,
-        render=config.render,
-    )
+    avg_reward = eval_baseline(config.env_config, model_filename, render=config.render)
     if config.render and not DEBUG:
         avg_reward, frames = avg_reward
         logger.log_video(
@@ -394,11 +398,7 @@ def train_brax_baseline(config: BraxBaselineParams, logger=DummyLogger()):
 
 if __name__ == "__main__" and TRAIN:
     parser = simple_parsing.ArgumentParser()
-    parser.add_arguments(BraxBaselineParams, "params")
-    params: BraxBaselineParams = parser.parse_args().params
+    parser.add_arguments(BraxBaselineConfig, "params")
+    config: BraxBaselineConfig = parser.parse_args().params
 
-    envs_list = TRAIN_FNS.keys() if params.env_name == "all" else [params.env_name]
-
-    for env in envs_list:
-        params.env_name = env
-        with_logger(train_brax_baseline, params, run_name=params.env_name + " baseline")
+    with_logger(train_brax_baseline, config)
