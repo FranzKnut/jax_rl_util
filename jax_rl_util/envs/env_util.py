@@ -84,7 +84,11 @@ def make_obs_mask(
 
 
 def render_frames(
-    _env: gym.Env, states: list, start_idx: int = None, end_idx: int = None
+    _env: gym.Env,
+    states: list,
+    start_idx: int = None,
+    end_idx: int = None,
+    **kwargs,
 ):
     """Render the given states of the environment.
 
@@ -114,6 +118,7 @@ def render_frames(
     frames = []
     try:
         import mujoco_playground
+
         # Define rendering function for specific envs
         is_playground = (
             _env.name.startswith("playground-")

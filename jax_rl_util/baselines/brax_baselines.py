@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 
 import jax
+import mujoco_playground
 import numpy as np
 import simple_parsing
 from brax.io import model
@@ -14,11 +15,10 @@ from brax.training.agents.ppo import train as ppo
 from brax.training.agents.sac import train as sac
 from jax import debug
 from jax import numpy as jnp
-from wrapt import wrap_function_wrapper
 from jax_rl_util.envs.environments import EnvironmentConfig, get_env, make_wrapped_env
 from jax_rl_util.util.logging_util import DummyLogger, LoggableConfig, with_logger
 
-from jax_rl_util.envs.env_util import render_brax
+from jax_rl_util.envs.env_util import render_frames
 
 DEBUG = False
 TRAIN = True
@@ -34,9 +34,10 @@ class BraxBaselineConfig(LoggableConfig):
     """Class representing the training parameters for reinforcement learning."""
 
     project_name: str = "brax_baselines"
-    force: bool = False
+    logging: str | None = None  # "wandb"
+    force: bool = True
     env_config: EnvironmentConfig = field(
-        default_factory=lambda: EnvironmentConfig(env_name="AlohaSinglePegInsertion")
+        default_factory=lambda: EnvironmentConfig(env_name="PandaPickCubeOrientation")
     )
     render: bool = True
 
@@ -266,16 +267,18 @@ def load_brax_model(path, env_name: str, obs_size: int, act_size: int):
     def normalize(x, y):
         return x  # noqa
 
-    if TRAIN_FNS[env_name].keywords["normalize_observations"]:
+    _train_fn = TRAIN_FNS.get(env_name, functools.partial(ppo.train, **ppo_defaults))
+
+    if _train_fn.keywords.get("normalize_observations", False):
         normalize = acme.running_statistics.normalize  # noqa
 
-    if TRAIN_FNS[env_name].func.__module__.split(".")[-2] == "ppo":
+    if _train_fn.func.__module__.split(".")[-2] == "ppo":
 
         def make_inference_fn(*args, **kwargs):  # noqa
             return ppo.ppo_networks.make_inference_fn(
                 ppo.ppo_networks.make_ppo_networks(*args, **kwargs)
             )
-    elif TRAIN_FNS[env_name].func.__module__.split(".")[-2] == "sac":
+    elif _train_fn.func.__module__.split(".")[-2] == "sac":
 
         def make_inference_fn(*args, **kwargs):  # noqa
             return sac.sac_networks.make_inference_fn(
@@ -288,13 +291,11 @@ def load_brax_model(path, env_name: str, obs_size: int, act_size: int):
     return jax.jit(lambda obs, key: _fn(obs, key)[0])
 
 
+# @jax.jit # TODO: refactor to make_eval_fn() -> jitted function
 def eval_baseline(
     env_config,
     path: str,
     steps=10000,
-    render=True,
-    render_start=0,
-    render_steps=1000,
 ):
     """Evaluate a baseline model on the given environment."""
     # create an env with auto-reset
@@ -302,7 +303,7 @@ def eval_baseline(
     jit_env_reset = jax.jit(env.reset)
     jit_env_step = jax.jit(env.step)
     rng = jax.random.PRNGKey(seed=1)
-    state = jit_env_reset(rng=rng)
+    state = jit_env_reset(seed=rng)
     jit_inference_fn = load_brax_model(
         path, env_config.env_name, env.observation_size, env.action_size
     )
@@ -317,14 +318,8 @@ def eval_baseline(
         return (state, rng), state
 
     _, states = jax.lax.scan(eval_step, (state, rng), jnp.arange(steps))
-    avg_reward = sum(states.reward) / max(sum(states.done), 1)
-    print(f"average reward: {avg_reward}")
-    if render:
-        print("Rendering...")
-        frames = render_brax(env, states, render_steps, render_start, camera=None)
-        return avg_reward, frames
-    else:
-        return avg_reward
+    avg_reward = jnp.sum(states.reward) / jnp.maximum(jnp.sum(states.done), 1)
+    return avg_reward, states
 
 
 def train_brax_baseline(config: BraxBaselineConfig, logger=DummyLogger()):
@@ -366,19 +361,41 @@ def train_brax_baseline(config: BraxBaselineConfig, logger=DummyLogger()):
         from mujoco_playground import wrapper
 
         wrap_env_fn = wrapper.wrap_for_brax_training
+        _env_name = env_name.replace("mujoco_playground", "")
+        if _env_name in mujoco_playground.manipulation._envs:
+            from mujoco_playground.config import manipulation_params as default_params
+        elif _env_name in mujoco_playground.locomotion._envs:
+            from mujoco_playground.config import locomotion_params as default_params
+        elif _env_name in mujoco_playground.dm_control_suite._envs:
+            from mujoco_playground.config import (
+                dm_control_suite_params as default_params,
+            )
+        else:
+            print(
+                f"Env {_env_name} not found in mujoco_playground registry. Using default PPO params."
+            )
+        # TODO: allow sac training for mujoco_playground envs
+        ppo_defaults = default_params.brax_ppo_config(env_name)
+        network_factory = ppo.ppo_networks.make_ppo_networks
+        if "network_factory" in ppo_defaults:
+            # HACK: construct network factory from mujoco_playground params
+            network_factory = functools.partial(
+                network_factory, **ppo_defaults.network_factory
+            )
+            del ppo_defaults["network_factory"]
+
+    _train_fn = TRAIN_FNS.get(env_name, functools.partial(ppo.train, **ppo_defaults))
 
     if os.path.exists(model_filename) and not config.force:
         print("Loading existing model")
         params = model.load_params(model_filename)
     else:
         print(f"Starting training for {env_name} environment")
-        _train_fn = TRAIN_FNS.get(
-            env_name, functools.partial(ppo.train, **ppo_defaults)
-        )
         _, params, _ = _train_fn(
             environment=env,
             progress_fn=progress,
             wrap_env_fn=wrap_env_fn,
+            network_factory=network_factory,
         )
         print(f"time to jit: {times[1] - times[0]}")
         print(f"time to train: {times[-1] - times[1]}")
@@ -387,11 +404,16 @@ def train_brax_baseline(config: BraxBaselineConfig, logger=DummyLogger()):
     model.save_params(model_filename, params)
     # logger.save_model(model_filename)
     print(f"Saved model to {model_filename}")
-    avg_reward = eval_baseline(config.env_config, model_filename, render=config.render)
+    avg_reward, states = eval_baseline(config.env_config, model_filename)
+    print(f"average reward: {avg_reward}")
     if config.render and not DEBUG:
-        avg_reward, frames = avg_reward
+        print("Rendering...")
+        frames = render_frames(env, states, start_idx=0, end_idx=200)
         logger.log_video(
-            "env/video", np.array(frames), fps=30, caption=f"Reward: {avg_reward:.2f}"
+            "env/video",
+            np.array(frames),
+            fps=30,
+            caption=f"Reward: {avg_reward.mean():.2f}",
         )
     logger["eval_reward"] = avg_reward
 

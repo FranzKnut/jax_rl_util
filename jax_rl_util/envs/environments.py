@@ -209,7 +209,9 @@ def get_env(config: EnvironmentConfig, debug=0) -> gym.Env:
         env = GymBraxWrapper(env, config.env_kwargs)
         env.package_name = "gym"
 
-    env.env_name = env_name  # Make sure it knows its name
+    # Make sure it knows its name for compatibility with other packages
+    env.env_name = env_name 
+    env.name = env_name
     return env
 
 
