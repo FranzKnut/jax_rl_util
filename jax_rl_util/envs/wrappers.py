@@ -9,6 +9,7 @@ from typing import Iterable
 import gymnasium as gym
 import gymnax
 import jax
+from jax_rtrl.models.jax_util import preprocess_img
 import numpy as np
 from brax.envs import Env as BraxEnv
 from brax.envs.base import State
@@ -254,6 +255,22 @@ class GymnaxBraxWrapper(Wrapper):
 
 #     def render(self, mode="human"):
 #         return super().render(mode)
+
+
+class GrayscaleWrapper(Wrapper):
+    """Convert RGB images to Grayscale."""
+
+    def reset(self, rng: jnp.ndarray) -> jnp.ndarray:
+        """Make grayscale from RGB Image."""
+        env_state = self.env.reset(rng)
+        gray_obs = preprocess_img(env_state.obs)
+        return env_state.replace(obs=gray_obs)
+
+    def step(self, state: jnp.ndarray, action: jnp.ndarray) -> jnp.ndarray:
+        """Make grayscale from RGB Image."""
+        env_state = self.env.step(state, action)
+        gray_obs = preprocess_img(env_state.obs)
+        return env_state.replace(obs=gray_obs)
 
 
 class PopJymBraxWrapper(GymnaxBraxWrapper):

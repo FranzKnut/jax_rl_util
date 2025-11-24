@@ -386,7 +386,9 @@ def train_brax_baseline(config: BraxBaselineConfig, logger=DummyLogger()):
             )
             del ppo_config["network_factory"]
     pprint(ppo_config)
-    _train_fn = TRAIN_FNS.get(env_name, functools.partial(ppo.train, **ppo_config))
+    _train_fn = TRAIN_FNS.get(
+        env_name, functools.partial(ppo.train, **dict(ppo_config))
+    )
 
     if os.path.exists(model_filename) and not config.force:
         print("Loading existing model")

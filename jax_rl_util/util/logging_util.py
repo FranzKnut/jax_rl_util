@@ -497,17 +497,11 @@ class ExceptionPrinter(contextlib.AbstractContextManager):
         return False
 
 
-def with_logger(
-    func: Callable,
-    hparams: LoggableConfig,
-    run_name="",
-):
-    """Wrap training function with logger.
+def make_logger(hparams: LoggableConfig, run_name=""):
+    """Make logger according to hparams.
 
     Parameters
     ----------
-    func : Callable
-        Function to evaluate.
     hparams : LoggableConfig
         Hyperparameters for the run. If dict, pick hparams by project_name.
         Will be updated by wandb.config if called by wandb.agent.
@@ -517,7 +511,7 @@ def with_logger(
     Returns
     -------
     Any
-        Result of the function
+        Logger instance
     """
     if hparams.logging == "wandb":
         logger: WandbLogger = WandbLogger(hparams, run_name)
@@ -527,7 +521,25 @@ def with_logger(
     else:
         print("No logger specified, using DummyLogger")
         logger = DummyLogger()
+    return logger
 
+
+def with_logger(func: Callable, hparams: LoggableConfig, run_name=""):
+    """Wrap training function with logger.
+
+    Parameters
+    ----------
+    func : Callable
+        Function to evaluate.
+    hparams : LoggableConfig
+    run_name : str, optional
+
+    Returns
+    -------
+    Any
+        Result of the function
+    """
+    logger = make_logger(hparams, run_name=run_name)
     # Run the function with the logger
     try:
         ret_code = 0

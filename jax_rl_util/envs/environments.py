@@ -64,6 +64,7 @@ from .tribead import TriangleJax
 from .wrappers import (
     EpisodeWrapper,
     FlatObsBraxWrapper,
+    GrayscaleWrapper,
     GymBraxWrapper,
     GymJaxWrapper,
     GymnaxBraxWrapper,
@@ -99,8 +100,12 @@ class EnvironmentConfig:
 
 def print_env_info(env_info):
     """Print infos about an environment. Takes env_info from make_env."""
-    OBS_SIZE, DISCRETE, ACT_SIZE, obs_mask, act_clip = env_info.values()
-    print("ENV:")
+    env_name, package, OBS_SIZE, DISCRETE, ACT_SIZE, obs_mask, act_clip = (
+        env_info.values()
+    )
+    print(f"ENV:         {env_name}")
+    print(f"package:     {package}")
+    print(f"obs_size:    {OBS_SIZE}")
     print(f"obs_size:    {OBS_SIZE}")
     print(f"act_size:    {ACT_SIZE}" + (" (discrete)" if DISCRETE else " (continuous)"))
     print(f"obs_mask:    {obs_mask}")
@@ -210,13 +215,13 @@ def get_env(config: EnvironmentConfig, debug=0) -> gym.Env:
         env.package_name = "gym"
 
     # Make sure it knows its name for compatibility with other packages
-    env.env_name = env_name 
+    env.env_name = env_name
     env.name = env_name
     return env
 
 
 def make_wrapped_env(
-    config: EnvironmentConfig, debug=0, make_eval=False, use_vmap_wrapper=True
+    config: EnvironmentConfig, debug=0, make_eval=False, use_vmap_wrapper=True, grayscale=False
 ) -> tuple[BraxEnv, dict] | tuple[BraxEnv, dict, BraxEnv]:
     """Make brax or gymnax env.
 
@@ -232,6 +237,8 @@ def make_wrapped_env(
         If true, eval env without batching is also returned
     use_vmap_wrapper : bool, optional
         Force using the vmap wrapper (even for batchsize 1), by default True
+    grayscale : bool, optional
+        Whether to convert observations to grayscale, by default False
 
     Returns
     -------
@@ -241,8 +248,7 @@ def make_wrapped_env(
         Dictionary with env info
     """
     # TODO refactor:
-    # Make env_info a field of the env.
-    # Unify env and eval_env creation.
+    # -[ ] Make env_info a field of the env.
 
     env: BraxEnv
     env_name = config.env_name
@@ -252,6 +258,9 @@ def make_wrapped_env(
         env, config.obs_mask
     )
     env.name = env_name
+    
+    if grayscale:
+        env = GrayscaleWrapper(env)
 
     # Wrap with the brax wrappers
     env = EpisodeWrapper(env, config.max_ep_length, action_repeat=1)
@@ -263,17 +272,20 @@ def make_wrapped_env(
     if (config.batch_size is not None and (config.batch_size > 1)) or use_vmap_wrapper:
         env = VmapWrapper(env, batch_size=config.batch_size)
     env_info = dict(
+        env_name=env_name,
+        package_name=env.package_name,
         obs_size=OBS_SIZE,
         discrete=DISCRETE,
         act_size=ACT_SIZE,
         obs_mask=config.obs_mask,
         act_clip=act_clip,
-        package_name=env.package_name,
     )
 
     if make_eval:
         eval_env = get_env(config=config, debug=debug)
         eval_env.name = env_name
+        if grayscale:
+            eval_env = GrayscaleWrapper(eval_env)
         eval_env = EpisodeWrapper(eval_env, config.max_ep_length, action_repeat=1)
         # eval_env = FlatObsBraxWrapper(eval_env)
         if config.obs_mask is not None:

@@ -1,6 +1,7 @@
 """RNN Actor-Critic flax Module."""
 
 from dataclasses import field
+from functools import partial
 from numbers import Number
 
 import distrax
@@ -8,10 +9,14 @@ import jax
 import jax.numpy as jnp
 from chex import PRNGKey
 from flax import linen as nn
-from jax_rtrl.models.autoencoders import ConvEncoder, ConvParams
+from jax_rtrl.models.autoencoders import ConvEncoder, ConvConfig
 from jax_rtrl.models.jax_util import get_normalization_fn, sigmoid_between
 from jax_rtrl.models.feedforward import MLP, FADense
-from jax_rtrl.models.seq_models import RNNEnsemble, RNNEnsembleConfig
+from jax_rtrl.models.seq_models import (
+    RNNEnsemble,
+    RNNEnsembleConfig,
+    make_batched_model,
+)
 from jax_rtrl.networks.policies import PolicyRNN
 
 
@@ -139,12 +144,18 @@ class AC(nn.Module):
     critic_layers: tuple[int, ...] = ()
     f_align: bool = False
     norm: str | None = None  # Normalization type, e.g., "layer", "batch"
+    num_modules: int | None = None
     # action_noise: float = 0.0  # TODO: Implement action noise for exploration
 
     def setup(self) -> None:
         """Initialize components."""
         # Actor
-        self.actor = Actor(
+        self.actor = make_batched_model(
+            Actor,
+            split_rngs=True,
+            axis_size=self.num_modules,
+            in_axes=(0, None),
+        )(
             self.actor_layers,
             self.f_align,
             self.discrete,
@@ -156,7 +167,12 @@ class AC(nn.Module):
             name="actor",
         )
         # Critic
-        self.critic = Critic(
+        self.critic = make_batched_model(
+            Critic,
+            split_rngs=True,
+            axis_size=self.num_modules,
+            in_axes=(0, None),
+        )(
             self.critic_layers,
             self.f_align,
             norm=self.norm,
@@ -168,7 +184,7 @@ class AC(nn.Module):
         if not self.split_actor and x.shape[-2] > 1:
             # First module of the ensemble is used for the actor
             x = x[..., 1:, :]  # Assume first axis is ensemble axis
-        return self.critic(x, training=training)
+        return self.critic(x, training)
 
     def policy(
         self, x, sample_act: bool = False, training: bool = True, epsilon: float = 0.0
@@ -194,26 +210,26 @@ class AC(nn.Module):
         Notes:
             - When sample_act is True and self.act_bounds is defined,
                 actions are automatically clipped to action bounds.
-            - Uses internal RNG state for stochastic sampling via self.make_rng("sampling").
+            - Uses internal RNG state for stochastic sampling via self.make_rng("default").
         """
         if not self.split_actor:
             # First module of the ensemble is used for the actor
             x = x[..., 0, :]  # Assume first axis is ensemble axis
-        dist = self.actor(x, training=training)
+        dist = self.actor(x, training)
         if sample_act:
             greedy_action = dist.mode()
             if not training:
                 action = greedy_action
             else:
                 _rnd = jax.random.uniform(
-                    self.make_rng("sampling"), shape=greedy_action.shape
+                    self.make_rng("default"), shape=greedy_action.shape
                 )
                 # Epsilon-greedy action selection
                 greedy_action = dist.mode()
                 action = jnp.where(
                     _rnd < epsilon,
                     greedy_action,
-                    dist.sample(seed=self.make_rng("sampling")),
+                    dist.sample(seed=self.make_rng("default")),
                 )
             if self.act_bounds is not None:
                 action = jnp.clip(action, *self.act_bounds)
@@ -271,7 +287,7 @@ class RNNActorCritic(nn.RNNCellBase):
     obs_dim: int = None
     rnn_config: RNNEnsembleConfig = field(default_factory=RNNEnsembleConfig)
     use_cnn: bool = False
-    cnn_config: ConvParams = field(default_factory=ConvParams)
+    cnn_config: ConvConfig = field(default_factory=ConvConfig)
     split_actor: bool = False
     f_align: bool = True
     act_log_bounds: tuple[float, float] | float | None = -1
@@ -296,14 +312,6 @@ class RNNActorCritic(nn.RNNCellBase):
                     )
                 self.rnn = RNNEnsemble(self.rnn_config, name="rnn")
 
-        # Make an ensemble of actor and critic using flax.linen.vmap
-        # _vmap_td = nn.vmap(
-        #     AC,
-        #     variable_axes={"params": 0, "hidden": None, "falign": 0},
-        #     split_rngs={"params": True, "falign": True},
-        #     methods=["actor", "critic"],
-        #     axis_size=self.num_modules,
-        # )
         self.ac = AC(
             a_dim=self.a_dim,
             discrete=self.discrete,
@@ -314,6 +322,7 @@ class RNNActorCritic(nn.RNNCellBase):
             critic_layers=self.critic_layers,
             f_align=self.f_align,
             act_dist_name=self.act_dist_name,
+            num_modules=self.rnn_config.num_modules,
             name="ac",
         )
 
@@ -347,9 +356,9 @@ class RNNActorCritic(nn.RNNCellBase):
 
     def value(self, hidden, x=None, training=True):
         """Compute value from latent."""
-        if not self.shared:
-            # hidden = jnp.concatenate([jax.lax.stop_gradient(hidden[0]), hidden[1]], axis=-1)
-            hidden = hidden[..., 1:, :]
+        # if not self.shared:
+        #     # hidden = jnp.concatenate([jax.lax.stop_gradient(hidden[0]), hidden[1]], axis=-1)
+        #     hidden = hidden[..., 1:, :]
         if self.pass_obs:
             if len(x.shape) < len(hidden.shape):
                 x = jnp.expand_dims(x, -2)
@@ -375,9 +384,9 @@ class RNNActorCritic(nn.RNNCellBase):
         epsilon: float = 0.0,
     ):
         """Compute action distribution form latent."""
-        if not self.shared:
-            # hidden = jnp.concatenate([hidden[0], jax.lax.stop_gradient(hidden[1])], axis=-1)
-            hidden = hidden[..., :1, :]
+        # if not self.shared:
+        #     # hidden = jnp.concatenate([hidden[0], jax.lax.stop_gradient(hidden[1])], axis=-1)
+        #     hidden = hidden[..., :1, :]
         if self.pass_obs:
             if len(x.shape) < len(hidden.shape):
                 x = jnp.expand_dims(x, -2)
@@ -394,7 +403,6 @@ class RNNActorCritic(nn.RNNCellBase):
 
         # Critic
         v_hat = self.value(hidden, x, training=training)
-
         # selected_act = v_hat.argmax()
 
         # Actor
