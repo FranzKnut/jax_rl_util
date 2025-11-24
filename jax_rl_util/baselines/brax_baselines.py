@@ -4,6 +4,7 @@ import functools
 import os
 from dataclasses import dataclass, field
 from datetime import datetime
+from pprint import pprint
 
 import jax
 import mujoco_playground
@@ -34,8 +35,8 @@ class BraxBaselineConfig(LoggableConfig):
     """Class representing the training parameters for reinforcement learning."""
 
     project_name: str = "brax_baselines"
-    logging: str | None = None  # "wandb"
-    force: bool = True
+    logging: str | None = "wandb"
+    force: bool = False
     env_config: EnvironmentConfig = field(
         default_factory=lambda: EnvironmentConfig(env_name="PandaPickCubeOrientation")
     )
@@ -357,6 +358,7 @@ def train_brax_baseline(config: BraxBaselineConfig, logger=DummyLogger()):
     model_filename += f"/{env_name}.ckpt"
 
     wrap_env_fn = None
+    ppo_config = ppo_defaults.copy()
     if env.package_name == "mujoco_playground":
         from mujoco_playground import wrapper
 
@@ -375,16 +377,16 @@ def train_brax_baseline(config: BraxBaselineConfig, logger=DummyLogger()):
                 f"Env {_env_name} not found in mujoco_playground registry. Using default PPO params."
             )
         # TODO: allow sac training for mujoco_playground envs
-        ppo_defaults = default_params.brax_ppo_config(env_name)
+        ppo_config = default_params.brax_ppo_config(env_name)
         network_factory = ppo.ppo_networks.make_ppo_networks
-        if "network_factory" in ppo_defaults:
+        if "network_factory" in ppo_config:
             # HACK: construct network factory from mujoco_playground params
             network_factory = functools.partial(
-                network_factory, **ppo_defaults.network_factory
+                network_factory, **ppo_config.network_factory
             )
-            del ppo_defaults["network_factory"]
-
-    _train_fn = TRAIN_FNS.get(env_name, functools.partial(ppo.train, **ppo_defaults))
+            del ppo_config["network_factory"]
+    pprint(ppo_config)
+    _train_fn = TRAIN_FNS.get(env_name, functools.partial(ppo.train, **ppo_config))
 
     if os.path.exists(model_filename) and not config.force:
         print("Loading existing model")
