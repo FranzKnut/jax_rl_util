@@ -166,6 +166,8 @@ def render_frames(
             gym_env = gym.make(_env.name, render_mode="rgb_array").unwrapped
 
             def render_gym(_state):
+                if _env.name == "CarRacing-v3":
+                    return _state
                 gym_env.state = _state
                 if _env.name == "Pendulum-v1":
                     gym_env.unwrapped.env.last_u = _state[-1]

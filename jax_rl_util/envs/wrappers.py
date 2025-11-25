@@ -169,8 +169,8 @@ class GymJaxWrapper(Wrapper):
             return (
                 obs,
                 jnp.array(reward, dtype=jnp.float32),
-                jnp.array(done),
-                jnp.array(truncated),
+                jnp.array(done, dtype=jnp.bool_),
+                jnp.array(truncated, dtype=jnp.bool_),
             )
 
         obs, reward, done, truncated = jax.experimental.io_callback(
@@ -515,7 +515,7 @@ class POBraxWrapper(Wrapper):
         """Set obs_mask."""
         super().__init__(env)
         self.full_obs_size = env.observation_size
-        assert len(env.observation_space.shape) == 1, "Only flat obs spaces supported."
+        # assert len(env.observation_space.shape) == 1, "Only flat obs spaces supported."
         if isinstance(obs_mask, str) and "q" in obs_mask:
             self.obs_mask = obs_mask.split("+")
             assert any([x in ["q", "qd"] for x in self.obs_mask]), (

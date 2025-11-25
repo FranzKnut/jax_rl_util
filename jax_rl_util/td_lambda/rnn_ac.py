@@ -150,12 +150,16 @@ class AC(nn.Module):
     def setup(self) -> None:
         """Initialize components."""
         # Actor
-        self.actor = make_batched_model(
-            Actor,
-            split_rngs=True,
-            axis_size=self.num_modules,
-            in_axes=(0, None),
-        )(
+        if self.split_actor:
+            _actor = make_batched_model(
+                Actor,
+                split_rngs=True,
+                axis_size=self.num_modules,
+                in_axes=(0, None),
+            )
+        else:
+            _actor = Actor
+        self.actor = _actor(
             self.actor_layers,
             self.f_align,
             self.discrete,
@@ -340,7 +344,7 @@ class RNNActorCritic(nn.RNNCellBase):
 
     def encode(self, carry, obs, reset=False, training=True, **kwargs):
         """Step RNN."""
-        h0 = self.initialize_carry(self.make_rng("reset"), obs.shape)
+        h0 = self.initialize_carry(self.make_rng("default"), obs.shape)
 
         if self.use_cnn:
             obs = self.enc(obs)

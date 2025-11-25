@@ -332,6 +332,9 @@ class AimLogger(DummyLogger):
         caption : str, optional
             Caption for the video, by default
         """
+        if not len(frames):
+            print("No frames to log for video.")
+            return
         file_name = name.replace("/", "_")
         file_name = (
             f"{file_name}_{step}.gif" if step is not None else f"{file_name}.gif"
