@@ -13,7 +13,7 @@ import jax
 import jax.numpy as jnp
 import jax.random as jrandom
 
-from jax_rtrl.models.jax_util import checkpointing, restore_config
+from jax_rtrl.util.checkpointing import checkpointing, restore_config
 from matplotlib import pyplot as plt
 import numpy as np
 import optax

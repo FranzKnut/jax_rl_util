@@ -9,7 +9,7 @@ from typing import Iterable
 import gymnasium as gym
 import gymnax
 import jax
-from jax_rtrl.models.jax_util import preprocess_img
+from jax_rtrl.util.jax_util import preprocess_img
 import numpy as np
 from brax.envs import Env as BraxEnv
 from brax.envs.base import State

@@ -9,8 +9,8 @@ import jax
 import jax.numpy as jnp
 from chex import PRNGKey
 from flax import linen as nn
-from jax_rtrl.models.autoencoders import ConvEncoder, ConvConfig
-from jax_rtrl.models.jax_util import get_normalization_fn, sigmoid_between
+from jax_rtrl.networks.autoencoders import ConvEncoder, ConvConfig
+from jax_rtrl.util.jax_util import get_normalization_fn, sigmoid_between
 from jax_rtrl.models.feedforward import MLP, FADense
 from jax_rtrl.models.seq_models import (
     RNNEnsemble,
