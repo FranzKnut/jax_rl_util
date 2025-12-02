@@ -82,7 +82,7 @@ class EnvironmentConfig:
     Attributes
     ----------
         env_name (str): Environment name. Supported are brax, gymnax, popjym, highway_env, mujoco_playgound and gym envs.
-        obs_mask (Union[str, Iterable[int]]): Mask for the observation space.
+        obs_mask (Union[str, tuple[int]]): Mask for the observation space.
         init_kwargs (dict): Initialization arguments for the environment.
         env_kwargs (dict): Arguments for the env step function.
         max_ep_length (int): Maximum episode length.
@@ -91,7 +91,7 @@ class EnvironmentConfig:
 
     env_name: str = "CartPole-v1"
     # reward_scaling: int = 1
-    obs_mask: str | Iterable[int] | None = None
+    obs_mask: str | tuple[int] | None = None
     init_kwargs: dict = field(default_factory=dict, hash=False)
     env_kwargs: dict = field(default_factory=dict, hash=False)
     max_ep_length: int = 1000

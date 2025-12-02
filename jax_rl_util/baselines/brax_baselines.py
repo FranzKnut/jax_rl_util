@@ -7,7 +7,6 @@ from datetime import datetime
 from pprint import pprint
 
 import jax
-import mujoco_playground
 import numpy as np
 import simple_parsing
 from brax.io import model
@@ -360,6 +359,7 @@ def train_brax_baseline(config: BraxBaselineConfig, logger=DummyLogger()):
     wrap_env_fn = None
     ppo_config = ppo_defaults.copy()
     if env.package_name == "mujoco_playground":
+        import mujoco_playground
         from mujoco_playground import wrapper
 
         wrap_env_fn = wrapper.wrap_for_brax_training
