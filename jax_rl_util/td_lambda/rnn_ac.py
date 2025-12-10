@@ -1,7 +1,6 @@
 """RNN Actor-Critic flax Module."""
 
 from dataclasses import field
-from functools import partial
 from numbers import Number
 
 import distrax
@@ -15,9 +14,8 @@ from jax_rtrl.models.feedforward import MLP, FADense
 from jax_rtrl.models.seq_models import (
     RNNEnsemble,
     RNNEnsembleConfig,
-    make_batched_model,
 )
-from jax_rtrl.networks.policies import PolicyRNN
+from jax_rtrl.networks.policies import PolicyConfig, PolicyRNN
 
 
 # Actor
@@ -136,62 +134,51 @@ class AC(nn.Module):
 
     a_dim: int
     discrete: bool
-    split_actor: bool = False
+    policy_config: PolicyConfig
+    critic_config: RNNEnsembleConfig
+    # split_actor: bool = False
     act_bounds: tuple[float, ...] | None = None
-    act_log_bounds: tuple[float, float] | float | None = None
-    act_dist_name: str = "normal"
-    actor_layers: tuple[int, ...] = ()
-    critic_layers: tuple[int, ...] = ()
-    f_align: bool = False
-    norm: str | None = None  # Normalization type, e.g., "layer", "batch"
-    num_modules: int | None = None
+    # act_log_bounds: tuple[float, float] | float | None = None
+    # act_dist_name: str = "normal"
+    # actor_layers: tuple[int, ...] = ()
+    # critic_layers: tuple[int, ...] = ()
+    # f_align: bool = False
+    # norm: str | None = None  # Normalization type, e.g., "layer", "batch"
+    # num_modules: int | None = None
     # action_noise: float = 0.0  # TODO: Implement action noise for exploration
 
     def setup(self) -> None:
         """Initialize components."""
         # Actor
-        if self.split_actor:
-            _actor = make_batched_model(
-                Actor,
-                split_rngs=True,
-                axis_size=self.num_modules,
-                in_axes=(0, None),
-            )
-        else:
-            _actor = Actor
-        self.actor = _actor(
-            self.actor_layers,
-            self.f_align,
-            self.discrete,
-            self.a_dim,
-            act_bounds=self.act_bounds,
-            act_log_bounds=self.act_log_bounds,
-            act_dist_name=self.act_dist_name,
-            norm=self.norm,
-            name="actor",
-        )
+        # if self.split_actor:
+        #     _actor = make_batched_model(
+        #         PolicyRNN,
+        #         split_rngs=True,
+        #         axis_size=self.num_modules,
+        #         in_axes=(0, None),
+        #     )
+        # else:
+        #     _actor = PolicyRNN
+        self.policy_config.ensemble_method = "dist"
+        self.actor = PolicyRNN(self.a_dim, self.policy_config, name="actor")
         # Critic
-        self.critic = make_batched_model(
-            Critic,
-            split_rngs=True,
-            axis_size=self.num_modules,
-            in_axes=(0, None),
-        )(
-            self.critic_layers,
-            self.f_align,
-            norm=self.norm,
-            name="critic",
-        )
+        self.critic = RNNEnsemble(self.critic_config, out_size=1, name="critic")
 
-    def value(self, x, training: bool = True):
+    def value(self, x, h=None, training: bool = True):
         """Compute value from latent."""
-        if not self.split_actor and x.shape[-2] > 1:
-            # First module of the ensemble is used for the actor
-            x = x[..., 1:, :]  # Assume first axis is ensemble axis
-        return self.critic(x, training)
+        # if not self.split_actor and x.ndim > 1 and x.shape[-2] > 1:
+        #     # First module of the ensemble is used for the actor
+        #     x = x[..., 1:, :]  # Assume first axis is ensemble axis
+        return self.critic(h, x, training=training)
 
     def policy(
-        self, x, sample_act: bool = False, training: bool = True, epsilon: float = 0.0
+        self,
+        x,
+        h=None,
+        pi_state=None,
+        sample_act: bool = False,
+        training: bool = True,
+        epsilon: float = 0.0,
     ):
         """Compute action distribution or sample actions from the policy network.
 
@@ -216,12 +203,12 @@ class AC(nn.Module):
                 actions are automatically clipped to action bounds.
             - Uses internal RNG state for stochastic sampling via self.make_rng("default").
         """
-        if not self.split_actor:
-            # First module of the ensemble is used for the actor
-            x = x[..., 0, :]  # Assume first axis is ensemble axis
-        dist = self.actor(x, training)
+        # if not self.split_actor and x.ndim > 1:
+        #     # First module of the ensemble is used for the actor
+        #     x = x[..., 0, :]  # Assume first axis is ensemble axis
+        h, (combined_dist, dists) = self.actor(h, x, pi_state, training=training)
         if sample_act:
-            greedy_action = dist.mode()
+            greedy_action = dists.mode()
             if not training:
                 action = greedy_action
             else:
@@ -229,16 +216,15 @@ class AC(nn.Module):
                     self.make_rng("default"), shape=greedy_action.shape
                 )
                 # Epsilon-greedy action selection
-                greedy_action = dist.mode()
                 action = jnp.where(
                     _rnd < epsilon,
                     greedy_action,
-                    dist.sample(seed=self.make_rng("default")),
+                    combined_dist.sample(seed=self.make_rng("default")),
                 )
             if self.act_bounds is not None:
                 action = jnp.clip(action, *self.act_bounds)
-            return action, dist
-        return dist
+            return h, (action, combined_dist)
+        return h, combined_dist
 
     def __call__(
         self, x, sample_act: bool = False, training: bool = True, epsilon: float = 0.0
@@ -289,51 +275,41 @@ class RNNActorCritic(nn.RNNCellBase):
     a_dim: int
     discrete: bool
     obs_dim: int = None
-    rnn_config: RNNEnsembleConfig = field(default_factory=RNNEnsembleConfig)
+    rnn_config: RNNEnsembleConfig | None = field(default_factory=RNNEnsembleConfig)
+    policy_config: PolicyConfig = field(default_factory=PolicyConfig)
+    critic_config: RNNEnsembleConfig = field(default_factory=RNNEnsembleConfig)
     use_cnn: bool = False
     cnn_config: ConvConfig = field(default_factory=ConvConfig)
-    split_actor: bool = False
-    f_align: bool = True
-    act_log_bounds: tuple[float, float] | float | None = -1
-    shared: bool = False
+    # act_log_bounds: tuple[float, float] | float | None = -1
     act_bounds: tuple[float] | None = None
-    act_dist_name: str = "normal"
     pass_obs: bool = False
-    actor_layers: tuple[int, ...] = ()
-    critic_layers: tuple[int, ...] = ()
     pred_obs: bool = False
-    layer_norm: bool = False
 
     def setup(self) -> None:
         """Initialize components."""
-        if self.rnn_config.model_name:
-            if self.shared:
-                self.rnn = RNNEnsemble(self.rnn_config, name="rnn")
-            else:
-                if self.rnn_config.num_modules != 2:
-                    raise ValueError(
-                        "RNNActorCritic num_modules has to be 2 when shared is False."
-                    )
-                self.rnn = RNNEnsemble(self.rnn_config, name="rnn")
+        if self.rnn_config is not None and self.rnn_config.model_name:
+            self.rnn = RNNEnsemble(self.rnn_config, name="rnn")
 
         self.ac = AC(
             a_dim=self.a_dim,
+            policy_config=self.policy_config,
+            critic_config=self.critic_config,
             discrete=self.discrete,
-            split_actor=self.split_actor,
+            # split_actor=self.split_actor,
             act_bounds=self.act_bounds,
-            act_log_bounds=self.act_log_bounds,
-            actor_layers=self.actor_layers,
-            critic_layers=self.critic_layers,
-            f_align=self.f_align,
-            act_dist_name=self.act_dist_name,
-            num_modules=self.rnn_config.num_modules,
+            # act_log_bounds=self.act_log_bounds,
+            # actor_layers=self.actor_layers,
+            # critic_layers=self.critic_layers,
+            # f_align=self.f_align,
+            # act_dist_name=self.act_dist_name,
+            # num_modules=self.rnn_config.num_modules,
             name="ac",
         )
 
         if self.pred_obs:
-            self.obs = FADense(
+            self.obs = RNNEnsemble(
                 self.obs_dim + 1,  # Predict obs and reward
-                f_align=self.f_align,
+                # f_align=self.f_align,
                 #    kernel_init=nn.initializers.zeros_init(),
                 #  use_bias=False,
                 name="obs",
@@ -342,32 +318,40 @@ class RNNActorCritic(nn.RNNCellBase):
         if self.use_cnn:
             self.enc = ConvEncoder(self.cnn_config, name="enc")
 
-    def encode(self, carry, obs, reset=False, training=True, **kwargs):
+    def encode(self, carry, obs, reset=False, img=None, training=True, **kwargs):
         """Step RNN."""
-        h0 = self.initialize_carry(self.make_rng("default"), obs.shape)
 
         if self.use_cnn:
-            obs = self.enc(obs)
+            if img is None:
+                img = obs
+                obs = None
+            encoded_img = self.enc(img)
+            # If given, concatenate encoded image with vector observations
+            if obs is not None:
+                obs = jnp.concatenate([obs, encoded_img], axis=-1)
+            else:
+                obs = encoded_img
+
         if not self.rnn_config.model_name:
+            # No RNN, just return repeated obs as hidden state
+            obs = obs[None] * jnp.ones(
+                (self.rnn_config.num_modules,) + (1,) * (obs.ndim)
+            )
             return obs, carry
-        if carry is None:
-            # Initialize seed and the carry
-            carry = h0
-        else:
-            carry = jax.tree.map(lambda a, b: jnp.where(reset, a, b), h0, carry)
+
         carry, hidden = self.rnn(carry, obs, training, **kwargs)
         return hidden, carry
 
-    def value(self, hidden, x=None, training=True):
+    def value(self, encoded, x=None, v_hidden=None, training=True):
         """Compute value from latent."""
         # if not self.shared:
         #     # hidden = jnp.concatenate([jax.lax.stop_gradient(hidden[0]), hidden[1]], axis=-1)
         #     hidden = hidden[..., 1:, :]
         if self.pass_obs:
-            if len(x.shape) < len(hidden.shape):
+            if len(x.shape) < len(encoded.shape):
                 x = jnp.expand_dims(x, -2)
-            hidden = jnp.concatenate([hidden, x], axis=-1)
-        return self.ac.value(hidden, training=training)
+            encoded = jnp.concatenate([encoded, x], axis=-1)
+        return self.ac.value(encoded, v_hidden, training=training)
 
     def obs_prediction(self, hidden, a, x=None):
         """Compute observation prediction from latent."""
@@ -382,6 +366,7 @@ class RNNActorCritic(nn.RNNCellBase):
         self,
         hidden,
         x=None,
+        pi_state=None,
         sample_act: bool = False,
         training: bool = True,
         selected_act=None,
@@ -396,40 +381,59 @@ class RNNActorCritic(nn.RNNCellBase):
                 x = jnp.expand_dims(x, -2)
             hidden = jnp.concatenate([hidden, x], axis=-1)
         return self.ac.policy(
-            hidden, sample_act=sample_act, training=training, epsilon=epsilon
+            hidden,
+            pi_state=pi_state,
+            sample_act=sample_act,
+            training=training,
+            epsilon=epsilon,
         )
 
     @nn.compact
     def __call__(self, carry, x, reset=False, training=True, epsilon: float = 0.0):
         """Step RNN and compute actor and critic."""
+        h0 = self.initialize_carry(self.make_rng("default"), x.shape)
+        if carry is None:
+            # Initialize seed and the carry
+            carry = h0
+        else:
+            carry = jax.tree.map(lambda a, b: jnp.where(reset, a, b), h0, carry)
+
         # RNN
-        hidden, new_carry = self.encode(carry, x, reset=reset, training=training)
+        encoded, rnn_state = self.encode(carry[0], x, reset=reset, training=training)
 
         # Critic
-        v_hat = self.value(hidden, x, training=training)
+        v_state, v_hat = self.value(encoded, x, carry[1], training=training)
         # selected_act = v_hat.argmax()
 
         # Actor
-        action, _ = self.policy(hidden, x, True, training=training, epsilon=epsilon)
+        pi_state, (action, _) = self.policy(
+            encoded, x, carry[2], True, training=training, epsilon=epsilon
+        )
 
         if self.pred_obs:
-            prediction = self.obs_prediction(hidden, action, x)
-            out = (action, v_hat, prediction, hidden)
+            prediction = self.obs_prediction(encoded, action, x)
+            out = (action, v_hat, prediction, encoded)
         else:
-            out = (action, v_hat, hidden)
-        return new_carry, out
+            out = (action, v_hat, encoded)
+        return (rnn_state, v_state, pi_state), out
 
     @property
     def num_feature_axes(self) -> int:
         """Returns the number of feature axes of the RNN cell."""
         return 1
 
-    def initialize_carry(self, rng: PRNGKey, input_shape: tuple[int, ...]):
-        """Initialize the Worldmodel cell carry."""
+    def _init_shared_rnn(self, rng: PRNGKey, input_shape: tuple[int, ...]):
+        """Initialize the shared RNN cell."""
         if not self.rnn_config.model_name:
             return None
-
         if self.use_cnn:
             input_shape = input_shape[:-3] + (self.cnn_config.latent_size,)
 
         return self.rnn.initialize_carry(rng, input_shape)
+
+    def initialize_carry(self, rng: PRNGKey, input_shape: tuple[int, ...]):
+        """Initialize the submodule states."""
+        rnn_state = self._init_shared_rnn(rng, input_shape)
+        v_state = self.ac.critic.initialize_carry(rng, self.rnn_config.hidden_size)
+        pi_state = self.ac.actor.initialize_carry(rng, self.rnn_config.hidden_size)
+        return (rnn_state, v_state, pi_state)

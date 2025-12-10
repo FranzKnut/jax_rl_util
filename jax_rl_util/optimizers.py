@@ -369,6 +369,8 @@ def make_optimizer_for_model(
     model_name: str, config=OptimizerConfig(), no_decay_lr_factor=1.0
 ):
     """Make optax optimizer for given model name and config."""
+    if model_name is None:
+        return make_optimizer(config)
     if "s5" in model_name:
         no_decay_params = ["B", "Lambda_re", "Lambda_im", "log_step", "norm"]
     elif "lru" in model_name:
