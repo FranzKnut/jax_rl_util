@@ -195,6 +195,7 @@ def get_env(config: EnvironmentConfig, debug=0) -> gym.Env:
         env = brax.envs.get_environment(
             env_name=env_name.replace("brax-", ""), **config.init_kwargs
         )
+        env.package_name = "brax"
 
     elif MUJOCO_PLAYGROUND_INSTALLED and (
         env_name.startswith("playground-")
@@ -221,7 +222,11 @@ def get_env(config: EnvironmentConfig, debug=0) -> gym.Env:
 
 
 def make_wrapped_env(
-    config: EnvironmentConfig, debug=0, make_eval=False, use_vmap_wrapper=True, grayscale=False
+    config: EnvironmentConfig,
+    debug=0,
+    make_eval=False,
+    use_vmap_wrapper=True,
+    grayscale=False,
 ) -> tuple[BraxEnv, dict] | tuple[BraxEnv, dict, BraxEnv]:
     """Make brax or gymnax env.
 
@@ -258,7 +263,7 @@ def make_wrapped_env(
         env, config.obs_mask
     )
     env.name = env_name
-    
+
     if grayscale:
         env = GrayscaleWrapper(env)
 

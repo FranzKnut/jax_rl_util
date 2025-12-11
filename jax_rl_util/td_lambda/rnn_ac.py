@@ -11,10 +11,7 @@ from flax import linen as nn
 from jax_rtrl.networks.autoencoders import ConvEncoder, ConvConfig
 from jax_rtrl.util.jax_util import get_normalization_fn, sigmoid_between
 from jax_rtrl.models.feedforward import MLP, FADense
-from jax_rtrl.models.seq_models import (
-    RNNEnsemble,
-    RNNEnsembleConfig,
-)
+from jax_rtrl.models.seq_models import RNNEnsemble, RNNEnsembleConfig
 from jax_rtrl.networks.policies import PolicyConfig, PolicyRNN
 
 
@@ -102,33 +99,6 @@ class Actor(nn.Module):
         return dist
 
 
-class Critic(nn.Module):
-    """Critic network."""
-
-    layers: list[int] = field(default_factory=list)
-    f_align: bool = False
-    norm: str | None = None  # Normalization type, e.g., "layer", "batch"
-
-    @nn.compact
-    def __call__(self, x, training=True):
-        """Compute value from latent."""
-        if self.layers:
-            x = MLP(
-                self.layers,
-                f_align=self.f_align,
-                name="mlp",
-                norm=self.norm,
-            )(x)
-        x = get_normalization_fn(self.norm, training=training)(x)
-
-        return FADense(
-            1,
-            # kernel_init=nn.initializers.zeros_init(),
-            bias_init=nn.initializers.zeros_init(),
-            name="critic_head",
-        )(x)
-
-
 class AC(nn.Module):
     """TD lambda."""
 
@@ -169,7 +139,7 @@ class AC(nn.Module):
         # if not self.split_actor and x.ndim > 1 and x.shape[-2] > 1:
         #     # First module of the ensemble is used for the actor
         #     x = x[..., 1:, :]  # Assume first axis is ensemble axis
-        return self.critic(h, x, training=training)
+        return self.critic(h, x, training=training, split_input=True)
 
     def policy(
         self,
@@ -178,7 +148,7 @@ class AC(nn.Module):
         pi_state=None,
         sample_act: bool = False,
         training: bool = True,
-        epsilon: float = 0.0,
+        greedy_epsilon: float = 0.0,
     ):
         """Compute action distribution or sample actions from the policy network.
 
@@ -206,7 +176,9 @@ class AC(nn.Module):
         # if not self.split_actor and x.ndim > 1:
         #     # First module of the ensemble is used for the actor
         #     x = x[..., 0, :]  # Assume first axis is ensemble axis
-        h, (combined_dist, dists) = self.actor(h, x, pi_state, training=training)
+        h, (combined_dist, dists) = self.actor(
+            h, x, pi_state, training=training, split_input=True
+        )
         if sample_act:
             greedy_action = dists.mode()
             if not training:
@@ -217,7 +189,7 @@ class AC(nn.Module):
                 )
                 # Epsilon-greedy action selection
                 action = jnp.where(
-                    _rnd < epsilon,
+                    _rnd < greedy_epsilon,
                     greedy_action,
                     combined_dist.sample(seed=self.make_rng("default")),
                 )
@@ -229,44 +201,9 @@ class AC(nn.Module):
     def __call__(
         self, x, sample_act: bool = False, training: bool = True, epsilon: float = 0.0
     ):
-        return self.policy(x, sample_act, training, epsilon=epsilon), self.value(x)
-
-    @nn.nowrap
-    def loss(
-        self,
-        params,
-        x,
-        action=None,
-        critic_weight: float = 1.0,
-        entropy_weight: float = 0.0,
-        training: bool = True,
-    ):
-        """Compute loss. Also returns sampled action if action is not provided.
-
-        FIXME: This is not actually a loss since it should be maximized.
-        """
-        sample_act = action is None
-        dist, value = self.apply(
-            params,
-            x,
-            sample_act=sample_act,
-            training=training,
+        return self.policy(x, sample_act, training, greedy_epsilon=epsilon), self.value(
+            x
         )
-        if sample_act:
-            action, dist = dist
-        critic_loss = value.mean()
-        actor_loss = dist.log_prob(action).mean()
-        # Add entropy to the actor loss
-        entropy = dist.entropy().mean()
-        total_loss = actor_loss + critic_weight * critic_loss - entropy_weight * entropy
-        info = {
-            "actor_loss": actor_loss,
-            "critic_loss": critic_loss,
-            "entropy": entropy,
-            "ac_total_loss": total_loss,
-        }
-        aux = (value, action, info) if sample_act else (value, info)
-        return total_loss, aux
 
 
 class RNNActorCritic(nn.RNNCellBase):
@@ -288,7 +225,7 @@ class RNNActorCritic(nn.RNNCellBase):
     def setup(self) -> None:
         """Initialize components."""
         if self.rnn_config is not None and self.rnn_config.model_name:
-            self.rnn = RNNEnsemble(self.rnn_config, name="rnn")
+            self.rnn = RNNEnsemble(self.rnn_config, out_size=None, name="rnn")
 
         self.ac = AC(
             a_dim=self.a_dim,
@@ -385,7 +322,7 @@ class RNNActorCritic(nn.RNNCellBase):
             pi_state=pi_state,
             sample_act=sample_act,
             training=training,
-            epsilon=epsilon,
+            greedy_epsilon=epsilon,
         )
 
     @nn.compact
