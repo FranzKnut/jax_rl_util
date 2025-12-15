@@ -100,7 +100,10 @@ class Actor(nn.Module):
 
 
 class AC(nn.Module):
-    """TD lambda."""
+    """TD lambda.
+
+    TODO: Remove this subclass and just use RNNActorCritic directly.
+    """
 
     a_dim: int
     discrete: bool
@@ -134,12 +137,12 @@ class AC(nn.Module):
         # Critic
         self.critic = RNNEnsemble(self.critic_config, out_size=1, name="critic")
 
-    def value(self, x, h=None, training: bool = True):
+    def value(self, x, h=None, training: bool = True, split_input: bool = True):
         """Compute value from latent."""
         # if not self.split_actor and x.ndim > 1 and x.shape[-2] > 1:
         #     # First module of the ensemble is used for the actor
         #     x = x[..., 1:, :]  # Assume first axis is ensemble axis
-        return self.critic(h, x, training=training, split_input=True)
+        return self.critic(h, x, training=training, split_input=split_input)
 
     def policy(
         self,
@@ -149,6 +152,7 @@ class AC(nn.Module):
         sample_act: bool = False,
         training: bool = True,
         greedy_epsilon: float = 0.0,
+        split_inputs: bool = True,
     ):
         """Compute action distribution or sample actions from the policy network.
 
@@ -177,7 +181,7 @@ class AC(nn.Module):
         #     # First module of the ensemble is used for the actor
         #     x = x[..., 0, :]  # Assume first axis is ensemble axis
         h, (combined_dist, dists) = self.actor(
-            h, x, pi_state, training=training, split_input=True
+            h, x, pi_state, training=training, split_input=split_inputs
         )
         if sample_act:
             greedy_action = dists.mode()
@@ -221,6 +225,11 @@ class RNNActorCritic(nn.RNNCellBase):
     act_bounds: tuple[float] | None = None
     pass_obs: bool = False
     pred_obs: bool = False
+
+    @property
+    def use_shared_rnn(self) -> bool:
+        """Whether to use a shared RNN for actor and critic."""
+        return self.rnn_config is not None and self.rnn_config.model_name is not None
 
     def setup(self) -> None:
         """Initialize components."""
@@ -269,7 +278,10 @@ class RNNActorCritic(nn.RNNCellBase):
             else:
                 obs = encoded_img
 
-        if not self.rnn_config.model_name:
+        if not self.use_shared_rnn:
+            return obs, carry
+
+        if self.rnn_config is not None and not self.rnn_config.model_name:
             # No RNN, just return repeated obs as hidden state
             obs = obs[None] * jnp.ones(
                 (self.rnn_config.num_modules,) + (1,) * (obs.ndim)
@@ -288,7 +300,12 @@ class RNNActorCritic(nn.RNNCellBase):
             if len(x.shape) < len(encoded.shape):
                 x = jnp.expand_dims(x, -2)
             encoded = jnp.concatenate([encoded, x], axis=-1)
-        return self.ac.value(encoded, v_hidden, training=training)
+        split_input = self.use_shared_rnn and (
+            self.rnn_config.num_modules == self.critic_config.num_modules
+        )
+        return self.ac.value(
+            encoded, v_hidden, training=training, split_input=split_input
+        )
 
     def obs_prediction(self, hidden, a, x=None):
         """Compute observation prediction from latent."""
@@ -317,12 +334,16 @@ class RNNActorCritic(nn.RNNCellBase):
             if len(x.shape) < len(hidden.shape):
                 x = jnp.expand_dims(x, -2)
             hidden = jnp.concatenate([hidden, x], axis=-1)
+        split_input = self.use_shared_rnn and (
+            self.rnn_config.num_modules == self.policy_config.num_modules
+        )
         return self.ac.policy(
             hidden,
             pi_state=pi_state,
             sample_act=sample_act,
             training=training,
             greedy_epsilon=epsilon,
+            split_inputs=split_input,
         )
 
     @nn.compact
@@ -361,8 +382,6 @@ class RNNActorCritic(nn.RNNCellBase):
 
     def _init_shared_rnn(self, rng: PRNGKey, input_shape: tuple[int, ...]):
         """Initialize the shared RNN cell."""
-        if not self.rnn_config.model_name:
-            return None
         if self.use_cnn:
             input_shape = input_shape[:-3] + (self.cnn_config.latent_size,)
 
@@ -370,7 +389,12 @@ class RNNActorCritic(nn.RNNCellBase):
 
     def initialize_carry(self, rng: PRNGKey, input_shape: tuple[int, ...]):
         """Initialize the submodule states."""
-        rnn_state = self._init_shared_rnn(rng, input_shape)
-        v_state = self.ac.critic.initialize_carry(rng, self.rnn_config.hidden_size)
-        pi_state = self.ac.actor.initialize_carry(rng, self.rnn_config.hidden_size)
+
+        if self.rnn_config is not None and self.rnn_config.model_name:
+            rnn_state = self._init_shared_rnn(rng, input_shape)
+            input_shape = self.rnn_config.hidden_size
+        else:
+            rnn_state = None
+        v_state = self.ac.critic.initialize_carry(rng, input_shape)
+        pi_state = self.ac.actor.initialize_carry(rng, input_shape)
         return (rnn_state, v_state, pi_state)
