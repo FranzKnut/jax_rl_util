@@ -111,13 +111,9 @@ class AC(nn.Module):
     critic_config: RNNEnsembleConfig
     # split_actor: bool = False
     act_bounds: tuple[float, ...] | None = None
-    # act_log_bounds: tuple[float, float] | float | None = None
-    # act_dist_name: str = "normal"
-    # actor_layers: tuple[int, ...] = ()
-    # critic_layers: tuple[int, ...] = ()
-    # f_align: bool = False
-    # norm: str | None = None  # Normalization type, e.g., "layer", "batch"
-    # num_modules: int | None = None
+    # TODO: this config for splitting inputs to ensemble modules is confusing
+    split_critic_inputs: bool = False
+    split_actor_inputs: bool = False
     # action_noise: float = 0.0  # TODO: Implement action noise for exploration
 
     def setup(self) -> None:
@@ -132,17 +128,16 @@ class AC(nn.Module):
         #     )
         # else:
         #     _actor = PolicyRNN
-        self.policy_config.ensemble_method = "dist"
         self.actor = PolicyRNN(self.a_dim, self.policy_config, name="actor")
         # Critic
         self.critic = RNNEnsemble(self.critic_config, out_size=1, name="critic")
 
-    def value(self, x, h=None, training: bool = True, split_input: bool = True):
+    def value(self, x, h=None, training: bool = True):
         """Compute value from latent."""
         # if not self.split_actor and x.ndim > 1 and x.shape[-2] > 1:
         #     # First module of the ensemble is used for the actor
         #     x = x[..., 1:, :]  # Assume first axis is ensemble axis
-        return self.critic(h, x, training=training, split_input=split_input)
+        return self.critic(h, x, training=training)
 
     def policy(
         self,
@@ -152,7 +147,6 @@ class AC(nn.Module):
         sample_act: bool = False,
         training: bool = True,
         greedy_epsilon: float = 0.0,
-        split_inputs: bool = True,
     ):
         """Compute action distribution or sample actions from the policy network.
 
@@ -181,7 +175,7 @@ class AC(nn.Module):
         #     # First module of the ensemble is used for the actor
         #     x = x[..., 0, :]  # Assume first axis is ensemble axis
         encoded, (combined_dist, dists) = self.actor(
-            pi_state, encoded, img, training=training, split_input=split_inputs
+            pi_state, encoded, img, training=training
         )
         if sample_act:
             greedy_action = dists.mode()
@@ -241,19 +235,17 @@ class RNNActorCritic(nn.RNNCellBase):
             self.rnn = RNNEnsemble(self.rnn_config, out_size=None, name="rnn")
 
         self.ac = AC(
+            name="ac",
             a_dim=self.a_dim,
             policy_config=self.policy_config,
             critic_config=self.critic_config,
             discrete=self.discrete,
-            # split_actor=self.split_actor,
             act_bounds=self.act_bounds,
-            # act_log_bounds=self.act_log_bounds,
-            # actor_layers=self.actor_layers,
-            # critic_layers=self.critic_layers,
-            # f_align=self.f_align,
-            # act_dist_name=self.act_dist_name,
-            # num_modules=self.rnn_config.num_modules,
-            name="ac",
+            # TODO: this config for splitting inputs to ensemble modules is confusing
+            split_actor_inputs=self.use_shared_rnn
+            and (self.rnn_config.num_modules == self.policy_config.num_modules),
+            split_critic_inputs=self.use_shared_rnn
+            and (self.rnn_config.num_modules == self.critic_config.num_modules),
         )
 
         if self.pred_obs:
@@ -305,12 +297,7 @@ class RNNActorCritic(nn.RNNCellBase):
             if len(x.shape) < len(encoded.shape):
                 x = jnp.expand_dims(x, -2)
             encoded = jnp.concatenate([encoded, x], axis=-1)
-        split_input = self.use_shared_rnn and (
-            self.rnn_config.num_modules == self.critic_config.num_modules
-        )
-        return self.ac.value(
-            encoded, v_hidden, training=training, split_input=split_input
-        )
+        return self.ac.value(encoded, v_hidden, training=training)
 
     def obs_prediction(self, hidden, a, x=None):
         """Compute observation prediction from latent."""
@@ -339,9 +326,6 @@ class RNNActorCritic(nn.RNNCellBase):
         #     if len(x.shape) < len(hidden.shape):
         #         x = jnp.expand_dims(x, -2)
         #     hidden = jnp.concatenate([hidden, x], axis=-1)
-        split_input = self.use_shared_rnn and (
-            self.rnn_config.num_modules == self.policy_config.num_modules
-        )
         return self.ac.policy(
             encoded,
             img,
@@ -349,7 +333,6 @@ class RNNActorCritic(nn.RNNCellBase):
             sample_act=sample_act,
             training=training,
             greedy_epsilon=epsilon,
-            split_inputs=split_input,
         )
 
     @nn.compact
