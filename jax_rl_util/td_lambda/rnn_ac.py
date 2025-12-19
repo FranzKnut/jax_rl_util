@@ -119,18 +119,19 @@ class AC(nn.Module):
     def setup(self) -> None:
         """Initialize components."""
         # Actor
-        # if self.split_actor:
-        #     _actor = make_batched_model(
-        #         PolicyRNN,
-        #         split_rngs=True,
-        #         axis_size=self.num_modules,
-        #         in_axes=(0, None),
-        #     )
-        # else:
-        #     _actor = PolicyRNN
-        self.actor = PolicyRNN(self.a_dim, self.policy_config, name="actor")
+        self.actor = PolicyRNN(
+            self.a_dim,
+            self.policy_config,
+            split_input=self.split_actor_inputs,
+            name="actor",
+        )
         # Critic
-        self.critic = RNNEnsemble(self.critic_config, out_size=1, name="critic")
+        self.critic = RNNEnsemble(
+            self.critic_config,
+            out_size=1,
+            split_input=self.split_critic_inputs,
+            name="critic",
+        )
 
     def value(self, x, h=None, training: bool = True):
         """Compute value from latent."""

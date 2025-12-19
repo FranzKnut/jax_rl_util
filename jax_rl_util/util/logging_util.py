@@ -691,3 +691,35 @@ def create_sweep_interactively(sweep_config, project=None, **kwargs):
     for k, v in extract_keys_with_values(sweep_config["parameters"]).items():
         print(f"- {k}: {', '.join(map(str, v))}")
     return sweep_id
+
+
+def update_sweep_dict(d, u):
+    """Update nested dict d with values from nested dict u.
+
+    Also makes sure that only either a key 'value' or 'values' is present in the dict but not both.
+
+    Parameters
+    ----------
+    d : dict
+        Base dict
+    u : dict
+        Updates
+
+    Returns
+    -------
+    dict
+        d with values overwritten by u
+    """
+    for k, v in u.items():
+        if isinstance(v, collections.abc.Mapping):
+            d[k] = update_sweep_dict(d.get(k, {}), v)
+        else:
+            d[k] = v
+        if k in ["value", "values"]:
+            old = ["value", "values"]
+            old.remove(k)
+            old = old[0]
+            if old in d and len(d.keys()) == 2:
+                print("Removing", old, "from", d)
+                del d[old]
+    return d
