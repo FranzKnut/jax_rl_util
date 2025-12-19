@@ -146,8 +146,8 @@ class AC(nn.Module):
 
     def policy(
         self,
-        x,
-        h=None,
+        encoded=None,
+        img=None,
         pi_state=None,
         sample_act: bool = False,
         training: bool = True,
@@ -180,8 +180,8 @@ class AC(nn.Module):
         # if not self.split_actor and x.ndim > 1:
         #     # First module of the ensemble is used for the actor
         #     x = x[..., 0, :]  # Assume first axis is ensemble axis
-        h, (combined_dist, dists) = self.actor(
-            h, x, pi_state, training=training, split_input=split_inputs
+        encoded, (combined_dist, dists) = self.actor(
+            pi_state, encoded, img, training=training, split_input=split_inputs
         )
         if sample_act:
             greedy_action = dists.mode()
@@ -199,15 +199,18 @@ class AC(nn.Module):
                 )
             if self.act_bounds is not None:
                 action = jnp.clip(action, *self.act_bounds)
-            return h, (action, combined_dist)
-        return h, combined_dist
+            return encoded, (action, combined_dist)
+        return encoded, combined_dist
 
     def __call__(
         self, x, sample_act: bool = False, training: bool = True, epsilon: float = 0.0
     ):
-        return self.policy(x, sample_act, training, greedy_epsilon=epsilon), self.value(
-            x
-        )
+        return self.policy(
+            x,
+            sample_act,
+            training,
+            greedy_epsilon=epsilon,
+        ), self.value(x)
 
 
 class RNNActorCritic(nn.RNNCellBase):
@@ -215,7 +218,8 @@ class RNNActorCritic(nn.RNNCellBase):
 
     a_dim: int
     discrete: bool
-    obs_dim: int = None
+    # obs_dim: int = None
+    # img_dim: int = None
     rnn_config: RNNEnsembleConfig | None = field(default_factory=RNNEnsembleConfig)
     policy_config: PolicyConfig = field(default_factory=PolicyConfig)
     critic_config: RNNEnsembleConfig = field(default_factory=RNNEnsembleConfig)
@@ -253,6 +257,7 @@ class RNNActorCritic(nn.RNNCellBase):
         )
 
         if self.pred_obs:
+            raise NotImplementedError("Observation prediction not implemented yet.")
             self.obs = RNNEnsemble(
                 self.obs_dim + 1,  # Predict obs and reward
                 # f_align=self.f_align,
@@ -318,8 +323,8 @@ class RNNActorCritic(nn.RNNCellBase):
 
     def policy(
         self,
-        hidden,
-        x=None,
+        encoded,
+        img=None,
         pi_state=None,
         sample_act: bool = False,
         training: bool = True,
@@ -330,15 +335,16 @@ class RNNActorCritic(nn.RNNCellBase):
         # if not self.shared:
         #     # hidden = jnp.concatenate([hidden[0], jax.lax.stop_gradient(hidden[1])], axis=-1)
         #     hidden = hidden[..., :1, :]
-        if self.pass_obs:
-            if len(x.shape) < len(hidden.shape):
-                x = jnp.expand_dims(x, -2)
-            hidden = jnp.concatenate([hidden, x], axis=-1)
+        # if self.pass_obs:
+        #     if len(x.shape) < len(hidden.shape):
+        #         x = jnp.expand_dims(x, -2)
+        #     hidden = jnp.concatenate([hidden, x], axis=-1)
         split_input = self.use_shared_rnn and (
             self.rnn_config.num_modules == self.policy_config.num_modules
         )
         return self.ac.policy(
-            hidden,
+            encoded,
+            img,
             pi_state=pi_state,
             sample_act=sample_act,
             training=training,
@@ -347,7 +353,9 @@ class RNNActorCritic(nn.RNNCellBase):
         )
 
     @nn.compact
-    def __call__(self, carry, x, reset=False, training=True, epsilon: float = 0.0):
+    def __call__(
+        self, carry, x, img=None, reset=False, training=True, epsilon: float = 0.0
+    ):
         """Step RNN and compute actor and critic."""
         h0 = self.initialize_carry(self.make_rng("default"), x.shape)
         if carry is None:
@@ -357,7 +365,9 @@ class RNNActorCritic(nn.RNNCellBase):
             carry = jax.tree.map(lambda a, b: jnp.where(reset, a, b), h0, carry)
 
         # RNN
-        encoded, rnn_state = self.encode(carry[0], x, reset=reset, training=training)
+        encoded, rnn_state = self.encode(
+            carry[0], x, reset=reset, img=img, training=training
+        )
 
         # Critic
         v_state, v_hat = self.value(encoded, x, carry[1], training=training)
@@ -365,11 +375,11 @@ class RNNActorCritic(nn.RNNCellBase):
 
         # Actor
         pi_state, (action, _) = self.policy(
-            encoded, x, carry[2], True, training=training, epsilon=epsilon
+            encoded, img, carry[2], True, training=training, epsilon=epsilon
         )
 
         if self.pred_obs:
-            prediction = self.obs_prediction(encoded, action, x)
+            prediction = self.obs_prediction(encoded, action, img)
             out = (action, v_hat, prediction, encoded)
         else:
             out = (action, v_hat, encoded)
@@ -390,6 +400,10 @@ class RNNActorCritic(nn.RNNCellBase):
     def initialize_carry(self, rng: PRNGKey, input_shape: tuple[int, ...]):
         """Initialize the submodule states."""
 
+        if self.use_cnn:
+            input_shape = input_shape[:-1] + (
+                self.cnn_config.latent_size + input_shape[-1],
+            )
         if self.rnn_config is not None and self.rnn_config.model_name:
             rnn_state = self._init_shared_rnn(rng, input_shape)
             input_shape = self.rnn_config.hidden_size

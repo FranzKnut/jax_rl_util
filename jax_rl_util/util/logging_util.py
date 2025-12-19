@@ -145,7 +145,8 @@ class DummyLogger(dict, object):
         )
 
 
-def update_nested_dict(d, u):
+
+def update_nested_dict(d, u, path=""):
     """Update nested dict d with values from nested dict u.
 
     Parameters
@@ -162,11 +163,31 @@ def update_nested_dict(d, u):
     """
     for k, v in u.items():
         if isinstance(v, collections.abc.Mapping):
-            d[k] = update_nested_dict(d.get(k, {}), v)
+            d[k] = update_nested_dict(
+                d.get(k, {}), v, path + "." + str(k) if path else str(k)
+            )
         else:
+            assert k in d, f"Key {path + '.' + k} not in base dict."
+            assert type(v) is type(d[k]), (
+                f"Type mismatch for key {k}: {type(d[k])} vs {type(v)}"
+            )
+            if type(v) in (jnp.ndarray, np.ndarray):
+                assert k.shape == d[k].shape, (
+                    f"Shape mismatch for key {k}: {k.shape} vs {d[k].shape}"
+                )
+                assert k.dtype == d[k].dtype, (
+                    f"dtype mismatch for key {k}: {k.dtype} vs {d[k].dtype}"
+                )
             d[k] = v
     return d
 
+
+def check_pytree_structure(tree1, tree2):
+    """Checks if two parameter dictionaries have the same tree structure."""
+    structure1 = jax.tree_util.tree_structure(tree1)
+    structure2 = jax.tree_util.tree_structure(tree2)
+    return structure1 == structure2
+    
 
 def tree_stack(trees, axis=0):
     """Take a list of trees and stack every corresponding leaf.
