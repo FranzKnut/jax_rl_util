@@ -744,22 +744,32 @@ class SaveToFileWrapper(Wrapper):
         """Reset the environment using kwargs and then starts recording."""
         self._save_rollout()
         state = self.env.reset(*args, **kwargs)
-        self.obs_buffer.append(state.obs)
+        # For brax envs, state is a brax State object
+        obs = state.obs if hasattr(state, "obs") else state[0]
+        self.obs_buffer.append(obs)
         return state
 
-    def step(self, state, action: jnp.ndarray):
+    def step(self, state, action: jnp.ndarray = None):
         """Steps through the environment using action, recording actions, observations and rewards"""
-        env_state = self.env.step(state, action)
+        # For brax envs, state is given as first argument
+        if isinstance(self.env, (BraxEnv, Wrapper)):
+            step_out = self.env.step(state, action)
+            obs, reward, done = step_out.obs, step_out.reward, step_out.done
+        else:
+            action = state
+            state = None
+            step_out = self.env.step(action)
+            obs, reward, done, truncated, info = step_out
 
         self.act_buffer.append(action)
 
-        if env_state.done:
+        if done:
             self._save_rollout()
 
         # Usually with Autoreset, the returned obs is the start of the next episode
-        self.obs_buffer.append(env_state.obs)
-        self.rew_buffer.append(env_state.reward)
-        return env_state
+        self.obs_buffer.append(obs)
+        self.rew_buffer.append(reward)
+        return step_out
 
     def close(self):
         """Closes the wrapper then the video recorder."""
