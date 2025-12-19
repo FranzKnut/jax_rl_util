@@ -168,9 +168,9 @@ def update_nested_dict(d, u, path=""):
             )
         else:
             assert k in d, f"Key {path + '.' + k} not in base dict."
-            assert type(v) is type(d[k]), (
-                f"Type mismatch for key {k}: {type(d[k])} vs {type(v)}"
-            )
+            # assert type(v) is type(d[k]), (
+            #     f"Type mismatch for key {k}: {type(d[k])} vs {type(v)}"
+            # )
             if type(v) in (jnp.ndarray, np.ndarray):
                 assert k.shape == d[k].shape, (
                     f"Shape mismatch for key {k}: {k.shape} vs {d[k].shape}"
