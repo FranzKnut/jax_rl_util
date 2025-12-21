@@ -145,7 +145,6 @@ class DummyLogger(dict, object):
         )
 
 
-
 def update_nested_dict(d, u, path=""):
     """Update nested dict d with values from nested dict u.
 
@@ -187,9 +186,9 @@ def check_pytree_structure(tree1, tree2):
     structure1 = jax.tree_util.tree_structure(tree1)
     structure2 = jax.tree_util.tree_structure(tree2)
     return structure1 == structure2
-    
 
-def tree_stack(trees, axis=0):
+
+def tree_stack(trees, axis=0, concatenate=False):
     """Take a list of trees and stack every corresponding leaf.
 
     For example, given two trees ((a, b), c) and ((a', b'), c'), returns
@@ -203,8 +202,12 @@ def tree_stack(trees, axis=0):
         leaves, _ = jax.tree.flatten(tree)
         leaves_list.append(leaves)
 
-    grouped_leaves = zip(*leaves_list)
-    result_leaves = [jnp.stack(leaf, axis=axis) for leaf in grouped_leaves]
+    result_leaves = []
+    leaves_list = list(zip(*leaves_list))
+    for leaf_id, leaf in enumerate(leaves_list):
+        _op = jnp.concatenate if concatenate else jnp.stack
+        leaf = [jnp.atleast_1d(l) for l in leaf]
+        result_leaves.append(_op(leaf, axis=axis))
     return treedef.unflatten(result_leaves)
 
 
