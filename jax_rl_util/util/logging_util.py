@@ -570,7 +570,8 @@ def with_logger(func: Callable, hparams: LoggableConfig, run_name=""):
     # Run the function with the logger
     try:
         ret_code = 0
-        return func(hparams, logger=logger)
+        with ExceptionPrinter():
+            return func(hparams, logger=logger)
     except BaseException as e:
         traceback.print_exception(e)
         ret_code = 1
