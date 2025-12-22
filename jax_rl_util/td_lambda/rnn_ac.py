@@ -265,8 +265,8 @@ class RNNActorCritic(nn.RNNCellBase):
 
         if self.use_cnn:
             self.enc = ConvEncoder(
-                latent_size=self.policy_config.latent_size,
-                config=self.cnn_config,
+                self.policy_config.latent_size,
+                self.cnn_config,
                 name="enc",
             )
 
