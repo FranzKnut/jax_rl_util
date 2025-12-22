@@ -260,7 +260,11 @@ class RNNActorCritic(nn.RNNCellBase):
             )
 
         if self.use_cnn:
-            self.enc = ConvEncoder(self.cnn_config, name="enc")
+            self.enc = ConvEncoder(
+                self.policy_config.latent_size,
+                self.cnn_config,
+                name="enc",
+            )
 
     def encode(self, carry, obs, reset=False, img=None, training=True, **kwargs):
         """Step RNN."""
