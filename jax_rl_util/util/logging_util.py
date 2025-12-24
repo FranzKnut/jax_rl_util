@@ -26,7 +26,7 @@ class LoggableConfig(simple_parsing.Serializable):
     """Base class for loggable configuration dataclasses."""
 
     decode_into_subclasses = True
-    logging: Literal["wandb", "aim", None] = "aim"
+    logging: Literal["wandb", "aim", None] = None
     repo: str | None = None
     project_name: str | None = None
     debug: bool | int = False
@@ -36,6 +36,7 @@ class LoggableConfig(simple_parsing.Serializable):
 class DummyLogger(dict, object):
     """Dummy Logger that does nothing besides acting as dictionary."""
 
+    run_id: str = ""
     run_artifacts_dir: str = "artifacts/log"
 
     def __repr__(self) -> str:
@@ -218,6 +219,11 @@ class AimLogger(DummyLogger):
         """Return name of logger."""
         return "AimLogger"
 
+    @property
+    def run_id(self):
+        """Return the run hash as ID."""
+        return self.run.hash
+
     @override
     def __init__(
         self, hparams: LoggableConfig, run_name: str | None = None, run_hash=None
@@ -378,6 +384,12 @@ class AimLogger(DummyLogger):
 
 class WandbLogger(DummyLogger):
     """Wandb-like interface for aim."""
+    
+    
+    @property
+    def run_id(self):
+        """Return the run hash as ID."""
+        return self.run.id
 
     def __init__(self, hparams: LoggableConfig, run_name: str | None = None):
         """Make WandbLogger.
@@ -398,7 +410,7 @@ class WandbLogger(DummyLogger):
             config=hparams,
             entity=hparams.repo,
             mode="disabled" if hparams.debug else "online",
-            dir="logs/",
+            dir="artifacts/log/",
             save_code=False,
         )
 
