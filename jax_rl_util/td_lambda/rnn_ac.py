@@ -260,7 +260,11 @@ class RNNActorCritic(nn.RNNCellBase):
             )
 
         if self.use_cnn:
-            self.enc = ConvEncoder(self.cnn_config, name="enc")
+            self.enc = ConvEncoder(
+                latent_size=self.policy_config.latent_size,
+                config=self.cnn_config,
+                name="enc",
+            )
 
     def encode(self, carry, obs, reset=False, img=None, training=True, **kwargs):
         """Step RNN."""
@@ -385,9 +389,7 @@ class RNNActorCritic(nn.RNNCellBase):
         """Initialize the submodule states."""
 
         if self.use_cnn:
-            input_shape = input_shape[:-1] + (
-                self.cnn_config.latent_size + input_shape[-1],
-            )
+            input_shape = input_shape[:-3] + (self.cnn_config.latent_size,)
         if self.rnn_config is not None and self.rnn_config.model_name:
             rnn_state = self._init_shared_rnn(rng, input_shape)
             input_shape = self.rnn_config.hidden_size

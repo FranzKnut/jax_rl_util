@@ -384,8 +384,7 @@ class AimLogger(DummyLogger):
 
 class WandbLogger(DummyLogger):
     """Wandb-like interface for aim."""
-    
-    
+
     @property
     def run_id(self):
         """Return the run hash as ID."""
@@ -611,6 +610,13 @@ def leaf_norms(tree):
         k: tree_reduce(lambda x, y: x + jnp.linalg.norm(y), v, initializer=0)
         for k, v in flattened.items()
     }
+
+
+def leaf_means(tree):
+    """Return Dict of leaf names and their means."""
+    flattened, _ = jtu.tree_flatten_with_path(tree)
+    flattened = {get_keystr(k): v for k, v in flattened}
+    return {k: jnp.mean(v) for k, v in flattened.items()}
 
 
 def tree_norm(tree, **kwargs):
