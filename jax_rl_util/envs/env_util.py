@@ -117,13 +117,6 @@ def render_frames(
 
     frames = []
     try:
-        import mujoco_playground
-
-        # Define rendering function for specific envs
-        is_playground = (
-            _env.name.startswith("playground-")
-            or _env.name in mujoco_playground.registry.ALL_ENVS
-        )
         is_brax = _env.name.startswith("brax-") or _env.name in brax.envs._envs
         if _env.name == "dronegym":
             states = tree_stack(states)
@@ -134,6 +127,17 @@ def render_frames(
             ]  # shift by 1 since 'done' always marks the obs after reset
             return plot_drones(_env.params, data, obstacle=_env.obstacle)
         else:
+            try:
+                # Try to import mujoco_playground
+                import mujoco_playground
+
+                # Define rendering function for specific envs
+                is_playground = (
+                    _env.name.startswith("playground-")
+                    or _env.name in mujoco_playground.registry.ALL_ENVS
+                )
+            except ImportError:
+                is_playground = False
             if not is_playground:
                 states = [x.pipeline_state for x in states]
             states = jax.tree.map(lambda x: x[0], states)
