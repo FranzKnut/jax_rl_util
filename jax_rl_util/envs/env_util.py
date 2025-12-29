@@ -170,7 +170,7 @@ def render_frames(
             gym_env = gym.make(_env.name, render_mode="rgb_array").unwrapped
 
             def render_gym(_state):
-                if _env.name == "CarRacing-v3":
+                if _env.name in ["CarRacing-v3", "CarRacingPenalty-v0"]:
                     return _state
                 gym_env.state = _state
                 if _env.name == "Pendulum-v1":
