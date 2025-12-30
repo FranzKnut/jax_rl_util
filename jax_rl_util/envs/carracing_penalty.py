@@ -14,7 +14,7 @@ class CarRacingPenaltyEnv(CarRacing):
     def step(self, action):
         obs, reward, done, truncated, info = super().step(action)
         # Apply penalty for going off track
-        tile_contacts = [len(w.tiles) for w in self.car.wheels]
+        tile_contacts = [len(w.tiles) >= 1 for w in self.car.wheels]
         penalty = 4 - sum(tile_contacts)  # Number of wheels off track
         reward -= self.penalty_coeff * penalty
         self.reward -= self.penalty_coeff * penalty
