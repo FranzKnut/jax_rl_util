@@ -16,7 +16,7 @@ import optax
 import pandas as pd
 from experiments.wandb_sweeps.AllGymnax import all_env_names
 
-jax.config.update("jax_debug_nans", True)
+# jax.config.update("jax_debug_nans", True)
 
 NUM_STEPS = 100
 NUM_RUNS = 5
