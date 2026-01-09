@@ -9,6 +9,7 @@ from argparse import Namespace
 from dataclasses import asdict, dataclass, replace
 from operator import attrgetter
 from typing import Callable, Literal
+import time
 
 import jax
 import jax.numpy as jnp
@@ -701,9 +702,12 @@ def create_sweep_interactively(sweep_config, project=None, **kwargs):
 
     if name:
         sweep_config["name"] = name
+    else:
+        name = sweep_config.get("name")
 
     print("---------------------------------------")
     print("### Sweep " + name)
+    print("Created at: " + time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))
     print("Est. runs:", est_runs)
     sweep_id = wandb.sweep(sweep_config, project=project, **kwargs)
     print("")
