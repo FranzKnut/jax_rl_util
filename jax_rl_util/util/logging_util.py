@@ -554,7 +554,6 @@ def make_logger(hparams: LoggableConfig, run_name=""):
     """
     if hparams.logging == "wandb":
         logger: WandbLogger = WandbLogger(hparams, run_name)
-        hparams = logger.hparams  # Potentially get the replaced hparams for the sweep
     elif hparams.logging == "aim":
         logger = AimLogger(hparams, run_name=run_name)
     else:
@@ -579,6 +578,10 @@ def with_logger(func: Callable, hparams: LoggableConfig, run_name=""):
         Result of the function
     """
     logger = make_logger(hparams, run_name=run_name)
+    if hparams.logging == "wandb":
+        # Potentially get the replaced hparams for the sweep
+        hparams = logger.hparams
+
     # Run the function with the logger
     try:
         ret_code = 0
