@@ -392,7 +392,7 @@ class RNNActorCritic(nn.RNNCellBase):
             input_shape = input_shape[:-3] + (self.cnn_config.latent_size,)
         if self.rnn_config is not None and self.rnn_config.model_name:
             rnn_state = self._init_shared_rnn(rng, input_shape)
-            input_shape = self.rnn_config.hidden_size
+            input_shape = self.rnn_config.layers[-1:]
         else:
             rnn_state = None
         v_state = self.ac.critic.initialize_carry(rng, input_shape)
