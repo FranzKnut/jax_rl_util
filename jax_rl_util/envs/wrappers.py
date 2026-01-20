@@ -84,19 +84,17 @@ class GymBraxWrapper(Wrapper):
     def reset(self, rng: jnp.ndarray) -> State:
         """Make brax state from gym reset output."""
         reset_key, step_key = jrandom.split(rng)
-        # FIXME: return info
-        obs = self.env.reset(reset_key)
-        state = State(obs, obs, jnp.zeros(1), jnp.zeros((), dtype=jnp.bool))
+        obs, info = self.env.reset(reset_key)
+        state = State(obs, obs, jnp.zeros(1), jnp.zeros((), dtype=jnp.bool), info=info)
         state.info["rng"] = step_key
         return state
 
     def step(self, state: State, action: jnp.ndarray) -> State:
         """Make gymnax step and wrap in brax state."""
-        # FIXME: Info dict cannot be passed outside since this function is jitted.
-        obs, reward, done, truncated, *_ = self.env.step(action)
+        obs, reward, done, truncated, info = self.env.step(action)
         done = done | truncated
-        # for k, v in state_gymnax[4].items():
-        #     state.info[k] = v
+        for k, v in info.items():
+            state.info[k] = v
         reward = jnp.array(reward, dtype=jnp.float32)
         if len(reward.shape) == 0:
             reward = jnp.expand_dims(reward, axis=0)
@@ -133,20 +131,30 @@ class GymWrapper(Wrapper, gym.Env):
 class GymJaxWrapper(Wrapper):
     """Wrap Gym envs for use with Jax."""
 
+    def __init__(self, env):
+        """Infer shapes and dtypes for info dict at initialization."""
+        self.env = env
+
+        # HACK: return info dict with jax arrays
+        # This will fail if info contains non-array entries!
+        info = self.env.reset()[-1]
+        info = {k: jnp.array(v) for k, v in info.items()}
+        self.info_shape_dtypes = {
+            k: jax.ShapeDtypeStruct(v.shape, dtype=v.dtype) for k, v in info.items()
+        }
+
     def reset(self, rng: jnp.ndarray):
         """Call gym reset as external callback."""
-        # FIXME: return info
-        # info = self.env.reset()[-1]
 
         result_shape_dtypes = (
             jax.ShapeDtypeStruct(
                 self.env.observation_space.shape, dtype=self.env.observation_space.dtype
-            )
-            # {k: jax.ShapeDtypeStruct((), dtype=type(v)) for k, v in info.items()},
+            ),
+            self.info_shape_dtypes,
         )
 
         def _reset(seed):
-            return self.env.reset(seed=int(np.sum(seed)))[0]
+            return self.env.reset(seed=int(np.sum(seed)))
 
         return jax.experimental.io_callback(
             _reset, result_shape_dtypes, rng, ordered=True
@@ -161,6 +169,7 @@ class GymJaxWrapper(Wrapper):
             jax.ShapeDtypeStruct((), dtype=jnp.float32),
             jax.ShapeDtypeStruct((), dtype=jnp.bool),
             jax.ShapeDtypeStruct((), dtype=jnp.bool),
+            self.info_shape_dtypes,
         )
 
         def _step(action):
@@ -171,12 +180,13 @@ class GymJaxWrapper(Wrapper):
                 jnp.array(reward, dtype=jnp.float32),
                 jnp.array(done, dtype=jnp.bool_),
                 jnp.array(truncated, dtype=jnp.bool_),
+                {k: jnp.array(v) for k, v in info.items()},
             )
 
-        obs, reward, done, truncated = jax.experimental.io_callback(
+        obs, reward, done, truncated, info = jax.experimental.io_callback(
             _step, result_shape_dtypes, action, ordered=True
         )
-        return obs, reward, done, truncated
+        return obs, reward, done, truncated, info
 
     @property
     def action_size(self) -> int:
