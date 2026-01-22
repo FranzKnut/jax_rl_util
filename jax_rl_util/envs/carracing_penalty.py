@@ -22,7 +22,7 @@ class CarRacingPenaltyEnv(CarRacing):
     def __init__(self, penalty_coeff: float = 0.01, **kwargs):
         super().__init__(**kwargs)
         self.penalty_coeff = penalty_coeff
-        
+
     def reset(self, **kwargs):
         obs, info = super().reset(**kwargs)
         info["pos"] = np.array(self.car.hull.position)
@@ -40,7 +40,7 @@ class CarRacingPenaltyEnv(CarRacing):
         return obs, reward, done, truncated, info
 
     def _render(self, mode: str):
-        assert mode in self.metadata["render_modes"] + ["full"]
+        assert mode in self.metadata["render_modes"] + ["background"]
 
         pygame.font.init()
         if self.screen is None and mode == "human":
@@ -65,12 +65,14 @@ class CarRacingPenaltyEnv(CarRacing):
         trans = pygame.math.Vector2((scroll_x, scroll_y)).rotate_rad(angle)
         trans = (WINDOW_W / 2 + trans[0], WINDOW_H / 4 + trans[1])
 
-        if mode == "full":
+        if mode == "background":
             zoom = 2.0
             trans = (WINDOW_W / 2, WINDOW_H / 2)
             angle = 0
 
         self._render_road(zoom, trans, angle)
+
+        # if mode != "background":
         self.car.draw(
             self.surf,
             zoom,
@@ -81,14 +83,15 @@ class CarRacingPenaltyEnv(CarRacing):
 
         self.surf = pygame.transform.flip(self.surf, False, True)
 
-        # showing stats
-        self._render_indicators(WINDOW_W, WINDOW_H)
+        if mode != "background":
+            # showing stats
+            self._render_indicators(WINDOW_W, WINDOW_H)
 
-        font = pygame.font.Font(pygame.font.get_default_font(), 42)
-        text = font.render("%04i" % self.reward, True, (255, 255, 255), (0, 0, 0))
-        text_rect = text.get_rect()
-        text_rect.center = (60, WINDOW_H - WINDOW_H * 2.5 / 40.0)
-        self.surf.blit(text, text_rect)
+            font = pygame.font.Font(pygame.font.get_default_font(), 42)
+            text = font.render("%04i" % self.reward, True, (255, 255, 255), (0, 0, 0))
+            text_rect = text.get_rect()
+            text_rect.center = (60, WINDOW_H - WINDOW_H * 2.5 / 40.0)
+            self.surf.blit(text, text_rect)
 
         if mode == "human":
             pygame.event.pump()
@@ -97,6 +100,8 @@ class CarRacingPenaltyEnv(CarRacing):
             self.screen.fill(0)
             self.screen.blit(self.surf, (0, 0))
             pygame.display.flip()
+        elif mode == "background":
+            return self._create_image_array(self.surf, (WINDOW_W, WINDOW_H))
         elif mode == "rgb_array":
             return self._create_image_array(self.surf, (VIDEO_W, VIDEO_H))
         elif mode == "state_pixels":

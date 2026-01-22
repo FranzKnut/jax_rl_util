@@ -179,16 +179,20 @@ class AC(nn.Module):
             pi_state, encoded, img, training=training
         )
         if sample_act:
-            greedy_action = dists.mode()
+            # HACK: Fix failing mode() function for certain distrax distributions
+            try:
+                greedy_action = dists.mode()
+            except NotImplementedError:
+                greedy_action = jnp.tanh(dists.distribution.loc)
             if not training:
                 action = greedy_action
             else:
-                _rnd = jax.random.uniform(
+                _rng = jax.random.uniform(
                     self.make_rng("default"), shape=greedy_action.shape
                 )
                 # Epsilon-greedy action selection
                 action = jnp.where(
-                    _rnd < greedy_epsilon,
+                    _rng < greedy_epsilon,
                     greedy_action,
                     combined_dist.sample(seed=self.make_rng("default")),
                 )
