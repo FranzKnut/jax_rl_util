@@ -37,7 +37,7 @@ class LoggableConfig(simple_parsing.Serializable):
 class DummyLogger(dict, object):
     """Dummy Logger that does nothing besides acting as dictionary."""
 
-    run_id: str = ""
+    run_id: str = "dummy"
     run_artifacts_dir: str = "artifacts/log"
 
     def __repr__(self) -> str:

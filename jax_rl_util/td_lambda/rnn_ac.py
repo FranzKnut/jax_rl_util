@@ -179,11 +179,7 @@ class AC(nn.Module):
             pi_state, encoded, img, training=training
         )
         if sample_act:
-            # HACK: Fix failing mode() function for certain distrax distributions
-            try:
-                greedy_action = dists.mode()
-            except NotImplementedError:
-                greedy_action = jnp.tanh(dists.distribution.loc)
+            greedy_action = dists.mode()
             if not training:
                 action = greedy_action
             else:
