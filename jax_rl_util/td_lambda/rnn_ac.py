@@ -381,7 +381,7 @@ class RNNActorCritic(nn.RNNCellBase):
     def _init_shared_rnn(self, rng: PRNGKey, input_shape: tuple[int, ...]):
         """Initialize the shared RNN cell."""
         if self.use_cnn:
-            input_shape = input_shape[:-3] + (self.cnn_config.latent_size,)
+            input_shape = input_shape[:-3] + (self.policy_config.latent_size,)
 
         return self.rnn.initialize_carry(rng, input_shape)
 
@@ -389,7 +389,7 @@ class RNNActorCritic(nn.RNNCellBase):
         """Initialize the submodule states."""
 
         if self.use_cnn:
-            input_shape = input_shape[:-3] + (self.cnn_config.latent_size,)
+            input_shape = input_shape[:-3] + (self.policy_config.latent_size,)
         if self.rnn_config is not None and self.rnn_config.model_name:
             rnn_state = self._init_shared_rnn(rng, input_shape)
             input_shape = self.rnn_config.layers[-1:]
