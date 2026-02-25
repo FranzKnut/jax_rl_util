@@ -147,7 +147,7 @@ class DummyLogger(dict, object):
         )
 
 
-def update_nested_dict(d, u, path=""):
+def update_nested_dict(d: dict, u: dict | None, path=""):
     """Update nested dict d with values from nested dict u.
 
     Parameters
@@ -155,13 +155,15 @@ def update_nested_dict(d, u, path=""):
     d : dict
         Base dict
     u : dict
-        Updates
+        Updates. If None, no updates are made and d is returned.
 
     Returns
     -------
     dict
         d with values overwritten by u
     """
+    if u is None:
+        return d
     for k, v in u.items():
         if isinstance(v, collections.abc.Mapping):
             d[k] = update_nested_dict(
