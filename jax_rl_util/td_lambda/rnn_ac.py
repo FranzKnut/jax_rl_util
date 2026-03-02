@@ -1,7 +1,6 @@
 """RNN Actor-Critic flax Module."""
 
 from dataclasses import field
-from numbers import Number
 
 import distrax
 import jax
@@ -9,203 +8,19 @@ import jax.numpy as jnp
 from chex import PRNGKey
 from flax import linen as nn
 from jax_rtrl.networks.autoencoders import ConvEncoder, ConvConfig
-from jax_rtrl.util.jax_util import get_normalization_fn, sigmoid_between
-from jax_rtrl.models.feedforward import MLP, FADense
+from jax_rtrl.models.feedforward import DistributionLayer
 from jax_rtrl.models.seq_models import RNNEnsemble, RNNEnsembleConfig
 from jax_rtrl.networks.policies import PolicyConfig, PolicyRNN
 
 
-# Actor
-class Actor(nn.Module):
-    layers: list[int]
-    f_align: bool
-    discrete: bool
-    a_dim: int
-    act_log_bounds: float | tuple[float, float] | None = -1
-    act_bounds: tuple[float, float] | None = None
-    act_dist_name: str = "normal"
-    norm: str | None = None  # Normalization type, e.g., "layer", "batch"
-
-    @nn.compact
-    def __call__(self, hidden, training=True):
-        """Compute action distribution from latent."""
-        # actor_out_dim = self.a_dim if self.discrete else 2 * self.a_dim
-        if self.layers:
-            hidden = MLP(
-                self.layers,
-                f_align=self.f_align,
-                name="mean",
-                norm=self.norm,
-            )(hidden)
-        hidden = get_normalization_fn(self.norm, training=training)(hidden)
-        model_out = FADense(
-            self.a_dim * 2
-            if self.act_dist_name in ["beta", "brax", "normal_scale"]
-            else self.a_dim,
-            # kernel_init=nn.initializers.zeros_init(),
-            bias_init=nn.initializers.zeros_init(),
-        )(hidden)
-
-        if self.discrete:
-            # logits = model_out.mean(axis=-2)
-            dist = distrax.Categorical(logits=model_out)
-        elif self.act_dist_name == "deterministic":
-            # Deterministic action, no distribution
-            # model_out = model_out.mean(axis=-2)
-            if self.act_bounds is not None:
-                model_out = sigmoid_between(model_out, *self.act_bounds)
-            dist = distrax.Deterministic(model_out)
-        else:
-            if self.act_dist_name == "beta":
-                if self.act_bounds is not None:
-                    # If action limits are defined we sample from [0, 1] and transform the event.
-                    act_range = jnp.array(self.act_bounds[1]) - jnp.array(
-                        self.act_bounds[0]
-                    )
-                    act_min = jnp.array(self.act_bounds[0])
-                    scaling_transform = distrax.ScalarAffine(act_min, act_range)
-                alpha = jax.nn.softplus(model_out[..., : model_out.shape[-1] // 2])
-                beta = jax.nn.softplus(model_out[..., model_out.shape[-1] // 2 :])
-                return distrax.Transformed(distrax.Beta(alpha, beta), scaling_transform)
-            elif self.act_dist_name == "brax":
-                from brax.training.distribution import NormalTanhDistribution
-
-                return NormalTanhDistribution(
-                    event_size=self.a_dim,
-                    min_std=jnp.exp(self.act_log_bounds),
-                ).create_dist(model_out)
-            else:
-                if self.act_dist_name == "normal_scale":
-                    loc, log_std = jnp.split(model_out, 2, axis=-1)
-                else:
-                    loc = model_out
-                    log_std = self.param(
-                        "log_std", nn.initializers.zeros_init(), self.a_dim
-                    )
-                # if len(loc.shape) > 1:
-                #     # Take mean of ... ensemble?
-                #     loc = loc.mean(axis=-2)
-                #     if self.act_dist_name == "normal_scale":
-                #         log_std = log_std.mean(axis=-2)
-
-                if isinstance(self.act_log_bounds, tuple):
-                    log_std = sigmoid_between(log_std, *self.act_log_bounds)
-                elif isinstance(self.act_log_bounds, Number):
-                    log_std = jax.nn.softplus(log_std) + self.act_log_bounds
-                if self.act_bounds is not None:
-                    loc = sigmoid_between(loc, *self.act_bounds)
-                dist = distrax.LogStddevNormal(loc, log_std)
-
-        return dist
+Actor = DistributionLayer
 
 
-class AC(nn.Module):
-    """TD lambda.
+class Critic(DistributionLayer):
+    """Value critic head. Same as DistributionLayer with out_size=1 default."""
 
-    TODO: Remove this subclass and just use RNNActorCritic directly.
-    """
-
-    a_dim: int
-    discrete: bool
-    policy_config: PolicyConfig
-    critic_config: RNNEnsembleConfig
-    # split_actor: bool = False
-    act_bounds: tuple[float, ...] | None = None
-    # TODO: this config for splitting inputs to ensemble modules is confusing
-    split_critic_inputs: bool = False
-    split_actor_inputs: bool = False
-    # action_noise: float = 0.0  # TODO: Implement action noise for exploration
-
-    def setup(self) -> None:
-        """Initialize components."""
-        # Actor
-        self.actor = PolicyRNN(
-            self.a_dim,
-            self.policy_config,
-            split_input=self.split_actor_inputs,
-            name="actor",
-        )
-        # Critic
-        self.critic = RNNEnsemble(
-            self.critic_config,
-            out_size=1,
-            split_input=self.split_critic_inputs,
-            name="critic",
-        )
-
-    def value(self, x, h=None, training: bool = True):
-        """Compute value from latent."""
-        # if not self.split_actor and x.ndim > 1 and x.shape[-2] > 1:
-        #     # First module of the ensemble is used for the actor
-        #     x = x[..., 1:, :]  # Assume first axis is ensemble axis
-        return self.critic(h, x, training=training)
-
-    def policy(
-        self,
-        encoded=None,
-        img=None,
-        pi_state=None,
-        sample_act: bool = False,
-        training: bool = True,
-        greedy_epsilon: float = 0.0,
-    ):
-        """Compute action distribution or sample actions from the policy network.
-
-        Args:
-            x: Latent representation or input features for the policy network.
-            sample_act (bool, optional): If True, returns sampled actions along with
-                the distribution. If False, returns only the distribution. Defaults to False.
-            deterministic (bool, optional): If True and sample_act is True, returns
-                the mode of the distribution (deterministic action). If False, samples
-                stochastically. Only applies when sample_act is True. Defaults to False.
-
-        Returns:
-            If sample_act is False:
-                Distribution: The action distribution from the actor network.
-            If sample_act is True:
-                tuple: A tuple containing:
-                    - action: Sampled action (clipped to action bounds if specified)
-                    - dist: The action distribution from the actor network
-
-        Notes:
-            - When sample_act is True and self.act_bounds is defined,
-                actions are automatically clipped to action bounds.
-            - Uses internal RNG state for stochastic sampling via self.make_rng("default").
-        """
-        # if not self.split_actor and x.ndim > 1:
-        #     # First module of the ensemble is used for the actor
-        #     x = x[..., 0, :]  # Assume first axis is ensemble axis
-        encoded, (combined_dist, dists) = self.actor(
-            pi_state, encoded, img, training=training
-        )
-        if sample_act:
-            greedy_action = dists.mode()
-            if not training:
-                action = greedy_action
-            else:
-                _rng = jax.random.uniform(
-                    self.make_rng("default"), shape=greedy_action.shape
-                )
-                # Epsilon-greedy action selection
-                action = jnp.where(
-                    _rng < greedy_epsilon,
-                    greedy_action,
-                    combined_dist.sample(seed=self.make_rng("default")),
-                )
-            if self.act_bounds is not None:
-                action = jnp.clip(action, *self.act_bounds)
-            return encoded, (action, combined_dist)
-        return encoded, combined_dist
-
-    def __call__(
-        self, x, sample_act: bool = False, training: bool = True, epsilon: float = 0.0
-    ):
-        return self.policy(
-            x,
-            sample_act,
-            training,
-            greedy_epsilon=epsilon,
-        ), self.value(x)
+    out_size: int = 1
+    distribution: str = "Deterministic"
 
 
 class RNNActorCritic(nn.RNNCellBase):
@@ -235,18 +50,20 @@ class RNNActorCritic(nn.RNNCellBase):
         if self.rnn_config is not None and self.rnn_config.model_name:
             self.rnn = RNNEnsemble(self.rnn_config, out_size=None, name="rnn")
 
-        self.ac = AC(
-            name="ac",
-            a_dim=self.a_dim,
-            policy_config=self.policy_config,
-            critic_config=self.critic_config,
-            discrete=self.discrete,
-            act_bounds=self.act_bounds,
+        self.actor = PolicyRNN(
+            self.a_dim,
+            self.policy_config,
             # TODO: this config for splitting inputs to ensemble modules is confusing
-            split_actor_inputs=self.use_shared_rnn
+            split_input=self.use_shared_rnn
             and (self.rnn_config.num_modules == self.policy_config.num_modules),
-            split_critic_inputs=self.use_shared_rnn
+            name="actor",
+        )
+        self.critic = RNNEnsemble(
+            self.critic_config,
+            out_size=1,
+            split_input=self.use_shared_rnn
             and (self.rnn_config.num_modules == self.critic_config.num_modules),
+            name="critic",
         )
 
         if self.pred_obs:
@@ -302,7 +119,7 @@ class RNNActorCritic(nn.RNNCellBase):
             if len(x.shape) < len(encoded.shape):
                 x = jnp.expand_dims(x, -2)
             encoded = jnp.concatenate([encoded, x], axis=-1)
-        return self.ac.value(encoded, v_hidden, training=training)
+        return self.critic(v_hidden, encoded, training=training)
 
     def obs_prediction(self, hidden, a, x=None):
         """Compute observation prediction from latent."""
@@ -322,8 +139,7 @@ class RNNActorCritic(nn.RNNCellBase):
         training: bool = True,
         selected_act=None,
         epsilon: float = 0.0,
-    ):
-        """Compute action distribution form latent."""
+    ) -> tuple[jax.Array, distrax.Distribution] | jax.Array:
         # if not self.shared:
         #     # hidden = jnp.concatenate([hidden[0], jax.lax.stop_gradient(hidden[1])], axis=-1)
         #     hidden = hidden[..., :1, :]
@@ -331,14 +147,27 @@ class RNNActorCritic(nn.RNNCellBase):
         #     if len(x.shape) < len(hidden.shape):
         #         x = jnp.expand_dims(x, -2)
         #     hidden = jnp.concatenate([hidden, x], axis=-1)
-        return self.ac.policy(
-            encoded,
-            img,
-            pi_state=pi_state,
-            sample_act=sample_act,
-            training=training,
-            greedy_epsilon=epsilon,
+        encoded, (combined_dist, dists) = self.actor(
+            pi_state, encoded, img, training=training
         )
+        if sample_act:
+            greedy_action = dists.mode()
+            if not training:
+                action = greedy_action
+            else:
+                _rng = jax.random.uniform(
+                    self.make_rng("default"), shape=greedy_action.shape
+                )
+                # Epsilon-greedy action selection
+                action = jnp.where(
+                    _rng < epsilon,
+                    greedy_action,
+                    combined_dist.sample(seed=self.make_rng("default")),
+                )
+            if self.act_bounds is not None:
+                action = jnp.clip(action, *self.act_bounds)
+            return encoded, (action, combined_dist)
+        return encoded, combined_dist
 
     @nn.compact
     def __call__(
@@ -395,6 +224,6 @@ class RNNActorCritic(nn.RNNCellBase):
             input_shape = self.rnn_config.layers[-1:]
         else:
             rnn_state = None
-        v_state = self.ac.critic.initialize_carry(rng, input_shape)
-        pi_state = self.ac.actor.initialize_carry(rng, input_shape)
+        v_state = self.critic.initialize_carry(rng, input_shape)
+        pi_state = self.actor.initialize_carry(rng, input_shape)
         return (rnn_state, v_state, pi_state)

@@ -253,7 +253,7 @@ def make_wrapped_env(
         Dictionary with env info
     """
     # TODO refactor:
-    # -[ ] Make env_info a field of the env.
+    # [ ] Make env_info a field of the env.
 
     env: BraxEnv
     env_name = config.env_name
