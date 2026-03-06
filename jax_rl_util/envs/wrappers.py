@@ -156,9 +156,14 @@ class GymJaxWrapper(Wrapper):
         def _reset(seed):
             return self.env.reset(seed=int(np.sum(seed)))
 
-        return jax.experimental.io_callback(
-            _reset, result_shape_dtypes, rng, ordered=True
-        )
+        try:
+            return jax.experimental.io_callback(
+                _reset, result_shape_dtypes, rng, ordered=True
+            )
+        except Exception as e:
+            raise ValueError(
+                "IO-related error likely due to using a GymJaxWrapper. Try using a batch_size of 1."
+            ) from e
 
     def step(self, action: jnp.ndarray, key: jrandom.PRNGKey = None):
         """Make gymnax step and wrap in brax state."""
@@ -433,10 +438,10 @@ class RandomizedAutoResetWrapper(Wrapper):
         try:
             state = jax.lax.cond(state.done, _reset, lambda: state)
         except Exception as e:
-            print(
-                "not supported vmap-of-cond error is likely due to using a GymJaxWrapper. Use a batch_size of 1."
-            )
-            raise e
+            raise ValueError(
+                "IO-related error likely due to using a GymJaxWrapper. Try using a batch_size of 1."
+            ) from e
+
         return state.replace(done=done, reward=reward)
 
 
