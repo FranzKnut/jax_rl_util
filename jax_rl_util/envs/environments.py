@@ -16,7 +16,6 @@
 """Wrappers to support Brax and Gymnax training."""
 
 from dataclasses import dataclass, field
-from typing import Iterable
 
 import brax
 import gymnasium as gym
@@ -57,6 +56,15 @@ except ImportError:
     HIGHWAY_ENV_INSTALLED = False
     print("highway_env not installed. Skipping highway_env envs.")
 
+try:
+    from .carracing_penalty import CarRacingPenaltyEnv  # noqa
+
+    BOX2D_INSTALLED = True
+except ImportError:
+    BOX2D_INSTALLED = False
+    print("Box2D not installed. Skipping CarRacingPenaltyEnv.")
+
+
 from . import *  # noqa
 from .dronegym import DroneGym
 from .env_util import make_obs_mask
@@ -73,6 +81,8 @@ from .wrappers import (
     RandomizedAutoResetWrapper,
     VmapWrapper,
 )
+
+BRAX_ENVS_POS_DIMS = {"ant": 2, "halfcheetah": 1, "humanoid": 2}
 
 
 @dataclass(frozen=True, eq=True)
@@ -157,7 +167,7 @@ def get_env_specs(env: gym.Env, obs_mask=None):
 
 
 def get_env(config: EnvironmentConfig, debug=0) -> gym.Env:
-    """Get a brax or gymnax env from config.
+    """Get an env from config.
 
     Parameters
     ----------

@@ -8,8 +8,12 @@ import jax.numpy as jnp
 import numpy as np
 import simple_parsing
 from jax_rl_util.baselines.brax_baselines import load_brax_model
-from jax_rl_util.envs.environments import EnvironmentConfig, make_wrapped_env, print_env_info
-from jax_rl_util.envs import BRAX_ENVS_POS_DIMS
+from jax_rl_util.envs.environments import (
+    EnvironmentConfig,
+    make_wrapped_env,
+    print_env_info,
+    BRAX_ENVS_POS_DIMS,
+)
 
 
 @dataclass
