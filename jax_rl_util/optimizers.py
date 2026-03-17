@@ -2,13 +2,22 @@
 
 from dataclasses import dataclass, field, replace
 from functools import partial
-from typing import Any, Callable
+from typing import Any
+from collections.abc import Callable
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 import optax
 from optax._src import base, wrappers
+
+ALL_LR_DECAY_TYPES = [
+    "cosine",
+    "cosine_warmup",
+    "cosine_restarts",
+    "warmup",
+    "exponential",
+]
 
 
 @dataclass(frozen=True)
@@ -52,6 +61,9 @@ def make_optimizer(config=OptimizerConfig()) -> optax.GradientTransformation:
     """
     learning_rate = config.learning_rate
     weight_decay = config.weight_decay
+    assert config.lr_decay_type in ALL_LR_DECAY_TYPES + [None], (
+        f"lr_decay_type must be one of {ALL_LR_DECAY_TYPES} or None, but got {config.lr_decay_type}."
+    )
 
     if config.lr_decay_type == "cosine":
         """Args:
