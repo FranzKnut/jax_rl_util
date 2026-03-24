@@ -44,7 +44,7 @@ try:
     import gymnax
 
     GYMNAX_INSTALLED = True
-except ImportError:
+except:
     GYMNAX_INSTALLED = False
     print("gymnax not installed. Skipping gymnax envs.")
 

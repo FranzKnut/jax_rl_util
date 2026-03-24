@@ -696,8 +696,47 @@ def extract_keys_with_values(d, parent_key=""):
     return result
 
 
-def create_sweep_interactively(sweep_config, project=None, **kwargs):
+def create_sweep_interactively(
+    sweep_config, project=None, config_repo_dir=None, **kwargs
+):
+    """Create a wandb sweep with the given config.
+
+    Will ask for confirmation and sweep name interactively.
+    For more info on the config format, see wandb documentation.
+
+    Parameters
+    ----------
+    sweep_config : dict
+        Wandb sweep configuration dictionary.
+    project : str, optional
+        Wandb project name, by default None
+    config_repo_dir : Path | str, optional
+        Directory that contains the config files.
+        If provided and the directory is a git repository and has no uncommited changes,
+        the current commit hash will be added to the sweep name and a git tag will be created.
+
+    Returns
+    -------
+    str
+        Sweep ID
+    """
     import wandb
+
+    if config_repo_dir is not None:
+        # Check if the directory is a git repository and has no uncommited changes
+        git_status = (
+            os.popen(f"git -C {config_repo_dir} status --porcelain").read().strip()
+        )
+        if git_status:
+            raise RuntimeError(
+                f"Git repository at {os.path.abspath(config_repo_dir)} has uncommited changes.\n"
+                + "                 Please commit or stash them before creating a sweep."
+            )
+        # Get the current commit hash and add it to the sweep name
+        git_hash = (
+            os.popen(f"git -C {config_repo_dir} rev-parse --short HEAD").read().strip()
+        )
+        print(f"Git hash for sweep: {git_hash}")
 
     pprint(sweep_config)
     # Estimate number of runs and upload to wandb
@@ -710,9 +749,16 @@ def create_sweep_interactively(sweep_config, project=None, **kwargs):
     else:
         name = sweep_config.get("name")
 
+    if config_repo_dir:
+        if "name" in sweep_config:
+            sweep_config["name"] += f" ({git_hash})"
+        else:
+            sweep_config["name"] = git_hash
+
     print("---------------------------------------")
     print("### Sweep " + name)
     print("Created at: " + time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))
+    print("Git hash:", git_hash)
     print("Est. runs:", est_runs)
     sweep_id = wandb.sweep(sweep_config, project=project, **kwargs)
     print("")
@@ -721,6 +767,10 @@ def create_sweep_interactively(sweep_config, project=None, **kwargs):
     print("**Description**")
     for k, v in extract_keys_with_values(sweep_config["parameters"]).items():
         print(f"- {k}: {', '.join(map(str, v))}")
+
+    if config_repo_dir is not None:
+        # Create a git tag for the sweep
+        os.system(f'git -C {config_repo_dir} tag "sweep-{name.replace(" ", "-")}"')
     return sweep_id
 
 

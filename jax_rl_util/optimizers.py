@@ -82,6 +82,7 @@ def make_optimizer(config=OptimizerConfig()) -> optax.GradientTransformation:
             learning_rate,
             decay_steps=config.lr_kwargs["decay_steps"],
             alpha=config.lr_kwargs.get("end_multiplier", 0),
+            exponent=config.lr_kwargs.get("exponent", 1.0),
         )
     elif config.lr_decay_type == "cosine_warmup":
         """Args:
