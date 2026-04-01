@@ -92,6 +92,7 @@ class PPOParams(LoggableConfig):
     train_batch_size: int = 256
     update_steps: int = 10
     update_epochs: int = 4
+    fixed_env_rng: bool = False
 
     # Optimization settings
     optimizer_params: OptimizerConfig = field(
@@ -369,7 +370,7 @@ class ActorCriticRNN(nn.Module):
     def __call__(self, hidden, x):
         """Compute embedding from RNN and then actor and critic MLPs."""
         obs, dones = x
-        
+
         if hidden is None:
             hidden = self.initialize_carry(None, obs.shape[1:])
 
@@ -488,7 +489,7 @@ def calculate_gae(transitions, values, last_val, gamma=0.99, gae_lambda=0.95):
 def make_train(
     config: PPOParams,
     logger: DummyLogger,
-    param_overrides=None,  # TODO
+    param_overrides=None,
     network_cls=None,
 ):
     """Create the training function."""
@@ -526,7 +527,13 @@ def make_train(
             config=config,
             action_limits=env_info["act_clip"],
         )
-        rng, init_rng, reset_rng = jax.random.split(rng, 3)
+
+        _rng, init_rng, reset_rng = jax.random.split(rng, 3)
+        if config.fixed_env_rng:
+            print(
+                "WARNING: Using fixed environment RNG. This is not recommended for fresh training runs."
+            )
+            reset_rng = rng
         tmp_env_state = env.reset(reset_rng)
         init_obs = jnp.zeros(
             (1,) + tmp_env_state.obs.shape,
@@ -550,7 +557,7 @@ def make_train(
                 dtype=tmp_env_state.done.dtype,
             ),
         )
-        rng, _rng = jax.random.split(rng)
+        _rng, _rng = jax.random.split(_rng)
         # Initialize once to have a tree template for robust restores.
         init_params = network.init(init_rng, None, init_x)
 
@@ -570,9 +577,11 @@ def make_train(
 
         if network_params is None:
             network_params = init_params
-            
+
         if param_overrides is not None:
-            network_params = update_nested_dict(network_params, copy.deepcopy(param_overrides))
+            network_params = update_nested_dict(
+                network_params, copy.deepcopy(param_overrides)
+            )
 
         optimizer_config = config.optimizer_params
         if isinstance(optimizer_config, dict):
@@ -585,11 +594,14 @@ def make_train(
         )
 
         # INIT ENV
-        rng, reset_rng = jax.random.split(rng)
+        if config.fixed_env_rng:
+            reset_rng = rng
+        else:
+            _rng, reset_rng = jax.random.split(_rng)
         env_state = env.reset(reset_rng)
         obsv = env_state.obs
         init_hstate = network.apply(
-            init_params, rng, obsv.shape, method=network.initialize_carry
+            init_params, _rng, obsv.shape, method=network.initialize_carry
         )
 
         # Set up running statistics
@@ -617,7 +629,10 @@ def make_train(
             """Evaluate model."""
             print("Tracing eval_model.")
             rng = jax.random.PRNGKey(seed)
-            rng, rng_init = jax.random.split(rng)
+            if config.fixed_env_rng:
+                rng_init = rng
+            else:
+                rng, rng_init = jax.random.split(rng)
 
             env_state = eval_env.reset(rng_init)
             # Normalize observations
@@ -653,7 +668,9 @@ def make_train(
                         axis=-1,
                     )
                 ac_in = (x, _env_state.done[None, :])
-                next_hstate, pi, value = network.apply(params, prev_hstate, ac_in, rngs={"default": _rng})
+                next_hstate, pi, value = network.apply(
+                    params, prev_hstate, ac_in, rngs={"default": _rng}
+                )
                 if config.deterministic_eval:
                     action = pi.mode()
                 else:
@@ -962,7 +979,6 @@ def make_train(
             loss_info["train_reward"] = compute_agg_reward(traj_batch)
             return runner_state, loss_info
 
-        rng, _rng = jax.random.split(rng)
         runner_state = (
             train_state,
             env_state,
@@ -982,7 +998,7 @@ def make_train(
                     runner_state,
                     xs=i * config.update_steps + np.arange(config.update_steps),
                 )
-                if config.eval_every and i % config.eval_every == 0:
+                if config.eval_every and (i % config.eval_every == 0):
                     eval_reward, _traj = eval_model(
                         runner_state[0].params, runner_state[2]
                     )

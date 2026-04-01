@@ -139,9 +139,26 @@ class GymJaxWrapper(Wrapper):
         # This will fail if info contains non-array entries!
         info = self.env.reset()[-1]
         info = {k: jnp.array(v) for k, v in info.items()}
+        self._info_defaults = {
+            k: np.zeros(v.shape, dtype=v.dtype) for k, v in info.items()
+        }
         self.info_shape_dtypes = {
             k: jax.ShapeDtypeStruct(v.shape, dtype=v.dtype) for k, v in info.items()
         }
+
+    def _normalize_info(self, info: dict) -> dict:
+        """Coerce info to a fixed dict schema expected by io_callback."""
+        normalized = {}
+        for k, default in self._info_defaults.items():
+            value = info.get(k, default)
+            value = np.asarray(value, dtype=default.dtype)
+            if value.shape != default.shape:
+                if value.size == 1:
+                    value = np.full(default.shape, value.reshape(()), dtype=default.dtype)
+                else:
+                    value = default
+            normalized[k] = value
+        return normalized
 
     def reset(self, rng: jnp.ndarray):
         """Call gym reset as external callback."""
@@ -178,16 +195,14 @@ class GymJaxWrapper(Wrapper):
         )
 
         def _step(action):
-            # FIXME: RuntimeError: Mismatched number of outputs from callback. Expected: 5, Actual: 6
             _output = self.env.step(action._value)
-            obs, reward, done, truncated, info = _output[:5]
-            # FIXME: Cannot pass back info with autoreset since shape changes
+            obs, reward, done, truncated, info = _output
             return (
                 obs,
                 jnp.array(reward, dtype=jnp.float32),
                 jnp.array(done, dtype=jnp.bool_),
                 jnp.array(truncated, dtype=jnp.bool_),
-                {k: jnp.array(v) for k, v in info.items()},
+                self._normalize_info(info),
             )
 
         obs, reward, done, truncated, info = jax.experimental.io_callback(
