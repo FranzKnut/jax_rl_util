@@ -13,14 +13,17 @@ import jax
 import jax.numpy as jnp
 import jax.random as jrandom
 
-from jax_rtrl.util.checkpointing import checkpointing, restore_config
+from jax_rtrl.util.checkpointing import (
+    checkpointing,
+    restore_config,
+    restore_remote,
+)
 from matplotlib import pyplot as plt
 import numpy as np
 import optax
 import simple_parsing
 from flax.linen.initializers import constant, orthogonal
 from flax.training.train_state import TrainState
-import wandb
 
 from jax_rl_util.util.logging_util import (
     DummyLogger,
@@ -30,8 +33,13 @@ from jax_rl_util.util.logging_util import (
 )
 
 from jax_rl_util.envs.env_util import compute_agg_reward
-from jax_rl_util.envs.environments import EnvironmentConfig, make_wrapped_env, print_env_info
+from jax_rl_util.envs.environments import (
+    EnvironmentConfig,
+    make_wrapped_env,
+    print_env_info,
+)
 from jax_rl_util.envs.wrappers import VmapWrapper
+from jax_rl_util.optimizers import OptimizerConfig, make_optimizer_for_model
 from jax_rl_util.util import running_statistics
 
 # jax.config.update("jax_disable_jit", True)
@@ -57,7 +65,7 @@ class PPOParams(LoggableConfig):
     seed: int = -1
     log_norms: bool = False
     save_model: bool = False
-    restore_from: str | None = None  # path or wandb run id
+    ckpt_path: str | None = None  # path or wandb run id
     fresh: bool = True  # Only load the hyperparameters, not the model
     record_best_eval_episode: bool = True
     deterministic_eval: bool = True
@@ -78,33 +86,63 @@ class PPOParams(LoggableConfig):
     eval_steps: int = 5000
     eval_batch_size: int = 10
     collect_steps: int = 100
-    rollout_horizon: int = 50
-    train_batch_size: int = 1024
+    rollout_horizon: int = 20
+    train_batch_size: int = 256
     update_steps: int = 10
     update_epochs: int = 4
 
     # Optimization settings
-    LR: float = 1e-3
+    optimizer_params: OptimizerConfig = field(
+        default_factory=lambda: OptimizerConfig(
+            opt_name="adamw",
+            learning_rate=1e-3,
+            weight_decay=0.0,
+        )
+    )
     gamma: float = 0.99
     gae_lambda: float = 0.95
     clip_eps: float = 0.2
     ent_coef: float = 0e-5
     vf_coef: float = 0.5
-    gradient_clip: float | None = None
-    anneal_lr: bool = False
     anneal_ent: bool = False
 
     # Env settings
     env_params: EnvironmentConfig = field(
         default_factory=lambda: EnvironmentConfig(
-            env_name="PandaPickCubeOrientation",
-            batch_size=64,
+            env_name="CartPole-v1",
+            batch_size=128,
         )
     )
     dt: float = 1.0
     normalize_obs: bool = False
     normalize_gae: bool = False
     sparsity_penalty: float | None = None
+
+
+def normalize_legacy_optimizer_config(config_dict: dict) -> dict:
+    """Map legacy optimizer keys to optimizer_params."""
+    config_dict = dict(config_dict)
+    optimizer_params = config_dict.get("optimizer_params", {})
+    if not isinstance(optimizer_params, dict):
+        optimizer_params = dict(vars(optimizer_params))
+    else:
+        optimizer_params = dict(optimizer_params)
+
+    legacy_lr = config_dict.pop("LR", None)
+    legacy_gradient_clip = config_dict.pop("gradient_clip", None)
+    legacy_anneal_lr = config_dict.pop("anneal_lr", None)
+
+    if legacy_lr is not None and "learning_rate" not in optimizer_params:
+        optimizer_params["learning_rate"] = legacy_lr
+    if legacy_gradient_clip is not None and "gradient_clip" not in optimizer_params:
+        optimizer_params["gradient_clip"] = legacy_gradient_clip
+    if legacy_anneal_lr:
+        print(
+            "WARNING: anneal_lr is deprecated. Configure optimizer_params.lr_decay_type and optimizer_params.lr_kwargs instead."
+        )
+
+    config_dict["optimizer_params"] = optimizer_params
+    return config_dict
 
 
 class LSTM(nn.Module):
@@ -443,9 +481,16 @@ def calculate_gae(transitions, values, last_val, gamma=0.99, gae_lambda=0.95):
     return advantages, advantages + transitions.value
 
 
-def make_train(config: PPOParams, logger: DummyLogger):
+def make_train(
+    config: PPOParams,
+    logger: DummyLogger,
+    param_overrides=None,  # TODO
+    network_cls=None,
+):
     """Create the training function."""
     _rnn_model = globals()[config.model](config)
+    if network_cls is None:
+        network_cls = ActorCriticRNN
 
     batch_size = config.env_params.batch_size
     if config.env_params.batch_size is None:
@@ -475,49 +520,63 @@ def make_train(config: PPOParams, logger: DummyLogger):
         -------
             Average eval reward of last validation epoch
         """
+        nonlocal config
         # INIT NETWORK
-        network = ActorCriticRNN(
+        network = network_cls(
             env.action_size,
             discrete=_discrete,
             config=config,
             action_limits=env_info["act_clip"],
         )
-        rng, _rng = jax.random.split(rng)
-        input_size = env.observation_size
+        rng, init_rng, reset_rng = jax.random.split(rng, 3)
+        tmp_env_state = env.reset(reset_rng)
+        init_obs = jnp.zeros(
+            (1,) + tmp_env_state.obs.shape,
+            dtype=tmp_env_state.obs.dtype,
+        )
         if config.meta_rl:
             # Previous action and reward are also inputs in MetaRL
-            input_size += env.action_size + 1
+            zeros_act = jnp.zeros(
+                init_obs.shape[:-1] + (env.action_size,),
+                dtype=init_obs.dtype,
+            )
+            zeros_rew = jnp.zeros(
+                init_obs.shape[:-1] + (1,),
+                dtype=init_obs.dtype,
+            )
+            init_obs = jnp.concatenate([init_obs, zeros_act, zeros_rew], axis=-1)
         init_x = (
-            jnp.zeros((1, batch_size, input_size)),
-            jnp.zeros((1, batch_size)),
+            init_obs,
+            jnp.zeros(
+                (1,) + tmp_env_state.done.shape,
+                dtype=tmp_env_state.done.dtype,
+            ),
         )
-        init_hstate = _rnn_model.initialize_carry(rng, (batch_size, input_size))
+        rng, _rng = jax.random.split(rng)
+        # Initialize once to have a tree template for robust restores.
+        init_params = network.init(init_rng, None, init_x)
 
-        # Set up checkpointing
-        ckpt_path = f"output/{config.model}-{config.num_units}"
-        (network_params, _), save_model = checkpointing(ckpt_path, config.fresh, config)
+        # Set up checkpointing (match RTRRLAgent restore behavior).
+        ckpt_path = config.ckpt_path or f"output/{config.model}-{config.num_units}"
+        if ckpt_path.startswith("wandb:"):
+            ckpt_path = restore_remote(ckpt_path)
+
+        (network_params, restored_cfg), save_model = checkpointing(
+            ckpt_path, config.fresh, config, tree=init_params
+        )
+        if restored_cfg:
+            restored_cfg = normalize_legacy_optimizer_config(restored_cfg)
+            if "ckpt_path" not in restored_cfg:
+                restored_cfg["ckpt_path"] = config.ckpt_path
+            config = PPOParams.from_dict(restored_cfg, drop_extra_fields=True)
+
         if network_params is None:
-            network_params = network.init(_rng, init_hstate, init_x)
+            network_params = init_params
 
-        if config.anneal_lr:
-            linear_schedule = optax.linear_schedule(
-                config.LR,
-                0.0,
-                config.episodes * config.update_epochs * config.update_steps,
-            )
-            tx = optax.chain(
-                optax.clip_by_global_norm(config.gradient_clip)
-                if config.gradient_clip
-                else optax.identity(),
-                optax.adamw(learning_rate=linear_schedule),
-            )
-        else:
-            tx = optax.chain(
-                optax.clip_by_global_norm(config.gradient_clip)
-                if config.gradient_clip
-                else optax.identity(),
-                optax.adamw(config.LR),
-            )
+        optimizer_config = config.optimizer_params
+        if isinstance(optimizer_config, dict):
+            optimizer_config = OptimizerConfig(**optimizer_config)
+        tx = make_optimizer_for_model(config.model.lower(), optimizer_config)
         train_state = TrainState.create(
             apply_fn=network.apply,
             params=network_params,
@@ -528,7 +587,9 @@ def make_train(config: PPOParams, logger: DummyLogger):
         rng, reset_rng = jax.random.split(rng)
         env_state = env.reset(reset_rng)
         obsv = env_state.obs
-        init_hstate = _rnn_model.initialize_carry(rng, obsv.shape)
+        init_hstate = network.apply(
+            init_params, rng, obsv.shape, method=network.initialize_carry
+        )
 
         # Set up running statistics
         if config.normalize_obs:
@@ -565,7 +626,12 @@ def make_train(config: PPOParams, logger: DummyLogger):
             runner_state = (
                 env_state,
                 jnp.zeros((eval_env.batch_size, env.action_size)),
-                _rnn_model.initialize_carry(rng_init, env_state.obs.shape),
+                network.apply(
+                    init_params,
+                    rng_init,
+                    env_state.obs.shape,
+                    method=network.initialize_carry,
+                ),
                 _rng,
             )
             # COLLECT TRAJECTORIES
@@ -672,7 +738,7 @@ def make_train(config: PPOParams, logger: DummyLogger):
                     )
                 ac_in = (x[None], env_state.done[None, :])
                 next_hstate, pi, value = network.apply(
-                    train_state.params, prev_hstate, ac_in
+                    train_state.params, prev_hstate, ac_in, rngs={"default": _rng}
                 )
                 action = pi.sample(seed=_rng)
                 if env_info["act_clip"]:
@@ -741,7 +807,9 @@ def make_train(config: PPOParams, logger: DummyLogger):
             if config.meta_rl:
                 x = jnp.concatenate([x, re_action, env_state.reward], axis=-1)
             ac_in = (x[None], env_state.done[None, :])
-            _, _, _last_val = network.apply(train_state.params, hstate, ac_in)
+            _, _, _last_val = network.apply(
+                train_state.params, hstate, ac_in, rngs={"default": rng}
+            )
 
             gae, val = calculate_gae(
                 traj_batch,
@@ -784,9 +852,12 @@ def make_train(config: PPOParams, logger: DummyLogger):
                                 axis=-1,
                             )
                         _, pi, v_hat = network.apply(
-                            params, _init_hstate, (x, transition.prev_done)
+                            params,
+                            _init_hstate,
+                            (x, transition.prev_done),
+                            rngs={"default": rng},
                         )
-                        log_prob = pi.log_prob(transition.action)
+                        log_prob = pi.log_prob(transition.action.squeeze())
 
                         # CALCULATE VALUE LOSS
                         value_pred_clipped = transition.value + (
@@ -805,6 +876,7 @@ def make_train(config: PPOParams, logger: DummyLogger):
                         # diff = jnp.clip(diff, max=10)  # HACK avoids some NaNs!
                         ratio = jnp.exp(diff)
                         _gae = (_gae - _gae.mean()) / (_gae.std() + 1e-8)
+                        _gae = _gae.reshape(*ratio.shape)
                         loss_actor1 = ratio * _gae
                         loss_actor2 = (
                             jnp.clip(
@@ -990,12 +1062,22 @@ def make_train(config: PPOParams, logger: DummyLogger):
     return train
 
 
-def train_and_eval(config: PPOParams, logger=DummyLogger()):
+def train_and_eval(
+    config: PPOParams,
+    logger=DummyLogger(),
+    param_overrides=None,
+    network_cls=None,
+):
     """Run training."""
     rng = jax.random.PRNGKey(config.seed)
     logger["best_eval_reward"] = -np.inf
     try:
-        result = make_train(config, logger)(rng)
+        result = make_train(
+            config,
+            logger,
+            param_overrides=param_overrides,
+            network_cls=network_cls,
+        )(rng)
 
         if config.env_params.env_name == "dronegym":
             from jax_rl_util.envs.plot_drones import plot_from_file
@@ -1032,20 +1114,12 @@ def train_and_eval(config: PPOParams, logger=DummyLogger()):
 
 if __name__ == "__main__":
     hparams: PPOParams = simple_parsing.parse(PPOParams, add_config_path_arg=True)
-    if hparams.restore_from:
-        if hparams.restore_from is not None:
-            if os.path.exists(hparams.restore_from):
-                restore_path = hparams.restore_from
-                print(f"Restoring from {hparams.restore_from}")
-                hparams = restore_config(restore_path)
-            else:
-                # Assume restore_from is a wandb run id
-                api = wandb.Api()
-                run = api.run(hparams.restore_from)
-                print(f"Restoring config from wandb run: {run.url}")
-                # wandb stores config as a dict of dicts, so flatten it
-                _cfg_dict = run.config
-                _cfg_dict["restore_from"] = run.url
-                hparams = PPOParams(**run.config)
+    if hparams.ckpt_path and hparams.fresh:
+        print(f"Restoring config from: {hparams.ckpt_path}")
+        restored = restore_config(hparams.ckpt_path)
+        if restored:
+            restored = normalize_legacy_optimizer_config(restored)
+            restored["restore_from"] = hparams.ckpt_path
+            hparams = PPOParams(**restored)
     best_reward = with_logger(train_and_eval, hparams)
     print(f"Best eval reward: {best_reward:.2f}")

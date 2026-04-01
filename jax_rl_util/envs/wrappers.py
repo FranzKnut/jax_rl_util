@@ -178,7 +178,9 @@ class GymJaxWrapper(Wrapper):
         )
 
         def _step(action):
-            obs, reward, done, truncated, info = self.env.step(action._value)
+            # FIXME: RuntimeError: Mismatched number of outputs from callback. Expected: 5, Actual: 6
+            _output = self.env.step(action._value)
+            obs, reward, done, truncated, info = _output[:5]
             # FIXME: Cannot pass back info with autoreset since shape changes
             return (
                 obs,

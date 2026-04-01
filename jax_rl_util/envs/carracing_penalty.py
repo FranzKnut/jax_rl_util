@@ -29,7 +29,7 @@ class CarRacingPenaltyEnv(CarRacing):
         return obs, info
 
     def step(self, action):
-        obs, reward, done, truncated, info = super().step(action)
+        obs, reward, done, truncated, info = super().step(action)[:5]
         # Apply penalty for going off track
         position = np.array(self.car.hull.position)
         distances = np.array(self.track)[:, -2:] - position
