@@ -37,7 +37,7 @@ def get_runs_for_config(project, filters={}):
     return pd.DataFrame(summaries)
 
 
-def main(projects: list[str], sweeps: list[str] = None, out_file: str = "data/eval/wandb_runs.csv"):
+def wandb_to_csv(projects: list[str], sweeps: list[str] = None, out_dir: str = "data/eval", force: bool = False):
     """Download wandb runs for given projects and save them as csv.
 
     Parameters
@@ -46,37 +46,42 @@ def main(projects: list[str], sweeps: list[str] = None, out_file: str = "data/ev
         List of projects to download runs for
     sweeps : list[str], optional
         Only download runs for these sweeps, by default all sweeps are downloaded
-    out_file : str, optional
-        Path to save the output CSV file, by default "data/eval/wandb_runs.csv"
+    out_dir : str, optional
+        Path to save the output CSV files, by default "data/eval"
+    force : bool, optional
+        Whether to overwrite existing files, by default False
     """
-    # Get all runs for a config
-    all_dfs = []
+    os.makedirs(out_dir, exist_ok=True)
     for p in projects:
         _p = api.project(p, entity="franzknut")
         print("Getting sweeps for project", p)
 
         if sweeps is None:
             sweep_runs = get_runs_for_config(p)
-            all_dfs.append(sweep_runs)
+            for sweep_id, group_df in sweep_runs.groupby("Sweep"):
+                out_path = os.path.join(out_dir, f"{sweep_id}.csv")
+                if os.path.exists(out_path) and not force:
+                    print(f"Skipping {sweep_id}, file already exists.")
+                    continue
+                group_df.to_csv(out_path)
+                print("Saved to", out_path)
         else:
             all_sweeps = {s.id: s.name for s in _p.sweeps() if s.id in sweeps}
             for s in all_sweeps.keys():
+                out_path = os.path.join(out_dir, f"{s}.csv")
+                if os.path.exists(out_path) and not force:
+                    print(f"Skipping {s}, file already exists.")
+                    continue
+                
                 print(all_sweeps[s])
                 filters = {
                     "Sweep": s,
                 }
                 sweep_runs = get_runs_for_config(p, filters)
                 sweep_runs["Sweep_name"] = all_sweeps[s]
-                all_dfs.append(sweep_runs)
-
-    df_out = pd.concat(all_dfs)
-    print("downloaded:")
-    print(df_out)
-    # Save to csv
-    os.makedirs(os.path.dirname(out_file), exist_ok=True)
-    df_out.to_csv(out_file)
-    print("Saved to", out_file)
+                sweep_runs.to_csv(out_path)
+                print("Saved to", out_path)
 
 
 if __name__ == "__main__":
-    main()
+    wandb_to_csv()

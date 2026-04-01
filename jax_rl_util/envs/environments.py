@@ -103,9 +103,14 @@ class EnvironmentConfig:
     # reward_scaling: int = 1
     obs_mask: str | tuple[int] | None = None
     init_kwargs: dict = field(default_factory=dict, hash=False)
-    env_kwargs: dict = field(default_factory=dict, hash=False)
+    step_kwargs: dict = field(default_factory=dict, hash=False)
     max_ep_length: int = 1000
     batch_size: int | None = None
+
+    @property
+    def env_kwargs(self):
+        """For backwards compatibility."""
+        return self.step_kwargs
 
 
 def print_env_info(env_info):
@@ -182,23 +187,23 @@ def get_env(config: EnvironmentConfig, debug=0) -> gym.Env:
     env_name = config.env_name
     if GYMNAX_INSTALLED and env_name in gymnax.registered_envs:
         # Set params for gymnax envs
-        config.env_kwargs["max_steps_in_episode"] = config.max_ep_length
+        config.step_kwargs["max_steps_in_episode"] = config.max_ep_length
 
         # create a gym environment
         env, gymnax_params = gymnax.make(env_name, **config.init_kwargs)
-        env = GymnaxBraxWrapper(env, config.env_kwargs)
+        env = GymnaxBraxWrapper(env, config.step_kwargs)
         env.package_name = "gymnax"
     elif POPJYM_INSTALLED and env_name in popjym.registration.REGISTERED_ENVS:
         env, env_params = popjym.make(env_name)
-        env = PopJymBraxWrapper(env, config.env_kwargs)
+        env = PopJymBraxWrapper(env, config.step_kwargs)
         env.package_name = "popjym"
     elif "dronegym" in env_name.lower():
         env = DroneGym(**config.init_kwargs)
-        env = GymnaxBraxWrapper(env, config.env_kwargs)
+        env = GymnaxBraxWrapper(env, config.step_kwargs)
         env.package_name = "misc"
     elif "tribead" in env_name.lower():
         env = TriangleJax(**config.init_kwargs)
-        env = GymnaxBraxWrapper(env, config.env_kwargs)
+        env = GymnaxBraxWrapper(env, config.step_kwargs)
         env.package_name = "misc"
     elif env_name.startswith("brax-") or env_name in brax.envs._envs:
         # Create entrypoint for brax env
@@ -222,7 +227,7 @@ def get_env(config: EnvironmentConfig, debug=0) -> gym.Env:
             **config.init_kwargs,
         )
         env = GymJaxWrapper(env)
-        env = GymBraxWrapper(env, config.env_kwargs)
+        env = GymBraxWrapper(env, config.step_kwargs)
         env.package_name = "gym"
 
     # Make sure it knows its name for compatibility with other packages

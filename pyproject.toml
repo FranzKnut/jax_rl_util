@@ -16,8 +16,11 @@ popjym    = { git = "https://github.com/EdanToledo/popjym.git", branch = "main" 
 # mujoco_menagerie         = { git = "https://github.com/google-deepmind/mujoco_menagerie", branch = "main" }
 simple-parsing = "^0.1.6"
 jaxtyping      = "*"
-jax            = "^0.9.1"
+jax            = "*"
 distrax        = "*"
+box2d = "^2.3.10"
+pygame = "^2.6.1"
+swig = "^4.4.1"
 
 
 [build-system]

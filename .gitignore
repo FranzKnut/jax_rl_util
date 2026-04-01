@@ -166,3 +166,4 @@ artifacts/
 tmp/
 logs/
 data/
+output/
