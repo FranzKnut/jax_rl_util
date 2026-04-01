@@ -1,5 +1,6 @@
 """PPO implementation in JAX."""
 
+import copy
 import functools
 import os
 from dataclasses import dataclass, field
@@ -29,6 +30,7 @@ from jax_rl_util.util.logging_util import (
     DummyLogger,
     LoggableConfig,
     log_norms,
+    update_nested_dict,
     with_logger,
 )
 
@@ -71,7 +73,7 @@ class PPOParams(LoggableConfig):
     deterministic_eval: bool = True
 
     # Model Settings
-    model: str = "MLP"
+    model: str = "CTRNN"
     dt: float = 1.0
     num_units: int = 256
     meta_rl: bool = False
@@ -94,15 +96,14 @@ class PPOParams(LoggableConfig):
     # Optimization settings
     optimizer_params: OptimizerConfig = field(
         default_factory=lambda: OptimizerConfig(
-            opt_name="adamw",
-            learning_rate=1e-3,
-            weight_decay=0.0,
+            opt_name="adam",
+            learning_rate=3e-4,
         )
     )
     gamma: float = 0.99
     gae_lambda: float = 0.95
     clip_eps: float = 0.2
-    ent_coef: float = 0e-5
+    ent_coef: float = 1e-5
     vf_coef: float = 0.5
     anneal_ent: bool = False
 
@@ -368,6 +369,9 @@ class ActorCriticRNN(nn.Module):
     def __call__(self, hidden, x):
         """Compute embedding from RNN and then actor and critic MLPs."""
         obs, dones = x
+        
+        if hidden is None:
+            hidden = self.initialize_carry(None, obs.shape[1:])
 
         action_dim = (
             self.action_dim * 2
@@ -488,14 +492,8 @@ def make_train(
     network_cls=None,
 ):
     """Create the training function."""
-    _rnn_model = globals()[config.model](config)
     if network_cls is None:
         network_cls = ActorCriticRNN
-
-    batch_size = config.env_params.batch_size
-    if config.env_params.batch_size is None:
-        print("WARNING: batch_size was not configured: set it to 1.")
-        batch_size = 1
 
     env, env_info, eval_env = make_wrapped_env(config.env_params, make_eval=True)
     eval_env = VmapWrapper(eval_env, config.eval_batch_size)
@@ -572,6 +570,9 @@ def make_train(
 
         if network_params is None:
             network_params = init_params
+            
+        if param_overrides is not None:
+            network_params = update_nested_dict(network_params, copy.deepcopy(param_overrides))
 
         optimizer_config = config.optimizer_params
         if isinstance(optimizer_config, dict):
@@ -652,7 +653,7 @@ def make_train(
                         axis=-1,
                     )
                 ac_in = (x, _env_state.done[None, :])
-                next_hstate, pi, value = network.apply(params, prev_hstate, ac_in)
+                next_hstate, pi, value = network.apply(params, prev_hstate, ac_in, rngs={"default": _rng})
                 if config.deterministic_eval:
                     action = pi.mode()
                 else:
@@ -1067,6 +1068,7 @@ def train_and_eval(
     logger=DummyLogger(),
     param_overrides=None,
     network_cls=None,
+    env=None,
 ):
     """Run training."""
     rng = jax.random.PRNGKey(config.seed)

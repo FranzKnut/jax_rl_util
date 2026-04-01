@@ -23,6 +23,8 @@ from brax.envs.base import Env as BraxEnv  # noqa
 from jax import numpy as jnp
 import numpy as np
 
+from jax_rl_util.envs import wrappers
+
 # Try importing optional dependencies
 try:
     import mujoco_playground
@@ -97,6 +99,7 @@ class EnvironmentConfig:
         env_kwargs (dict): Arguments for the env step function.
         max_ep_length (int): Maximum episode length.
         batch_size (int): Number of parallel environments.
+        transform_wrappers (list): List of wrappers to apply to the environment.
     """
 
     env_name: str = "CartPole-v1"
@@ -106,6 +109,7 @@ class EnvironmentConfig:
     step_kwargs: dict = field(default_factory=dict, hash=False)
     max_ep_length: int = 1000
     batch_size: int | None = None
+    transform_wrappers: list = field(default_factory=list, hash=False)
 
     @property
     def env_kwargs(self):
@@ -241,7 +245,6 @@ def make_wrapped_env(
     debug=0,
     make_eval=False,
     use_vmap_wrapper=True,
-    grayscale=False,
 ) -> tuple[BraxEnv, dict] | tuple[BraxEnv, dict, BraxEnv]:
     """Make brax or gymnax env.
 
@@ -257,8 +260,6 @@ def make_wrapped_env(
         If true, eval env without batching is also returned
     use_vmap_wrapper : bool, optional
         Force using the vmap wrapper (even for batchsize 1), by default True
-    grayscale : bool, optional
-        Whether to convert observations to grayscale, by default False
 
     Returns
     -------
@@ -279,8 +280,8 @@ def make_wrapped_env(
     )
     env.name = env_name
 
-    if grayscale:
-        env = GrayscaleWrapper(env)
+    for w in config.transform_wrappers:
+        env = getattr(wrappers, w)(env)
 
     # Wrap with the brax wrappers
     env = EpisodeWrapper(env, config.max_ep_length, action_repeat=1)
@@ -304,8 +305,8 @@ def make_wrapped_env(
     if make_eval:
         eval_env = get_env(config=config, debug=debug)
         eval_env.name = env_name
-        if grayscale:
-            eval_env = GrayscaleWrapper(eval_env)
+        for w in config.transform_wrappers:
+            eval_env = getattr(wrappers, w)(eval_env)
         eval_env = EpisodeWrapper(eval_env, config.max_ep_length, action_repeat=1)
         # eval_env = FlatObsBraxWrapper(eval_env)
         if config.obs_mask is not None:

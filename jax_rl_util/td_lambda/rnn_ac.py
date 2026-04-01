@@ -165,7 +165,7 @@ class RNNActorCritic(nn.RNNCellBase):
                     combined_dist.sample(seed=self.make_rng("default")),
                 )
             if self.act_bounds is not None:
-                action = jnp.clip(action, *self.act_bounds)
+                action = jnp.clip(action, jnp.array(self.act_bounds[0]), jnp.array(self.act_bounds[1]))
             return encoded, (action, combined_dist)
         return encoded, combined_dist
 
