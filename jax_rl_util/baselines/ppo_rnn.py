@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 import pickle
 from typing import NamedTuple, Sequence
 
+import brax
 import distrax
 import flax.linen as nn
 import flashbax as fbx
@@ -25,6 +26,7 @@ import optax
 import simple_parsing
 from flax.linen.initializers import constant, orthogonal
 from flax.training.train_state import TrainState
+from tqdm import trange
 
 from jax_rl_util.util.logging_util import (
     DummyLogger,
@@ -34,7 +36,7 @@ from jax_rl_util.util.logging_util import (
     with_logger,
 )
 
-from jax_rl_util.envs.env_util import compute_agg_reward
+from jax_rl_util.envs.env_util import compute_agg_reward, render_frames
 from jax_rl_util.envs.environments import (
     EnvironmentConfig,
     make_wrapped_env,
@@ -82,9 +84,13 @@ class PPOParams(LoggableConfig):
     record_best_eval_episode: bool = False
 
     # Training Settings
-    episodes: int = 100000
+    episodes: int = 1000
     patience: int = 400
     eval_every: int = 1
+    render_every_evals: int = 1
+    render: bool = False
+    render_start: int = 0
+    render_steps: int = 200
     eval_steps: int = 5000
     eval_batch_size: int = 10
     collect_steps: int = 100
@@ -463,6 +469,8 @@ class Transition(NamedTuple):
     hidden: jnp.ndarray
     info: jnp.ndarray
     # state: jnp.ndarray
+    env_state: brax.envs.State = None
+    next_env_state: brax.envs.State = None
 
 
 def calculate_gae(transitions, values, last_val, gamma=0.99, gae_lambda=0.95):
@@ -507,7 +515,7 @@ def make_train(
 
     print_env_info(env_info)
 
-    def train(rng):
+    def train(key_main):
         """Train Actor and Critic.
 
         Parameters
@@ -528,12 +536,12 @@ def make_train(
             action_limits=env_info["act_clip"],
         )
 
-        _rng, init_rng, reset_rng = jax.random.split(rng, 3)
+        _rng, init_rng, reset_rng = jax.random.split(key_main, 3)
         if config.fixed_env_rng:
             print(
                 "WARNING: Using fixed environment RNG. This is not recommended for fresh training runs."
             )
-            reset_rng = rng
+            reset_rng = key_main
         tmp_env_state = env.reset(reset_rng)
         init_obs = jnp.zeros(
             (1,) + tmp_env_state.obs.shape,
@@ -557,7 +565,6 @@ def make_train(
                 dtype=tmp_env_state.done.dtype,
             ),
         )
-        _rng, _rng = jax.random.split(_rng)
         # Initialize once to have a tree template for robust restores.
         init_params = network.init(init_rng, None, init_x)
 
@@ -595,7 +602,7 @@ def make_train(
 
         # INIT ENV
         if config.fixed_env_rng:
-            reset_rng = rng
+            reset_rng = key_main
         else:
             _rng, reset_rng = jax.random.split(_rng)
         env_state = env.reset(reset_rng)
@@ -625,15 +632,21 @@ def make_train(
         )
 
         @jax.jit
-        def eval_model(params, _normalizer_state, seed=0):
+        def eval_model(
+            params, _normalizer_state, seed=None
+        ) -> tuple[jnp.ndarray, Transition]:
             """Evaluate model."""
             print("Tracing eval_model.")
-            rng = jax.random.PRNGKey(seed)
-            if config.fixed_env_rng:
-                rng_init = rng
+            if seed is None:
+                _rng = key_main
             else:
-                rng, rng_init = jax.random.split(rng)
+                _rng = jax.random.PRNGKey(seed)
+            if config.fixed_env_rng:
+                rng_init = _rng
+            else:
+                _rng, rng_init = jax.random.split(_rng)
 
+            print("Evaluating with key:", rng_init)
             env_state = eval_env.reset(rng_init)
             # Normalize observations
             env_state = env_state.replace(
@@ -689,6 +702,8 @@ def make_train(
                 next_env_state = eval_env.step(_env_state, action)
 
                 transition = Transition(
+                    env_state=_env_state,
+                    next_env_state=next_env_state,
                     prev_done=_env_state.done,
                     done=next_env_state.done,
                     action=action,
@@ -988,11 +1003,17 @@ def make_train(
             _rng,
         )
 
+        # Get initial reward
+        best_eval_reward, _traj = eval_model(runner_state[0].params, runner_state[2])
+
         steps_since_best = 0
-        best_eval_reward = logger["best_eval_reward"]
+        logger["initial_eval"] = best_eval_reward
+        print(f"Initial eval reward: {best_eval_reward:.2f}")
+        logger.log({"eval/rewards": best_eval_reward}, step=0)
         trajectories: Transition = None
+        pbar = trange(config.episodes, desc="Training")
         try:
-            for i in range(config.episodes):
+            for i in pbar:
                 runner_state, loggables = jax.lax.scan(
                     update_step,
                     runner_state,
@@ -1010,11 +1031,16 @@ def make_train(
                         "runner_step": timestep,
                         "dones": _traj.done.sum(),
                     }
+                    # HACK: logging episode_reward to be consistent with RTRRL
+                    loggables["episode_reward"] = loggables["train_reward"]
+
                     if config.log_norms:
                         loggables.update(**log_norms(runner_state[0].params)[0])
                     logger.flush()
+                    new_best = False
                     if eval_reward > best_eval_reward:
                         steps_since_best = 0
+                        new_best = True
                         best_eval_reward = logger["best_eval_reward"] = loggables[
                             "best_eval_reward"
                         ] = float(eval_reward)
@@ -1022,10 +1048,54 @@ def make_train(
                         best_params = runner_state[0].params
                     else:
                         steps_since_best += 1
-                    logger.log(loggables)
-                    print(
-                        f"Global step: {timestep:2.0e}, eval reward: {eval_reward:.2f}, best: {logger['best_eval_reward']:.2f}, ent: {loggables['entropy']:.2f}, train_reward: {loggables['train_reward']:.2f}"
+                    log_steps = (
+                        (i + 1) * config.collect_steps * config.env_params.batch_size
                     )
+
+                    logger.log(loggables, step=log_steps)
+                    print(
+                        f"Global step: {timestep:2.0e}, eval reward: {eval_reward:.2f}, best: {best_eval_reward:.2f}, ent: {loggables['entropy']:.2f}, train_reward: {loggables['train_reward']:.2f}"
+                    )
+
+                    # Render if we did better
+                    should_render = (
+                        config.render_every_evals is not None
+                        and (
+                            i % (config.eval_every * config.render_every_evals) == 0
+                            and i > 0
+                        )
+                        or i == config.episodes - 1
+                    )
+                    if (
+                        logger is not None
+                        and config.render
+                        and (new_best or should_render)
+                    ):
+                        pbar.write("Rendering env...")
+                        frames = render_frames(
+                            env,
+                            _traj.env_state,
+                            config.render_start,
+                            config.render_start + config.render_steps,
+                        )
+                        if frames:
+                            if env.name == "dronegym":
+                                logger.log_img(
+                                    "env",
+                                    frames,
+                                    step=log_steps,
+                                    caption=f"Reward: {eval_reward:.2f}",
+                                )
+                                plt.close(frames)
+                            else:
+                                logger.log_video(
+                                    "env/video",
+                                    np.array(frames),
+                                    step=log_steps,
+                                    fps=30,
+                                    caption=f"Reward: {eval_reward:.2f}",
+                                )
+
                     # Early stopping
                     if config.patience and steps_since_best >= config.patience:
                         print(f"Early stopping patience {config.patience}")
