@@ -499,6 +499,8 @@ def make_train(
     logger: DummyLogger,
     param_overrides=None,
     network_cls=None,
+    obs_transform_fn=None,
+    act_transform_fn=None,
 ):
     """Create the training function."""
     if network_cls is None:
@@ -651,7 +653,7 @@ def make_train(
             # Normalize observations
             env_state = env_state.replace(
                 obs=normalize(env_state.obs, _normalizer_state)
-            )
+            )  # TODO: don't write normalized obs back to env_state, only use for policy input
             runner_state = (
                 env_state,
                 jnp.zeros((eval_env.batch_size, env.action_size)),
@@ -671,6 +673,8 @@ def make_train(
 
                 # SELECT ACTION
                 x = _env_state.obs[None, :]
+                if obs_transform_fn is not None:
+                    x = obs_transform_fn(x)
                 if config.meta_rl:
                     x = jnp.concatenate(
                         [
@@ -688,6 +692,8 @@ def make_train(
                     action = pi.mode()
                 else:
                     action = pi.sample(seed=_rng)
+                if act_transform_fn is not None:
+                    action = act_transform_fn(action)
                 if env_info["act_clip"]:
                     action = jnp.clip(action, *action_clip)
                 log_prob = pi.log_prob(action)
@@ -764,6 +770,8 @@ def make_train(
 
                 # SELECT ACTION
                 x = normalize(env_state.obs, _normalizer_state)
+                if obs_transform_fn is not None:
+                    x = obs_transform_fn(x)
                 if config.meta_rl:
                     x = jnp.concatenate(
                         [x, last_act, env_state.reward.reshape((env.batch_size, 1))],
@@ -774,6 +782,8 @@ def make_train(
                     train_state.params, prev_hstate, ac_in, rngs={"default": _rng}
                 )
                 action = pi.sample(seed=_rng)
+                if act_transform_fn is not None:
+                    action = act_transform_fn(action)
                 if env_info["act_clip"]:
                     action = jnp.clip(action, *action_clip)
                 log_prob = pi.log_prob(action)
@@ -904,7 +914,7 @@ def make_train(
 
                         # CALCULATE ACTOR LOSS
                         diff = log_prob - transition.log_prob
-                        if not env_info["discrete"]:
+                        if not env_info["discrete"] and diff.shape != _gae.shape:
                             diff = diff.mean(axis=-1)
                         # diff = jnp.clip(diff, max=10)  # HACK avoids some NaNs!
                         ratio = jnp.exp(diff)
@@ -1154,7 +1164,8 @@ def train_and_eval(
     logger=DummyLogger(),
     param_overrides=None,
     network_cls=None,
-    env=None,
+    obs_transform_fn=None,
+    act_transform_fn=None,
 ):
     """Run training."""
     rng = jax.random.PRNGKey(config.seed)
@@ -1165,6 +1176,8 @@ def train_and_eval(
             logger,
             param_overrides=param_overrides,
             network_cls=network_cls,
+            obs_transform_fn=obs_transform_fn,
+            act_transform_fn=act_transform_fn,
         )(rng)
 
         if config.env_params.env_name == "dronegym":
