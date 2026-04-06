@@ -900,7 +900,7 @@ def make_train(
                             (x, transition.prev_done),
                             rngs={"default": rng},
                         )
-                        log_prob = pi.log_prob(transition.action.squeeze())
+                        log_prob = pi.log_prob(transition.action)
 
                         # CALCULATE VALUE LOSS
                         value_pred_clipped = transition.value + (
@@ -914,7 +914,7 @@ def make_train(
 
                         # CALCULATE ACTOR LOSS
                         diff = log_prob - transition.log_prob
-                        if not env_info["discrete"] and diff.shape != _gae.shape:
+                        if not env_info["discrete"]:
                             diff = diff.mean(axis=-1)
                         # diff = jnp.clip(diff, max=10)  # HACK avoids some NaNs!
                         ratio = jnp.exp(diff)
