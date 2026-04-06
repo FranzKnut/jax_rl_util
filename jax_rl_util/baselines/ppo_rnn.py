@@ -914,12 +914,12 @@ def make_train(
 
                         # CALCULATE ACTOR LOSS
                         diff = log_prob - transition.log_prob
-                        if not env_info["discrete"]:
-                            diff = diff.mean(axis=-1)
+                        # if not env_info["discrete"]:
+                        #     diff = diff.mean(axis=-1)
                         # diff = jnp.clip(diff, max=10)  # HACK avoids some NaNs!
                         ratio = jnp.exp(diff)
                         _gae = (_gae - _gae.mean()) / (_gae.std() + 1e-8)
-                        _gae = _gae.reshape(*ratio.shape)
+                        # _gae = _gae.reshape(*ratio.shape)
                         loss_actor1 = ratio * _gae
                         loss_actor2 = (
                             jnp.clip(
