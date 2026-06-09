@@ -88,7 +88,6 @@ def render_frames(
     states: list,
     start_idx: int = None,
     end_idx: int = None,
-    **kwargs,
 ):
     """Render the given states of the environment.
 
@@ -146,13 +145,17 @@ def render_frames(
             return _env.render(states)
         elif isinstance(_env.unwrapped, GymnaxBraxWrapper):
             from gymnax.visualize.vis_gym import get_gym_state
+            
+            _env_name = _env.name
+            if "CartPole" in _env_name:
+                _env_name = "CartPole-v1"
 
-            gym_env = gym.make(_env.name, render_mode="rgb_array").unwrapped
+            gym_env = gym.make(_env_name, render_mode="rgb_array").unwrapped
 
             def render_gym(_state):
                 """Taken from gymnax.visualize.vis_gym."""
-                gym_state = get_gym_state(_state, _env.name)
-                if _env.name == "Pendulum-v1":
+                gym_state = get_gym_state(_state, _env_name)
+                if _env_name == "Pendulum-v1":
                     gym_env.last_u = gym_state[-1]
                 gym_env.state = gym_state
                 return gym_env.render()

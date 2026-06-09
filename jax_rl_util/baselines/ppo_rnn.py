@@ -400,9 +400,15 @@ class ActorCriticRNN(nn.Module):
             embedding = nn.relu(embedding)
 
             rnn_in = (embedding, dones)
-            hidden, embedding = globals()[self.config.model](self.config)(
-                hidden, rnn_in
-            )
+            model = globals()[self.config.model](self.config, name="model")
+            if "model" in self.variables:
+                hidden, embedding = model.apply({"params":self.variables["params"]["model"]},
+                    hidden, rnn_in
+                )
+            else:
+                hidden, embedding = model(
+                    hidden, rnn_in
+                )
 
             actor_mean = nn.Dense(
                 self.config.num_units,
@@ -1014,12 +1020,12 @@ def make_train(
         )
 
         # Get initial reward
-        best_eval_reward, _traj = eval_model(runner_state[0].params, runner_state[2])
-
+        initial_eval_reward, _traj = eval_model(runner_state[0].params, runner_state[2])
+        best_eval_reward = -np.inf
         steps_since_best = 0
-        logger["initial_eval"] = best_eval_reward
-        print(f"Initial eval reward: {best_eval_reward:.2f}")
-        logger.log({"eval/rewards": best_eval_reward}, step=0)
+        logger["initial_eval"] = initial_eval_reward
+        print(f"Initial eval reward: {initial_eval_reward:.2f}")
+        logger.log({"eval/rewards": initial_eval_reward}, step=0)
         trajectories: Transition = None
         pbar = trange(config.episodes, desc="Training")
         try:

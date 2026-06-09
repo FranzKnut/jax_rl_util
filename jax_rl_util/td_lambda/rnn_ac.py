@@ -37,7 +37,7 @@ class RNNActorCritic(nn.RNNCellBase):
     cnn_config: ConvConfig = field(default_factory=ConvConfig)
     # act_log_bounds: tuple[float, float] | float | None = -1
     act_bounds: tuple[float] | None = None
-    pass_obs: bool = False
+    # pass_obs: bool = False
     pred_obs: bool = False
 
     @property
@@ -47,22 +47,29 @@ class RNNActorCritic(nn.RNNCellBase):
 
     def setup(self) -> None:
         """Initialize components."""
-        if self.rnn_config is not None and self.rnn_config.model_name:
-            self.rnn = RNNEnsemble(self.rnn_config, out_size=None, name="rnn")
+
+        if self.rnn_config is not None:
+            assert self.policy_config.num_modules % self.rnn_config.num_modules == 0, (
+                "The number of modules of the policy have to be multiples of the RNN modules."
+            )
+            assert self.critic_config.num_modules % self.rnn_config.num_modules == 0, (
+                "The number of modules of the critic have to be multiples of the RNN modules."
+            )
+        self.rnn = RNNEnsemble(self.rnn_config, out_size=None, name="rnn")
 
         self.actor = PolicyRNN(
             self.a_dim,
             self.policy_config,
             # TODO: this config for splitting inputs to ensemble modules is confusing
-            split_input=self.use_shared_rnn
-            and (self.rnn_config.num_modules == self.policy_config.num_modules),
+            split_input=self.use_shared_rnn,
+            # and (self.rnn_config.num_modules == self.policy_config.num_modules),
             name="actor",
         )
         self.critic = RNNEnsemble(
             self.critic_config,
             out_size=1,
-            split_input=self.use_shared_rnn
-            and (self.rnn_config.num_modules == self.critic_config.num_modules),
+            split_input=self.use_shared_rnn,
+            # and (self.rnn_config.num_modules == self.critic_config.num_modules),
             name="critic",
         )
 
@@ -110,24 +117,37 @@ class RNNActorCritic(nn.RNNCellBase):
         carry, hidden = self.rnn(carry, obs, training, **kwargs)
         return hidden, carry
 
-    def value(self, encoded, x=None, v_hidden=None, training=True):
+    def value(self, encoded, img=None, v_hidden=None, training=True):
         """Compute value from latent."""
         # if not self.shared:
         #     # hidden = jnp.concatenate([jax.lax.stop_gradient(hidden[0]), hidden[1]], axis=-1)
         #     hidden = hidden[..., 1:, :]
-        if self.pass_obs:
-            if len(x.shape) < len(encoded.shape):
-                x = jnp.expand_dims(x, -2)
-            encoded = jnp.concatenate([encoded, x], axis=-1)
+        # if self.pass_obs:
+        #     if len(x.shape) < len(encoded.shape):
+        #         x = jnp.expand_dims(x, -2)
+        #     encoded = jnp.concatenate([encoded, x], axis=-1)
+
+        if self.use_shared_rnn:
+            # Tile the hidden state for the critic ensemble
+            if encoded.ndim == 1:
+                encoded = encoded[None]
+            _num_module_factor = self.critic_config.num_modules // (
+                self.rnn_config.num_modules if self.rnn_config is not None else 1
+            )  # Compute how many times to tile the hidden state for the critic ensemble
+            encoded = encoded * jnp.ones((_num_module_factor,) + (1,) * (encoded.ndim))
+            enc_shape = encoded.shape
+            # Collapse the first two dimensions to get total number of modules
+            encoded = encoded.reshape(enc_shape[0] * enc_shape[1], *enc_shape[2:])
+
         return self.critic(v_hidden, encoded, training=training)
 
     def obs_prediction(self, hidden, a, x=None):
         """Compute observation prediction from latent."""
         hidden = jnp.concatenate([hidden, a.reshape(*hidden.shape[:-1], -1)], axis=-1)
-        if self.pass_obs:
-            if len(x.shape) < len(hidden.shape):
-                x = jnp.expand_dims(x, -2)
-            hidden = jnp.concatenate([hidden, x], axis=-1)
+        # if self.pass_obs:
+        #     if len(x.shape) < len(hidden.shape):
+        #         x = jnp.expand_dims(x, -2)
+        #     hidden = jnp.concatenate([hidden, x], axis=-1)
         return self.obs(hidden)
 
     def policy(
@@ -147,6 +167,19 @@ class RNNActorCritic(nn.RNNCellBase):
         #     if len(x.shape) < len(hidden.shape):
         #         x = jnp.expand_dims(x, -2)
         #     hidden = jnp.concatenate([hidden, x], axis=-1)
+
+        if self.use_shared_rnn:
+            # Tile the hidden state for the policy ensemble
+            if encoded.ndim == 1:
+                encoded = encoded[None]
+            _num_module_factor = self.policy_config.num_modules // (
+                self.rnn_config.num_modules
+            )  # Compute how many times to tile the hidden state for the policy ensemble
+            encoded = encoded * jnp.ones((_num_module_factor,) + (1,) * (encoded.ndim))
+            enc_shape = encoded.shape
+            # Collapse the first two dimensions to get total number of modules
+            encoded = encoded.reshape(enc_shape[0] * enc_shape[1], *enc_shape[2:])
+
         encoded, (combined_dist, dists) = self.actor(
             pi_state, encoded, img, training=training
         )
@@ -165,7 +198,9 @@ class RNNActorCritic(nn.RNNCellBase):
                     combined_dist.sample(seed=self.make_rng("default")),
                 )
             if self.act_bounds is not None:
-                action = jnp.clip(action, jnp.array(self.act_bounds[0]), jnp.array(self.act_bounds[1]))
+                action = jnp.clip(
+                    action, jnp.array(self.act_bounds[0]), jnp.array(self.act_bounds[1])
+                )
             return encoded, (action, combined_dist)
         return encoded, combined_dist
 

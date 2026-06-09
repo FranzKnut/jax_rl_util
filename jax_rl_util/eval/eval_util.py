@@ -3,9 +3,12 @@ import pandas as pd
 
 def gen_dict_extract(var, key):
     if hasattr(var, "items"):
+        if key in var:
+            # breadth-first search
+            yield var[key]
         for k, v in var.items():
-            if k == key:
-                yield v
+            # if k == key: 
+            #     yield v
             if isinstance(v, dict):
                 for result in gen_dict_extract(v, key):
                     yield result
