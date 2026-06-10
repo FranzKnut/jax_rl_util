@@ -69,6 +69,7 @@ except ImportError:
 
 from . import *  # noqa
 from .dronegym import DroneGym
+from .continuous_cartpole import ContinuousCartPoleEnv
 from .env_util import make_obs_mask
 from .tribead import TriangleJax
 from .wrappers import (
@@ -230,9 +231,14 @@ def get_env(config: EnvironmentConfig, debug=0) -> gym.Env:
             disable_env_checker=debug < 3,
             **config.init_kwargs,
         )
-        env = GymJaxWrapper(env)
-        env = GymBraxWrapper(env, config.step_kwargs)
-        env.package_name = "gym"
+        if "cartpolecontinuousjax" in env_name.lower():
+            # CartpoleContinuousJaxSwingUp is a custom env that does not need a JaxWrapper
+            env = GymnaxBraxWrapper(env, config.step_kwargs)
+            env.package_name = "misc"
+        else:
+            env = GymJaxWrapper(env)
+            env = GymBraxWrapper(env, config.step_kwargs)
+            env.package_name = "gym"
 
     # Make sure it knows its name for compatibility with other packages
     env.env_name = env_name

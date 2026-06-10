@@ -38,22 +38,14 @@ class OptimizerConfig:
     # fmt: on
 
 
-def make_optimizer(config=OptimizerConfig()) -> optax.GradientTransformation:
+def make_optimizer(config: OptimizerConfig) -> optax.GradientTransformation:
     """Make optax optimizer.
 
     The decorator allows reading scheduled lr from the optimizer state.
 
     Parameters
     ----------
-    config : OptimizerConfig, optional
-        learning_rate : float
-            initial learning rate
-        opt_name : str, optional
-            Name of optimizer, by default 'sgd'
-        gradient_clip : int, optional
-            Clip gradient norm. Defaults to 0
-
-        for more options see OptimizerConfig dataclass.
+    config : OptimizerConfig, see OptimizerConfig dataclass.
 
     Returns
     -------

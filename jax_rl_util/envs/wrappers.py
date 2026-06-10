@@ -154,7 +154,9 @@ class GymJaxWrapper(Wrapper):
             value = np.asarray(value, dtype=default.dtype)
             if value.shape != default.shape:
                 if value.size == 1:
-                    value = np.full(default.shape, value.reshape(()), dtype=default.dtype)
+                    value = np.full(
+                        default.shape, value.reshape(()), dtype=default.dtype
+                    )
                 else:
                     value = default
             normalized[k] = value
@@ -179,7 +181,7 @@ class GymJaxWrapper(Wrapper):
             )
         except Exception as e:
             raise ValueError(
-                "IO-related error likely due to using a GymJaxWrapper. Try using a batch_size of 1."
+                "IO-related error inside GymJaxWrapper. Try using a batch_size of 1."
             ) from e
 
     def step(self, action: jnp.ndarray, key: jrandom.PRNGKey = None):
@@ -225,7 +227,11 @@ class GymJaxWrapper(Wrapper):
 class GymnaxBraxWrapper(Wrapper):
     """Wrap Gymnax envs for use with Brax Wrappers."""
 
-    def __init__(self, env, params: dict | None = None):
+    def __init__(
+        self,
+        env: gymnax.environments.environment.Environment,
+        params: dict | None = None,
+    ):
         """Set Env params at initialization."""
         self.env = env
         env_module = importlib.import_module(env.__class__.__module__)
