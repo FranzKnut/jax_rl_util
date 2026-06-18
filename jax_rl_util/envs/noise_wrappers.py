@@ -37,12 +37,12 @@ class SuddenNoiseWrapper(Wrapper):
             )
             noise = jnp.where(mask, noise, 0.0)
         return noise
-
-    def step(self, state: State, action: jnp.ndarray) -> State:
-        state = self.env.step(state, action)
+    
+    def step(self, state: State, action: jnp.ndarray, noise_global_step: int, **kwargs) -> State:
+        state = self.env.step(state, action, **kwargs)
         if self.sudden_noise_start is not None:
             noise_rng, state.info["rng"] = jrandom.split(state.info["rng"])
-            noise_active = state.info["steps"] >= self.sudden_noise_start
+            noise_active = noise_global_step >= self.sudden_noise_start
             state = state.replace(
                 obs=jax.tree.map(
                     lambda obs: jnp.where(

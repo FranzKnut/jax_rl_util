@@ -56,6 +56,15 @@ class Wrapper:
         """Only works for default_params envs."""
         return np.prod(self.observation_space.shape)
 
+    def has_wrapper(self, wrapper_class) -> bool:
+        """Check if the environment has a specific wrapper."""
+        current_env = self
+        while isinstance(current_env, Wrapper):
+            if isinstance(current_env, wrapper_class):
+                return True
+            current_env = current_env.env
+        return False
+
     def __str__(self):
         """String representation."""
         params = [
@@ -89,9 +98,9 @@ class GymBraxWrapper(Wrapper):
         state.info["rng"] = step_key
         return state
 
-    def step(self, state: State, action: jnp.ndarray) -> State:
+    def step(self, state: State, action: jnp.ndarray, **kwargs) -> State:
         """Make gymnax step and wrap in brax state."""
-        obs, reward, done, truncated, info = self.env.step(action)
+        obs, reward, done, truncated, info = self.env.step(action, **kwargs)
         done = done | truncated
         for k, v in info.items():
             state.info[k] = v
@@ -113,8 +122,8 @@ class GymWrapper(Wrapper, gym.Env):
         self._state = self.env.reset(self._seed)
         return self._state.obs, self._state.info
 
-    def step(self, action):
-        self._state = self.env.step(self._state, action)
+    def step(self, action, **kwargs):
+        self._state = self.env.step(self._state, action, **kwargs)
         # We return device arrays for pytorch users.
         return (
             self._state.obs,
@@ -184,7 +193,7 @@ class GymJaxWrapper(Wrapper):
                 "IO-related error inside GymJaxWrapper. Try using a batch_size of 1."
             ) from e
 
-    def step(self, action: jnp.ndarray, key: jrandom.PRNGKey = None):
+    def step(self, action: jnp.ndarray, key: jrandom.PRNGKey = None, **kwargs):
         """Make gymnax step and wrap in brax state."""
         result_shape_dtypes = (
             jax.ShapeDtypeStruct(
@@ -197,7 +206,7 @@ class GymJaxWrapper(Wrapper):
         )
 
         def _step(action):
-            _output = self.env.step(action._value)
+            _output = self.env.step(action._value, **kwargs)
             obs, reward, done, truncated, info = _output
             return (
                 obs,
@@ -248,11 +257,11 @@ class GymnaxBraxWrapper(Wrapper):
         state.info["rng"] = step_key
         return state
 
-    def step(self, state: State, action: jnp.ndarray) -> State:
+    def step(self, state: State, action: jnp.ndarray, **kwargs) -> State:
         """Make gymnax step and wrap in brax state."""
         step_key, state.info["rng"] = jrandom.split(state.info["rng"])
         obs, gymnax_state, reward, done, _ = self.env.step_env(
-            step_key, state.pipeline_state, action, self.params
+            step_key, state.pipeline_state, action, self.params, **kwargs
         )
         # FIXME: Info dict cannot be passed outside since this function is jitted.
         # The state given by reset has to contain info with the same structure!
@@ -304,9 +313,9 @@ class GrayscaleWrapper(Wrapper):
         gray_obs = preprocess_img(env_state.obs)
         return env_state.replace(obs=gray_obs)
 
-    def step(self, state: jnp.ndarray, action: jnp.ndarray) -> jnp.ndarray:
+    def step(self, state: jnp.ndarray, action: jnp.ndarray, **kwargs) -> jnp.ndarray:
         """Make grayscale from RGB Image."""
-        env_state = self.env.step(state, action)
+        env_state = self.env.step(state, action, **kwargs)
         gray_obs = preprocess_img(env_state.obs)
         return env_state.replace(obs=gray_obs)
 
@@ -342,11 +351,11 @@ class EpisodeWrapper(Wrapper):
         state.info["truncation"] = jnp.zeros(rng.shape[:-1], dtype=jnp.int32)
         return state
 
-    def step(self, state: State, action: jnp.ndarray) -> State:
+    def step(self, state: State, action: jnp.ndarray, **kwargs) -> State:
         """Check if max episode length was reached and optionally do action repetition."""
 
         def f(state, _):
-            nstate = self.env.step(state, action)
+            nstate = self.env.step(state, action, **kwargs)
             return nstate, nstate.reward
 
         state, rewards = jax.lax.scan(f, state, (), self.action_repeat)
@@ -381,14 +390,14 @@ class VmapWrapper(Wrapper):
         seed = jax.random.split(seed, self.batch_size)
         return jax.vmap(self.env.reset)(seed)
 
-    def step(self, state: State, action: jnp.ndarray) -> State:
+    def step(self, state: State, action: jnp.ndarray, **kwargs) -> State:
         """Vmap over step."""
         if self.batch_size == 1:
             # Fake vmap with batch size 1 to allow io_callback.
             state, action = jax.tree.map(lambda x: x[0], (state, action))
-            out = self.env.step(state, action)
+            out = self.env.step(state, action, **kwargs)
             return jax.tree.map(lambda x: jnp.expand_dims(x, axis=0), out)
-        return jax.vmap(self.env.step)(state, action)
+        return jax.vmap(partial(self.env.step, **kwargs))(state, action)
 
 
 class EfficientAutoResetWrapper(Wrapper):
@@ -404,14 +413,14 @@ class EfficientAutoResetWrapper(Wrapper):
         state.info["first_obs"] = state.obs
         return state
 
-    def step(self, state: State, action: jnp.ndarray) -> State:
+    def step(self, state: State, action: jnp.ndarray, **kwargs) -> State:
         """Reset to remembered first state if done."""
         if "steps" in state.info:
             steps = state.info["steps"]
             steps = jnp.where(state.done, jnp.zeros_like(steps), steps)
             state.info.update(steps=steps)
         state = state.replace(done=jnp.zeros_like(state.done))
-        state = self.env.step(state, action)
+        state = self.env.step(state, action, **kwargs)
         reward = state.reward
 
         def where_done(x, y):
@@ -440,11 +449,11 @@ class RandomizedAutoResetWrapper(Wrapper):
         state.info["rng"] = step_key
         return state.replace(done=jnp.ones_like(state.done, dtype=state.done.dtype))
 
-    def step(self, state: State, action: jnp.ndarray) -> State:
+    def step(self, state: State, action: jnp.ndarray, **kwargs) -> State:
         """Resample new initial state for all parallel envs."""
         # HACK: some envs like pusher do not change the done flag, so we have to reset it here
         state = state.replace(done=jnp.zeros_like(state.done, dtype=state.done.dtype))
-        state = self.env.step(state, action)
+        state = self.env.step(state, action, **kwargs)
         done = state.done
         reward = state.reward
         rng, _rng = jrandom.split(state.info["rng"])
@@ -518,9 +527,9 @@ class FlatPOWrapper(Wrapper):
         obs, env_state = self.env.reset(rng)
         return obs.reshape(-1)[..., self.obs_mask], env_state
 
-    def step(self, rng, state, action: jnp.ndarray):
+    def step(self, rng, state, action: jnp.ndarray, **kwargs):
         """Mask Observation."""
-        obs, env_state, reward, done = self.env.step(rng, state, action)
+        obs, env_state, reward, done = self.env.step(rng, state, action, **kwargs)
         return obs.reshape(-1)[..., self.obs_mask], env_state, reward, done
 
     @property
@@ -538,10 +547,10 @@ class FlatObsBraxWrapper(Wrapper):
         state.info["fo_obs"] = state.obs
         return state.replace(obs=state.obs.reshape((-1)))
 
-    def step(self, state: State, action: jnp.ndarray) -> State:
+    def step(self, state: State, action: jnp.ndarray, **kwargs) -> State:
         """Flatten Observations."""
         state = state.replace(obs=state.info.get("fo_obs", state.obs))
-        state = self.env.step(state, action)
+        state = self.env.step(state, action, **kwargs)
         state.info["fo_obs"] = state.obs
         return state.replace(obs=state.obs.reshape((-1)))
 
@@ -582,10 +591,10 @@ class POBraxWrapper(Wrapper):
         state.info["full_obs"] = state.obs
         return state.replace(obs=self._get_obs(state))
 
-    def step(self, state: State, action: jnp.ndarray) -> State:
+    def step(self, state: State, action: jnp.ndarray, **kwargs) -> State:
         """Mask Observation."""
         state = state.replace(obs=state.info.get("full_obs", state.obs))
-        state = self.env.step(state, action)
+        state = self.env.step(state, action, **kwargs)
         state.info["full_obs"] = state.obs
         return state.replace(obs=self._get_obs(state))
 
@@ -643,10 +652,10 @@ class LogWrapper:
         return obs, state
 
     @partial(jax.jit, static_argnums=(0,))
-    def step(self, key, state: State, action):
+    def step(self, key, state: State, action, **kwargs):
         """Take a step and log the returns and lengths."""
         obs, env_state, reward, done, info = self._env.step(
-            key, state.env_state, action
+            key, state.env_state, action, **kwargs
         )
         new_episode_return = state.episode_returns + reward
         new_episode_length = state.episode_lengths + 1
@@ -683,9 +692,9 @@ class RGBtoGrayWrapper(Wrapper):
         out = self.env.reset(rng)
         return (self._convert(out[0]), *out[1:])
 
-    def step(self, state, action: jnp.ndarray, key: jrandom.PRNGKey = None):
+    def step(self, state, action: jnp.ndarray, key: jrandom.PRNGKey = None, **kwargs):
         """Convert RGB to Grayscale."""
-        out = self.env.step(state, action, key)
+        out = self.env.step(state, action, key, **kwargs)
         return (self._convert(out[0]), *out[1:])
 
     @property
@@ -709,9 +718,9 @@ class ParamWrapper(GymJaxWrapper):
         """Make brax state from gym reset output and insert env params."""
         return self.env.reset(rng, self.params)
 
-    def step(self, key, state, action: jnp.ndarray):
+    def step(self, key, state, action: jnp.ndarray, **kwargs):
         """Make gymnax step and wrap in brax state."""
-        return self.env.step(key, state, action, self.params)
+        return self.env.step(key, state, action, self.params, **kwargs)
 
 
 class JitWrapper(Wrapper):
@@ -720,8 +729,8 @@ class JitWrapper(Wrapper):
     def reset(self, *inputs):
         return jax.jit(self.env.reset)(*inputs)
 
-    def step(self, *inputs):
-        return jax.jit(self.env.step)(*inputs)
+    def step(self, *inputs, **kwargs):
+        return jax.jit(partial(self.env.step, **kwargs))(*inputs)
 
 
 class SaveToFileWrapper(Wrapper):
@@ -787,16 +796,16 @@ class SaveToFileWrapper(Wrapper):
         self.obs_buffer.append(obs)
         return state
 
-    def step(self, state, action: jnp.ndarray = None):
+    def step(self, state, action: jnp.ndarray = None, **kwargs):
         """Steps through the environment using action, recording actions, observations and rewards"""
         # For brax envs, state is given as first argument
         if isinstance(self.env, (BraxEnv, Wrapper)):
-            step_out = self.env.step(state, action)
+            step_out = self.env.step(state, action, **kwargs)
             obs, reward, done = step_out.obs, step_out.reward, step_out.done
         else:
             action = state
             state = None
-            step_out = self.env.step(action)
+            step_out = self.env.step(action, **kwargs)
             obs, reward, done, truncated, info = step_out
 
         self.act_buffer.append(action)
