@@ -582,7 +582,8 @@ def with_logger(func: Callable, hparams: LoggableConfig, run_name=""):
     logger = make_logger(hparams, run_name=run_name)
     if hparams.logging == "wandb":
         # Potentially get the replaced hparams for the sweep
-        hparams = logger.hparams
+        # hparams = logger.hparams
+        hparams = hparams.from_dict(dict(logger.run.config))
 
     # Run the function with the logger
     try:

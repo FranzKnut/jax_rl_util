@@ -251,6 +251,7 @@ def make_wrapped_env(
     debug=0,
     make_eval=False,
     use_vmap_wrapper=True,
+    extra_wrappers: list | None = None,
 ) -> tuple[BraxEnv, dict] | tuple[BraxEnv, dict, BraxEnv]:
     """Make brax or gymnax env.
 
@@ -266,6 +267,9 @@ def make_wrapped_env(
         If true, eval env without batching is also returned
     use_vmap_wrapper : bool, optional
         Force using the vmap wrapper (even for batchsize 1), by default True
+    extra_wrappers : list, optional
+        List of (wrapper_class, kwargs) tuples to apply after VmapWrapper.
+        Example: [(SuddenNoiseWrapper, {'noise_strength': 1.0, 'sudden_noise_start': 5})]
 
     Returns
     -------
@@ -273,6 +277,8 @@ def make_wrapped_env(
         Environment
     env_info : dict
         Dictionary with env info
+    eval_env : envs.Env, optional
+        Eval environment (only if make_eval is True)
     """
     # TODO refactor:
     # [ ] Make env_info a field of the env.
@@ -294,10 +300,20 @@ def make_wrapped_env(
     # env = FlatObsBraxWrapper(env)
     if config.obs_mask is not None:
         env = POBraxWrapper(env, config.obs_mask)
+        
+    # Autoreset
     env = RandomizedAutoResetWrapper(env)
     # env = EfficientAutoResetWrapper(env)
+    
+    # Apply extra wrappers (e.g., SuddenNoiseWrapper)
+    if extra_wrappers is not None:
+        for wrapper_cls, wrapper_kwargs in extra_wrappers:
+            env = wrapper_cls(env, **wrapper_kwargs)
+          
+    # Use VmapWrapper for batching if batch_size > 1 or if use_vmap_wrapper is True
     if (config.batch_size is not None and (config.batch_size > 1)) or use_vmap_wrapper:
         env = VmapWrapper(env, batch_size=config.batch_size)
+    
     env_info = dict(
         env_name=env_name,
         package_name=env.package_name,
@@ -309,6 +325,7 @@ def make_wrapped_env(
     )
 
     if make_eval:
+        # Eval env is the same as above but without batching
         eval_env = get_env(config=config, debug=debug)
         eval_env.name = env_name
         for w in config.transform_wrappers:
@@ -318,6 +335,10 @@ def make_wrapped_env(
         if config.obs_mask is not None:
             eval_env = POBraxWrapper(eval_env, config.obs_mask)
         eval_env = RandomizedAutoResetWrapper(eval_env)
+        # Apply extra wrappers to eval env too
+        if extra_wrappers is not None:
+            for wrapper_cls, wrapper_kwargs in extra_wrappers:
+                eval_env = wrapper_cls(eval_env, **wrapper_kwargs)
         return env, env_info, eval_env
 
     return env, env_info
