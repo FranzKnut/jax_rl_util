@@ -9,7 +9,7 @@
     "python.testing.unittestArgs": [
         "-v",
         "-s",
-        "./test",
+        "./test_jax_rl_util",
         "-p",
         "test_*.py"
     ],

@@ -38,7 +38,9 @@ class _DummyEnv(Wrapper):
         return state
 
     def step(self, state: State, action: jnp.ndarray) -> State:
-        obs = jnp.ones(self._obs_size) * state.info["steps"]  # deterministic obs based on step count
+        obs = (
+            jnp.ones(self._obs_size) * state.info["steps"]
+        )  # deterministic obs based on step count
         new_state = state.replace(
             obs=obs,
             reward=jnp.ones(1),
@@ -60,12 +62,14 @@ class TestSuddenNoiseWrapper(unittest.TestCase):
 
     def test_no_noise_when_start_is_none(self):
         """When sudden_noise_start is None, observations should never be modified."""
-        env = SuddenNoiseWrapper(self.base_env, noise_strength=1.0, sudden_noise_start=None)
+        env = SuddenNoiseWrapper(
+            self.base_env, noise_strength=1.0, sudden_noise_start=None
+        )
         state = env.reset(self.rng)
 
-        for _ in range(10):
+        for i in range(10):
             action = jnp.zeros(self.action_size)
-            state = env.step(state, action)
+            state = env.step(state, action, noise_global_step=i)
             # The dummy env sets obs = ones * step_count, so obs should equal step count
             expected_obs = jnp.ones(self.obs_size) * (state.info["steps"] - 1)
             self.assertTrue(
@@ -75,11 +79,13 @@ class TestSuddenNoiseWrapper(unittest.TestCase):
 
     def test_noise_from_step_zero(self):
         """When sudden_noise_start=0, noise should be applied from the very first step."""
-        env = SuddenNoiseWrapper(self.base_env, noise_strength=1.0, sudden_noise_start=0)
+        env = SuddenNoiseWrapper(
+            self.base_env, noise_strength=1.0, sudden_noise_start=0
+        )
         state = env.reset(self.rng)
 
         action = jnp.zeros(self.action_size)
-        state = env.step(state, action)
+        state = env.step(state, action, noise_global_step=0)
 
         # The dummy env returns obs = ones * 0 at step 0, so obs should be 0 + noise
         expected_base = jnp.zeros(self.obs_size)
@@ -96,20 +102,22 @@ class TestSuddenNoiseWrapper(unittest.TestCase):
         noise starts when steps >= 5, which occurs after the 5th env.step call.
         """
         noise_start = 5
-        env = SuddenNoiseWrapper(self.base_env, noise_strength=1.0, sudden_noise_start=noise_start)
+        env = SuddenNoiseWrapper(
+            self.base_env, noise_strength=1.0, sudden_noise_start=noise_start
+        )
         state = env.reset(self.rng)
 
         total_steps = noise_start + 3
         for step_idx in range(total_steps):
             action = jnp.zeros(self.action_size)
-            state = env.step(state, action)
+            state = env.step(state, action, noise_global_step=step_idx)
 
             # After the step, steps counter = step_idx + 1 (reset sets to 0, then step increments)
             steps_counter = state.info["steps"]
             # The dummy env sets obs = ones * (steps - 1) = ones * step_idx
             expected_base = jnp.ones(self.obs_size) * step_idx
 
-            if steps_counter < noise_start:
+            if steps_counter <= noise_start:
                 # Before threshold: obs should match the base env exactly
                 self.assertTrue(
                     jnp.allclose(state.obs, expected_base),
@@ -124,12 +132,14 @@ class TestSuddenNoiseWrapper(unittest.TestCase):
 
     def test_noise_strength_zero(self):
         """When noise_strength=0, observations should be unchanged even after threshold."""
-        env = SuddenNoiseWrapper(self.base_env, noise_strength=0.0, sudden_noise_start=0)
+        env = SuddenNoiseWrapper(
+            self.base_env, noise_strength=0.0, sudden_noise_start=0
+        )
         state = env.reset(self.rng)
 
-        for _ in range(5):
+        for i in range(5):
             action = jnp.zeros(self.action_size)
-            state = env.step(state, action)
+            state = env.step(state, action, noise_global_step=i)
             expected_obs = jnp.ones(self.obs_size) * (state.info["steps"] - 1)
             self.assertTrue(
                 jnp.allclose(state.obs, expected_obs),
@@ -139,11 +149,13 @@ class TestSuddenNoiseWrapper(unittest.TestCase):
     def test_noise_strength_scaling(self):
         """Noise magnitude should scale with noise_strength."""
         noise_strength = 2.0
-        env = SuddenNoiseWrapper(self.base_env, noise_strength=noise_strength, sudden_noise_start=0)
+        env = SuddenNoiseWrapper(
+            self.base_env, noise_strength=noise_strength, sudden_noise_start=0
+        )
         state = env.reset(self.rng)
 
         action = jnp.zeros(self.action_size)
-        state = env.step(state, action)
+        state = env.step(state, action, noise_global_step=0)
 
         # The noise should be non-zero and scaled by noise_strength
         noise = state.obs  # base obs is zeros at step 0
@@ -153,9 +165,11 @@ class TestSuddenNoiseWrapper(unittest.TestCase):
         )
 
         # Run again with a different seed to verify noise is random
-        env2 = SuddenNoiseWrapper(self.base_env, noise_strength=noise_strength, sudden_noise_start=0)
+        env2 = SuddenNoiseWrapper(
+            self.base_env, noise_strength=noise_strength, sudden_noise_start=0
+        )
         state2 = env2.reset(jrandom.PRNGKey(123))
-        state2 = env2.step(state2, action)
+        state2 = env2.step(state2, action, noise_global_step=0)
         noise2 = state2.obs
 
         # Different seeds should produce different noise
@@ -166,25 +180,31 @@ class TestSuddenNoiseWrapper(unittest.TestCase):
 
     def test_noise_shape_matches_obs(self):
         """Noise should have the same shape as the observation."""
-        env = SuddenNoiseWrapper(self.base_env, noise_strength=1.0, sudden_noise_start=0)
+        env = SuddenNoiseWrapper(
+            self.base_env, noise_strength=1.0, sudden_noise_start=0
+        )
         state = env.reset(self.rng)
 
         action = jnp.zeros(self.action_size)
-        state = env.step(state, action)
+        state = env.step(state, action, noise_global_step=0)
 
         self.assertEqual(state.obs.shape, (self.obs_size,))
 
     def test_noise_is_deterministic_with_same_seed(self):
         """Running the same sequence with the same seed should produce identical noise."""
-        env1 = SuddenNoiseWrapper(self.base_env, noise_strength=1.0, sudden_noise_start=0)
-        env2 = SuddenNoiseWrapper(self.base_env, noise_strength=1.0, sudden_noise_start=0)
+        env1 = SuddenNoiseWrapper(
+            self.base_env, noise_strength=1.0, sudden_noise_start=0
+        )
+        env2 = SuddenNoiseWrapper(
+            self.base_env, noise_strength=1.0, sudden_noise_start=0
+        )
 
         def run_episode(env, rng):
             state = env.reset(rng)
             action = jnp.zeros(self.action_size)
             obs_list = []
-            for _ in range(5):
-                state = env.step(state, action)
+            for i in range(5):
+                state = env.step(state, action, noise_global_step=i)
                 obs_list.append(state.obs)
             return jnp.stack(obs_list)
 
@@ -199,11 +219,13 @@ class TestSuddenNoiseWrapper(unittest.TestCase):
 
     def test_noise_does_not_affect_internal_env_state(self):
         """The wrapper should not modify the underlying env's pipeline_state."""
-        env = SuddenNoiseWrapper(self.base_env, noise_strength=1.0, sudden_noise_start=0)
+        env = SuddenNoiseWrapper(
+            self.base_env, noise_strength=1.0, sudden_noise_start=0
+        )
         state = env.reset(self.rng)
 
         action = jnp.zeros(self.action_size)
-        state = env.step(state, action)
+        state = env.step(state, action, noise_global_step=0)
 
         # pipeline_state should still be the base env's output (no noise)
         expected_pipeline = jnp.zeros(self.obs_size)  # step 0 in dummy env
@@ -215,18 +237,20 @@ class TestSuddenNoiseWrapper(unittest.TestCase):
     def test_noise_applied_every_step_after_start(self):
         """Once past sudden_noise_start, noise should be applied on every subsequent step."""
         noise_start = 3
-        env = SuddenNoiseWrapper(self.base_env, noise_strength=1.0, sudden_noise_start=noise_start)
+        env = SuddenNoiseWrapper(
+            self.base_env, noise_strength=1.0, sudden_noise_start=noise_start
+        )
         state = env.reset(self.rng)
 
         total_steps = noise_start + 4
         for step_idx in range(total_steps):
             action = jnp.zeros(self.action_size)
-            state = env.step(state, action)
+            state = env.step(state, action, noise_global_step=step_idx)
 
             steps_counter = state.info["steps"]
             expected_base = jnp.ones(self.obs_size) * step_idx
 
-            if steps_counter < noise_start:
+            if steps_counter <= noise_start:
                 self.assertTrue(
                     jnp.allclose(state.obs, expected_base),
                     f"At step_idx {step_idx} (steps={steps_counter}): expected no noise",
@@ -249,7 +273,7 @@ class TestSuddenNoiseWrapper(unittest.TestCase):
         state = env.reset(self.rng)
 
         action = jnp.zeros(self.action_size)
-        state = env.step(state, action)
+        state = env.step(state, action, noise_global_step=0)
 
         # Base obs is zeros at step 0
         # Indices 0 and 2 should have noise, indices 1 and 3 should be exactly zero
@@ -270,7 +294,7 @@ class TestSuddenNoiseWrapper(unittest.TestCase):
         state = env.reset(self.rng)
 
         action = jnp.zeros(self.action_size)
-        state = env.step(state, action)
+        state = env.step(state, action, noise_global_step=0)
 
         self.assertTrue(
             jnp.all(state.obs != 0.0),
@@ -289,7 +313,7 @@ class TestSuddenNoiseWrapper(unittest.TestCase):
         state = env.reset(self.rng)
 
         action = jnp.zeros(self.action_size)
-        state = env.step(state, action)
+        state = env.step(state, action, noise_global_step=0)
 
         self.assertEqual(state.obs[0], 0.0, "Index 0 should not have noise")
         self.assertNotEqual(state.obs[1], 0.0, "Index 1 should have noise")
@@ -308,7 +332,7 @@ class TestSuddenNoiseWrapper(unittest.TestCase):
         state = env.reset(self.rng)
 
         action = jnp.zeros(self.action_size)
-        state = env.step(state, action)
+        state = env.step(state, action, noise_global_step=0)
 
         expected_base = jnp.zeros(self.obs_size)
         self.assertTrue(
