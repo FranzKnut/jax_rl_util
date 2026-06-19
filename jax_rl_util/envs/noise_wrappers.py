@@ -1,5 +1,3 @@
-from mujoco_playground import State
-
 import jax
 import jax.numpy as jnp
 import jax.random as jrandom
@@ -37,8 +35,8 @@ class SuddenNoiseWrapper(Wrapper):
             )
             noise = jnp.where(mask, noise, 0.0)
         return noise
-    
-    def step(self, state: State, action: jnp.ndarray, noise_global_step: int, **kwargs) -> State:
+
+    def step(self, state, action: jnp.ndarray, noise_global_step: int, **kwargs):
         state = self.env.step(state, action, **kwargs)
         if self.sudden_noise_start is not None:
             noise_rng, state.info["rng"] = jrandom.split(state.info["rng"])
