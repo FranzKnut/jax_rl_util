@@ -7,7 +7,8 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import simple_parsing
-from jax_rl_util.baselines.brax_baselines import load_brax_model
+from jax_rtrl.supervised.example_datasets import load_np_files_from_folder
+from jax_rl_util.baselines import load_brax_baseline_inference_fn
 from jax_rl_util.envs.environments import (
     EnvironmentConfig,
     make_wrapped_env,
@@ -32,20 +33,20 @@ class RolloutConfig:
     """
 
     policy_path: str | None = (
-        None  # defaults to "jax_rl_util/baselines/trained/brax_baselines/{backend}/{env_name}.ckpt"
+        None  # defaults to "jax_rl_util/baselines/trained/{package}/{backend}/{env_name}.ckpt"
     )
     ckpt_type: str = "brax"
-    output_dir: str = "data"
+    output_dir: str | None = None  # defaults to "data/{package}/{backend}/{env_name}"
     env_config: EnvironmentConfig = field(
         default_factory=lambda: EnvironmentConfig(
-            env_name="halfcheetah",
+            env_name="ant",
             init_kwargs={
-                "backend": "spring",
+                "backend": "mjx",
             },
             batch_size=1,
         )
     )
-    num_rollouts: int = 10
+    num_rollouts: int = 20
     max_steps: int = 1000
     seed: int = 0
 
@@ -65,16 +66,11 @@ def collect_rollouts(
     if verbose:
         print_env_info(env_info)
 
-    backend = config.env_config.init_kwargs.get("backend", "none")
-    policy_path = (
-        config.policy_path
-        or f"{os.path.dirname(__file__)}/../baselines/trained/brax_baselines/{backend}/{config.env_config.env_name}.ckpt"
-    )
-
     if config.ckpt_type == "brax":
-        policy_fn = load_brax_model(
-            policy_path,
+        backend = config.env_config.init_kwargs.get("backend", "none")
+        policy_fn = load_brax_baseline_inference_fn(
             config.env_config.env_name,
+            backend,
             env.observation_size,
             env.action_size,
         )
@@ -84,7 +80,7 @@ def collect_rollouts(
         from rtr_iil import make_flax_inference_fn  # FIXME
 
         policy_fn, reset_carry, policy = make_flax_inference_fn(
-            policy_path, env.observation_size, env.action_size
+            config.policy_path, env.observation_size, env.action_size
         )
         use_rnn = policy.use_rnn
         rng, policy_key = jax.random.split(rng)
@@ -113,7 +109,11 @@ def collect_rollouts(
         return (_state, _hidden, _rng), (prev_state, action)
 
     # Make output directory
-    output_dir = os.path.join(config.output_dir, backend, config.env_config.env_name)
+    if config.output_dir is None:
+        output_dir = os.path.join("data", env.package_name)
+        if env.package_name == "brax":
+            output_dir = os.path.join(output_dir, backend)
+        output_dir = os.path.join(output_dir, config.env_config.env_name)
     os.makedirs(output_dir, exist_ok=True)
     total_reward = 0
     total_num_eps = 0
@@ -149,6 +149,10 @@ def collect_rollouts(
                 f"Saved {num_episodes} episodes to {filename}. Average reward: {_reward / num_episodes}"
             )
     return total_reward / total_num_eps
+
+
+def load_rollouts(data_folder: str, num_files: int | None = None):
+    return load_np_files_from_folder(data_folder, is_npz=True, num_files=num_files)
 
 
 if __name__ == "__main__":

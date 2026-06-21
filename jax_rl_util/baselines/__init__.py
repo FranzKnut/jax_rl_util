@@ -16,7 +16,7 @@ def load_brax_baseline_inference_fn(env_name: str, backend: str, obs_size, act_s
     import os
 
     file_dir = os.path.dirname(os.path.abspath(__file__))
-    path = file_dir + f"/trained/brax_baselines/{package}/{backend}/{env_name}.ckpt"
+    path = file_dir + f"/trained/{package}/{backend}/{env_name}.ckpt"
     return load_brax_model(
         path,
         env_name=env_name,

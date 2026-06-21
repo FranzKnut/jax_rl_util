@@ -73,6 +73,18 @@ class PPOParams(LoggableConfig):
     fresh: bool = True  # Only load the hyperparameters, not the model
     record_best_eval_episode: bool = True
     deterministic_eval: bool = True
+    
+    # Env settings
+    env_params: EnvironmentConfig = field(
+        default_factory=lambda: EnvironmentConfig(
+            env_name="ant",
+            init_kwargs={"backend": "mjx"},
+            batch_size=128,
+        )
+    )
+    dt: float = 1.0
+    normalize_obs: bool = False
+    normalize_gae: bool = False
 
     # Model Settings
     model: str = "CTRNN"
@@ -113,17 +125,7 @@ class PPOParams(LoggableConfig):
     ent_coef: float = 1e-5
     vf_coef: float = 0.5
     anneal_ent: bool = False
-
-    # Env settings
-    env_params: EnvironmentConfig = field(
-        default_factory=lambda: EnvironmentConfig(
-            env_name="CartPole-v1",
-            batch_size=128,
-        )
-    )
-    dt: float = 1.0
-    normalize_obs: bool = False
-    normalize_gae: bool = False
+    
     sparsity_penalty: float | None = None
 
 
@@ -1089,8 +1091,8 @@ def make_train(
                     ):
                         pbar.write("Rendering env...")
                         frames = render_frames(
-                            env,
                             _traj.env_state,
+                            env, 
                             config.render_start,
                             config.render_start + config.render_steps,
                         )

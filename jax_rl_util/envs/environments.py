@@ -250,6 +250,7 @@ def make_wrapped_env(
     config: EnvironmentConfig,
     debug=0,
     make_eval=False,
+    autoreset=True,
     use_vmap_wrapper=True,
     extra_wrappers: list | None = None,
 ) -> tuple[BraxEnv, dict] | tuple[BraxEnv, dict, BraxEnv]:
@@ -265,6 +266,8 @@ def make_wrapped_env(
     make_eval : bool, optional
         Whether to make an eval env, by default False
         If true, eval env without batching is also returned
+    autoreset : bool, optional
+        Whether to automatically reset the environment, by default True
     use_vmap_wrapper : bool, optional
         Force using the vmap wrapper (even for batchsize 1), by default True
     extra_wrappers : list, optional
@@ -302,7 +305,8 @@ def make_wrapped_env(
         env = POBraxWrapper(env, config.obs_mask)
         
     # Autoreset
-    env = RandomizedAutoResetWrapper(env)
+    if autoreset:
+        env = RandomizedAutoResetWrapper(env)
     # env = EfficientAutoResetWrapper(env)
     
     # Apply extra wrappers (e.g., SuddenNoiseWrapper)
@@ -334,7 +338,8 @@ def make_wrapped_env(
         # eval_env = FlatObsBraxWrapper(eval_env)
         if config.obs_mask is not None:
             eval_env = POBraxWrapper(eval_env, config.obs_mask)
-        eval_env = RandomizedAutoResetWrapper(eval_env)
+        if autoreset:
+            eval_env = RandomizedAutoResetWrapper(eval_env)
         # Apply extra wrappers to eval env too
         if extra_wrappers is not None:
             for wrapper_cls, wrapper_kwargs in extra_wrappers:

@@ -37,7 +37,7 @@ class BraxBaselineConfig(LoggableConfig):
     logging: str | None = "wandb"
     force: bool = False
     env_config: EnvironmentConfig = field(
-        default_factory=lambda: EnvironmentConfig(env_name="PandaPickCubeOrientation")
+        default_factory=lambda: EnvironmentConfig(env_name="ant")
     )
     render: bool = True
 
@@ -349,7 +349,7 @@ def train_brax_baseline(config: BraxBaselineConfig, logger=DummyLogger()):
         debug.callback(print_progress, num_steps, metrics["eval/episode_reward"])
 
     file_dir = os.path.dirname(os.path.abspath(__file__))
-    model_filename = file_dir + f"/trained/brax_baselines/{env.package_name}"
+    model_filename = file_dir + f"/trained/{env.package_name}"
     if env.package_name == "brax":
         model_filename += (
             f"/{config.env_config.step_kwargs.get('backend', 'generalized')}"
@@ -412,7 +412,7 @@ def train_brax_baseline(config: BraxBaselineConfig, logger=DummyLogger()):
     print(f"average reward: {avg_reward}")
     if config.render and not DEBUG:
         print("Rendering...")
-        frames = render_frames(env, states, start_idx=0, end_idx=200)
+        frames = render_frames(states, env, start_idx=0, end_idx=200)
         logger.log_video(
             "env/video",
             np.array(frames),

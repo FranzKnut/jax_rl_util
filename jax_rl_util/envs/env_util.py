@@ -84,7 +84,7 @@ def make_obs_mask(
 
 
 def render_frames(
-    _env: gym.Env,
+    env: gym.Env,
     states: list,
     start_idx: int = None,
     end_idx: int = None,
@@ -93,7 +93,7 @@ def render_frames(
 
     Parameters
     ----------
-    _env : gym.Env
+    env : gym.Env
         Environment to render. Can handle Brax, Gymnax and Gym envs.
     states: list
         List of states to render.
@@ -110,21 +110,21 @@ def render_frames(
     if not isinstance(states, list):
         states = [
             jax.tree.map(lambda x: x[n], states)
-            for n in range(start_idx or 0, end_idx or states.time.shape[0])
+            for n in range(start_idx or 0, end_idx or states.done.shape[0])
         ]
     from jax_rl_util.envs.wrappers import GymnaxBraxWrapper
 
     frames = []
     try:
-        is_brax = _env.name.startswith("brax-") or _env.name in brax.envs._envs
-        if _env.name == "dronegym":
+        is_brax = env.name.startswith("brax-") or env.name in brax.envs._envs
+        if env.name == "dronegym":
             states = tree_stack(states)
             data = states.pipeline_state
             data["reward"] = states.reward
             data["done"] = states.done[
                 1:
             ]  # shift by 1 since 'done' always marks the obs after reset
-            return plot_drones(_env.params, data, obstacle=_env.obstacle)
+            return plot_drones(env.params, data, obstacle=env.obstacle)
         else:
             try:
                 # Try to import mujoco_playground
@@ -132,21 +132,22 @@ def render_frames(
 
                 # Define rendering function for specific envs
                 is_playground = (
-                    _env.name.startswith("playground-")
-                    or _env.name in mujoco_playground.registry.ALL_ENVS
+                    env.name.startswith("playground-")
+                    or env.name in mujoco_playground.registry.ALL_ENVS
                 )
             except ImportError:
                 is_playground = False
             if not is_playground:
                 states = [x.pipeline_state for x in states]
-            states = jax.tree.map(lambda x: x[0], states)
+            if is_brax and len(states[0].q.shape) >= 2:
+                states = jax.tree.map(lambda x: x[0], states)
 
         if is_playground:
-            return _env.render(states)
-        elif isinstance(_env.unwrapped, GymnaxBraxWrapper):
+            return env.render(states)
+        elif env is not None and isinstance(env.unwrapped, GymnaxBraxWrapper):
             from gymnax.visualize.vis_gym import get_gym_state
             
-            _env_name = _env.name
+            _env_name = env.name
             if "CartPole" in _env_name:
                 _env_name = "CartPole-v1"
 
@@ -164,19 +165,19 @@ def render_frames(
             from brax.io import image
 
             def render_gym(_state):
-                camera = "track" if len(_env.sys.cam_bodyid) else -1
-                camera = "track" if "inverted_pendulum" not in _env.name else None
+                camera = "track" if len(env.sys.cam_bodyid) else -1
+                camera = "track" if "inverted_pendulum" not in env.name else None
                 return image.render_array(
-                    _env.sys, _state, 256, 256, camera=camera
+                    env.sys, _state, 256, 256, camera=camera
                 )  # .transpose(2, 0, 1)
         else:
-            gym_env = gym.make(_env.name, render_mode="rgb_array").unwrapped
+            gym_env = gym.make(env.name, render_mode="rgb_array").unwrapped
 
             def render_gym(_state):
-                if _env.name in ["CarRacing-v3", "CarRacingPenalty-v0"]:
+                if env.name in ["CarRacing-v3", "CarRacingPenalty-v0"]:
                     return _state
                 gym_env.state = _state
-                if _env.name == "Pendulum-v1":
+                if env.name == "Pendulum-v1":
                     gym_env.unwrapped.env.last_u = _state[-1]
                 return gym_env.render()  # .transpose(2, 0, 1)
 
@@ -185,7 +186,7 @@ def render_frames(
                 _state = jax.tree.map(lambda x: x[0], _state)
             frames.append(render_gym(_state))
 
-        if isinstance(_env.unwrapped, GymnaxBraxWrapper) or not is_brax:
+        if isinstance(env.unwrapped, GymnaxBraxWrapper) or not is_brax:
             gym_env.close()
     except Exception as e:
         print(f"Rendering failed with error: {e}")
