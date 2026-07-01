@@ -46,7 +46,7 @@ class RolloutConfig:
             batch_size=1,
         )
     )
-    num_rollouts: int = 20
+    num_rollouts: int = 100
     max_steps: int = 1000
     seed: int = 0
 

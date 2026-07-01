@@ -29,6 +29,17 @@ def is_discrete(env: gym.Env):
     )
 
 
+class Env(BraxEnv):
+    """Abstract base class for environments, based on brax.envs.base.Env."""
+
+    package_name: str | None = (
+        None  # Default package name, overridden upon env creation in make_wrapped_env
+    )
+    env_name: str | None = (
+        None  # Default env name, overridden upon env creation in make_wrapped_env
+    )
+
+
 class Wrapper:
     """Wraps an environment to allow modular transformations."""
 
@@ -77,10 +88,10 @@ class Wrapper:
         return f"{self.__class__.__name__}[{', '.join(params)}]({self.env})"
 
 
-class GymBraxWrapper(Wrapper):
+class GymBraxWrapper(Wrapper, Env):
     """Wrap Gym envs for use with Brax Wrappers."""
 
-    def __init__(self, env, params=None):
+    def __init__(self, env: gym.Env, params=None):
         """Set Env params at initialization."""
         self.env = env
         self.params = params  # Unused?
@@ -111,9 +122,9 @@ class GymBraxWrapper(Wrapper):
 
 
 class GymWrapper(Wrapper, gym.Env):
-    """A wrapper that converts BraxEnv to one that follows Gym API."""
+    """A wrapper that converts Env to one that follows Gym API."""
 
-    def __init__(self, env: BraxEnv, render_mode: str = None):
+    def __init__(self, env: Env, render_mode: str = None):
         Wrapper.__init__(self, env)
         self.render_mode = render_mode
 
@@ -233,7 +244,7 @@ class GymJaxWrapper(Wrapper):
         return self.observation_space.shape
 
 
-class GymnaxBraxWrapper(Wrapper):
+class GymnaxBraxWrapper(Wrapper, Env):
     """Wrap Gymnax envs for use with Brax Wrappers."""
 
     def __init__(
@@ -304,7 +315,7 @@ class GymnaxBraxWrapper(Wrapper):
 #         return super().render(mode)
 
 
-class GrayscaleWrapper(Wrapper):
+class GrayscaleWrapper(Wrapper, Env):
     """Convert RGB images to Grayscale."""
 
     def reset(self, rng: jnp.ndarray) -> jnp.ndarray:
@@ -335,7 +346,7 @@ class PopJymBraxWrapper(GymnaxBraxWrapper):
                 self.params = env_module.MetaEnvParams(env_params=self.params)
 
 
-class EpisodeWrapper(Wrapper):
+class EpisodeWrapper(Wrapper, Env):
     """Maintains episode step count and sets done at episode end. Additionally allows action repetition."""
 
     def __init__(self, env, episode_length: int, action_repeat: int):
@@ -372,7 +383,7 @@ class EpisodeWrapper(Wrapper):
         return state.replace(done=done)
 
 
-class VmapWrapper(Wrapper):
+class VmapWrapper(Wrapper, Env):
     """Vectorizes Brax env."""
 
     def __init__(self, env, batch_size: int = None):
@@ -400,7 +411,7 @@ class VmapWrapper(Wrapper):
         return jax.vmap(partial(self.env.step, **kwargs))(state, action)
 
 
-class EfficientAutoResetWrapper(Wrapper):
+class EfficientAutoResetWrapper(Wrapper, Env):
     """Efficiently resets Brax envs that are done.
 
     Attention! The first state is remembered and used to reset the env.
@@ -436,7 +447,7 @@ class EfficientAutoResetWrapper(Wrapper):
         return state.replace(pipeline_state=pipeline_state, obs=obs, reward=reward)
 
 
-class RandomizedAutoResetWrapper(Wrapper):
+class RandomizedAutoResetWrapper(Wrapper, Env):
     """Automatically resets Brax envs that are done.
 
     Force resample every step. Inefficient
@@ -514,7 +525,7 @@ class RandomizedAutoResetWrapper(Wrapper):
 #         return state.replace(pipeline_state=pipeline_state, obs=obs)
 
 
-class FlatPOWrapper(Wrapper):
+class FlatPOWrapper(Wrapper, Env):
     """Flattens and Masks Observations in order to create an POMDP."""
 
     def __init__(self, env: gym.Env, obs_mask: Iterable[int] | str):
@@ -538,7 +549,7 @@ class FlatPOWrapper(Wrapper):
         return (len(self.obs_mask),)
 
 
-class FlatObsBraxWrapper(Wrapper):
+class FlatObsBraxWrapper(Wrapper, Env):
     """Flattens Observations."""
 
     def reset(self, rng: jnp.ndarray) -> State:
@@ -555,7 +566,7 @@ class FlatObsBraxWrapper(Wrapper):
         return state.replace(obs=state.obs.reshape((-1)))
 
 
-class POBraxWrapper(Wrapper):
+class POBraxWrapper(Wrapper, Env):
     """Masks Observations in order to create a POMDP."""
 
     def __init__(self, env, obs_mask: Iterable[int] | str):
@@ -570,7 +581,7 @@ class POBraxWrapper(Wrapper):
                     obs_mask
                 )
             )
-            self.env: BraxEnv = env
+            self.env: Env = env
         else:
             self.obs_mask = make_obs_mask(np.prod(env.observation_size), obs_mask)
 
@@ -799,7 +810,7 @@ class SaveToFileWrapper(Wrapper):
     def step(self, state, action: jnp.ndarray = None, **kwargs):
         """Steps through the environment using action, recording actions, observations and rewards"""
         # For brax envs, state is given as first argument
-        if isinstance(self.env, (BraxEnv, Wrapper)):
+        if isinstance(self.env, (Env, Wrapper)):
             step_out = self.env.step(state, action, **kwargs)
             obs, reward, done = step_out.obs, step_out.reward, step_out.done
         else:

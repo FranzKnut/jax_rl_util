@@ -131,20 +131,33 @@ class DummyLogger(dict, object):
         kwargs : any
             Are passed to the underlying logging method.
         """
-        file_name = name.replace("/", "_")
         file_name = (
-            f"{file_name}_{step}.gif" if step is not None else f"{file_name}.gif"
+            f"{name}_{step}.gif" if step is not None else f"{name}.gif"
         )
-        file_name = os.path.join(self.run_artifacts_dir, file_name)
-        images = [Image.fromarray(frames[i]) for i in range(len(frames))]
-        os.makedirs(self.run_artifacts_dir, exist_ok=True)
-        images[0].save(
-            file_name,
-            save_all=True,
-            append_images=images[1:],
-            duration=int(1000 / fps),
-            loop=0,
-        )
+        save_video(frames, file_name, self.run_artifacts_dir, fps=fps)
+
+
+def save_video(frames, file_name, out_dir, fps=30):
+    """Save a video given as array.
+
+    Parameters
+    ----------
+    frames : array
+        leading dimension for frames, then height, width, channels
+    file_name : str
+        Name of the file to save the video to.
+    """
+    file_name = file_name.replace("/", "_")
+    file_name = os.path.join(out_dir, file_name)
+    images = [Image.fromarray(frames[i]) for i in range(len(frames))]
+    os.makedirs(out_dir, exist_ok=True)
+    images[0].save(
+        file_name,
+        save_all=True,
+        append_images=images[1:],
+        duration=int(1000 / fps),
+        loop=0,
+    )
 
 
 def update_nested_dict(d: dict, u: dict | None, path=""):

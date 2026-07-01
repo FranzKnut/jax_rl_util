@@ -19,11 +19,11 @@ from dataclasses import dataclass, field
 
 import brax
 import gymnasium as gym
-from brax.envs.base import Env as BraxEnv  # noqa
 from jax import numpy as jnp
 import numpy as np
 
 from jax_rl_util.envs import wrappers
+from jax_rl_util.envs.wrappers import Env
 
 # Try importing optional dependencies
 try:
@@ -133,21 +133,8 @@ def print_env_info(env_info):
     # print(f'value_size: {VALUE_SIZE}')
 
 
-def get_env_specs(env: gym.Env, obs_mask=None):
-    """Infer the sizes for the observation and action space given a mask.
-
-    Parameters
-    ----------
-    env : gym.Env
-        _description_
-    obs_mask : _type_, optional
-        _description_, by default None
-
-    Returns
-    -------
-    _type_
-        _description_
-    """
+def get_env_specs(env: Env, obs_mask=None):
+    """Infer the sizes for the observation and action space given a mask."""
     is_gym = hasattr(env, "observation_space")
     ACT_SIZE = env.action_size
     if is_gym:
@@ -164,7 +151,7 @@ def get_env_specs(env: gym.Env, obs_mask=None):
         else:
             act_clip = None
     else:
-        env: BraxEnv
+        env: Env
         # is brax
         DISCRETE = False
         # Assuming brax only takes normalized actions!
@@ -253,7 +240,7 @@ def make_wrapped_env(
     autoreset=True,
     use_vmap_wrapper=True,
     extra_wrappers: list | None = None,
-) -> tuple[BraxEnv, dict] | tuple[BraxEnv, dict, BraxEnv]:
+) -> tuple[Env, dict] | tuple[Env, dict, Env]:
     """Make brax or gymnax env.
 
     Parameters
@@ -286,7 +273,7 @@ def make_wrapped_env(
     # TODO refactor:
     # [ ] Make env_info a field of the env.
 
-    env: BraxEnv
+    env: Env
     env_name = config.env_name
 
     env = get_env(config)
@@ -303,21 +290,21 @@ def make_wrapped_env(
     # env = FlatObsBraxWrapper(env)
     if config.obs_mask is not None:
         env = POBraxWrapper(env, config.obs_mask)
-        
+
     # Autoreset
     if autoreset:
         env = RandomizedAutoResetWrapper(env)
     # env = EfficientAutoResetWrapper(env)
-    
+
     # Apply extra wrappers (e.g., SuddenNoiseWrapper)
     if extra_wrappers is not None:
         for wrapper_cls, wrapper_kwargs in extra_wrappers:
             env = wrapper_cls(env, **wrapper_kwargs)
-          
+
     # Use VmapWrapper for batching if batch_size > 1 or if use_vmap_wrapper is True
     if (config.batch_size is not None and (config.batch_size > 1)) or use_vmap_wrapper:
         env = VmapWrapper(env, batch_size=config.batch_size)
-    
+
     env_info = dict(
         env_name=env_name,
         package_name=env.package_name,
