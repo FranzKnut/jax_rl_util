@@ -88,7 +88,7 @@ class Wrapper:
         return f"{self.__class__.__name__}[{', '.join(params)}]({self.env})"
 
 
-class GymBraxWrapper(Wrapper, Env):
+class GymBraxWrapper(Wrapper):
     """Wrap Gym envs for use with Brax Wrappers."""
 
     def __init__(self, env: gym.Env, params=None):
@@ -244,7 +244,7 @@ class GymJaxWrapper(Wrapper):
         return self.observation_space.shape
 
 
-class GymnaxBraxWrapper(Wrapper, Env):
+class GymnaxBraxWrapper(Wrapper):
     """Wrap Gymnax envs for use with Brax Wrappers."""
 
     def __init__(
@@ -315,7 +315,7 @@ class GymnaxBraxWrapper(Wrapper, Env):
 #         return super().render(mode)
 
 
-class GrayscaleWrapper(Wrapper, Env):
+class GrayscaleWrapper(Wrapper):
     """Convert RGB images to Grayscale."""
 
     def reset(self, rng: jnp.ndarray) -> jnp.ndarray:
@@ -346,7 +346,7 @@ class PopJymBraxWrapper(GymnaxBraxWrapper):
                 self.params = env_module.MetaEnvParams(env_params=self.params)
 
 
-class EpisodeWrapper(Wrapper, Env):
+class EpisodeWrapper(Wrapper):
     """Maintains episode step count and sets done at episode end. Additionally allows action repetition."""
 
     def __init__(self, env, episode_length: int, action_repeat: int):
@@ -383,7 +383,7 @@ class EpisodeWrapper(Wrapper, Env):
         return state.replace(done=done)
 
 
-class VmapWrapper(Wrapper, Env):
+class VmapWrapper(Wrapper):
     """Vectorizes Brax env."""
 
     def __init__(self, env, batch_size: int = None):
@@ -411,7 +411,7 @@ class VmapWrapper(Wrapper, Env):
         return jax.vmap(partial(self.env.step, **kwargs))(state, action)
 
 
-class EfficientAutoResetWrapper(Wrapper, Env):
+class EfficientAutoResetWrapper(Wrapper):
     """Efficiently resets Brax envs that are done.
 
     Attention! The first state is remembered and used to reset the env.
@@ -447,7 +447,7 @@ class EfficientAutoResetWrapper(Wrapper, Env):
         return state.replace(pipeline_state=pipeline_state, obs=obs, reward=reward)
 
 
-class RandomizedAutoResetWrapper(Wrapper, Env):
+class RandomizedAutoResetWrapper(Wrapper):
     """Automatically resets Brax envs that are done.
 
     Force resample every step. Inefficient
@@ -525,7 +525,7 @@ class RandomizedAutoResetWrapper(Wrapper, Env):
 #         return state.replace(pipeline_state=pipeline_state, obs=obs)
 
 
-class FlatPOWrapper(Wrapper, Env):
+class FlatPOWrapper(Wrapper):
     """Flattens and Masks Observations in order to create an POMDP."""
 
     def __init__(self, env: gym.Env, obs_mask: Iterable[int] | str):
@@ -549,7 +549,7 @@ class FlatPOWrapper(Wrapper, Env):
         return (len(self.obs_mask),)
 
 
-class FlatObsBraxWrapper(Wrapper, Env):
+class FlatObsBraxWrapper(Wrapper):
     """Flattens Observations."""
 
     def reset(self, rng: jnp.ndarray) -> State:
@@ -566,7 +566,7 @@ class FlatObsBraxWrapper(Wrapper, Env):
         return state.replace(obs=state.obs.reshape((-1)))
 
 
-class POBraxWrapper(Wrapper, Env):
+class POBraxWrapper(Wrapper):
     """Masks Observations in order to create a POMDP."""
 
     def __init__(self, env, obs_mask: Iterable[int] | str):
