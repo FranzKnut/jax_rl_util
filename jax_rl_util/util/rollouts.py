@@ -2,6 +2,7 @@
 
 import os
 from dataclasses import dataclass, field
+from typing import Literal
 
 import jax
 import jax.numpy as jnp
@@ -9,12 +10,15 @@ import numpy as np
 import simple_parsing
 from jax_rtrl.supervised.example_datasets import load_np_files_from_folder
 from jax_rl_util.baselines import load_brax_baseline_inference_fn
+from jax_rl_util.envs.env_util import compute_agg_reward
 from jax_rl_util.envs.environments import (
     EnvironmentConfig,
     make_wrapped_env,
     print_env_info,
     BRAX_ENVS_POS_DIMS,
 )
+import flax
+from brax.envs import State
 
 
 @dataclass
@@ -23,7 +27,7 @@ class RolloutConfig:
 
     Attributes:
         policy_path (str | None): Path to the policy checkpoint. Defaults to "artifacts/baselines/{env_name}.ckpt".
-        ckpt_type (str): Type of checkpoint. Defaults to "brax".
+        ckpt_type (Literal["brax", "orbax"]): Type of checkpoint. Defaults to "brax".
         output_dir (str): Directory to save the rollout data. Defaults to "data".
         env_config (EnvironmentConfig): Configuration for the environment. Defaults to an EnvironmentConfig with
                                         env_name="inverted_pendulum" and init_kwargs={"backend": "spring"}.
@@ -35,7 +39,7 @@ class RolloutConfig:
     policy_path: str | None = (
         None  # defaults to "jax_rl_util/baselines/trained/{package}/{backend}/{env_name}.ckpt"
     )
-    ckpt_type: str = "brax"
+    ckpt_type: Literal["brax", "orbax"] = "brax"
     output_dir: str | None = None  # defaults to "data/{package}/{backend}/{env_name}"
     env_config: EnvironmentConfig = field(
         default_factory=lambda: EnvironmentConfig(
@@ -44,11 +48,24 @@ class RolloutConfig:
                 "backend": "mjx",
             },
             batch_size=1,
+            max_ep_length=100_000,
         )
     )
     num_rollouts: int = 100
-    max_steps: int = 1000
+    max_steps: int = 10_000
     seed: int = 0
+
+
+@flax.struct.dataclass
+class Step:
+    act: jnp.ndarray
+    obs: jnp.ndarray
+    done: jnp.ndarray
+    rew: jnp.ndarray
+
+    @property
+    def reward(self):
+        return self.rew
 
 
 def collect_rollouts(
@@ -151,8 +168,46 @@ def collect_rollouts(
     return total_reward / total_num_eps
 
 
-def load_rollouts(data_folder: str, num_files: int | None = None):
-    return load_np_files_from_folder(data_folder, is_npz=True, num_files=num_files)
+def load_rollouts(
+    data_folder: str,
+    num_files: int | None = None,
+    min_ep_length: int | None = None,
+    min_reward: float | None = 1000,
+):
+    """Load rollouts from a given folder. Rollouts are filtered based on the provided criteria.
+
+    Parameters
+    ----------
+    data_folder : str
+        Path to the folder containing the rollout files.
+    num_files : int | None, optional
+        Number of files to load, by default None
+    max_ep_length : int | None, optional
+        Maximum episode length to consider, by default None
+    min_reward : float | None, optional
+        Minimum reward to consider, by default None
+
+    Returns
+    -------
+    see load_np_files_from_folder
+    """
+    data, file_starts = load_np_files_from_folder(
+        data_folder, is_npz=True, num_files=num_files
+    )
+    data["done"][:, 0] = 0  # Ensure done is binary (0 or 1) for consistency
+
+    if min_ep_length is not None:
+        ep_until = jnp.where(
+            data["done"].any(axis=1), data["done"].argmax(axis=1), data["done"].shape[1]
+        )
+        data = jax.tree.map(lambda x: x[ep_until >= min_ep_length], data)
+    if min_reward is not None:
+        states = Step(**{k: v for k, v in data.items() if k in Step.__annotations__})
+        states = jax.tree.map(lambda x: jnp.swapaxes(x, 0, 1), states)  # Exclude first step for reward computation
+        agg_rewards = compute_agg_reward(states, agg_fn=None)
+        # Filter rollouts based on minimum reward
+        data = jax.tree.map(lambda x: x[agg_rewards >= min_reward], data)
+    return data, file_starts
 
 
 if __name__ == "__main__":

@@ -15,6 +15,7 @@ import jax
 import jax.numpy as jnp
 import jax.tree_util as jtu
 import numpy as np
+import pandas as pd
 import simple_parsing
 from jax.tree_util import tree_reduce
 from matplotlib import pyplot as plt
@@ -131,9 +132,7 @@ class DummyLogger(dict, object):
         kwargs : any
             Are passed to the underlying logging method.
         """
-        file_name = (
-            f"{name}_{step}.gif" if step is not None else f"{name}.gif"
-        )
+        file_name = f"{name}_{step}.gif" if step is not None else f"{name}.gif"
         save_video(frames, file_name, self.run_artifacts_dir, fps=fps)
 
 
@@ -149,7 +148,9 @@ def save_video(frames, file_name, out_dir, fps=30):
     """
     file_name = file_name.replace("/", "_")
     file_name = os.path.join(out_dir, file_name)
-    images = [Image.fromarray(frames[i]) for i in range(len(frames))]
+    num_frames = len(frames)
+    print(f"Saving video to {file_name} with {num_frames} frames at {fps} fps.")
+    images = [Image.fromarray(frames[i]) for i in range(num_frames)]
     os.makedirs(out_dir, exist_ok=True)
     images[0].save(
         file_name,
@@ -157,6 +158,7 @@ def save_video(frames, file_name, out_dir, fps=30):
         append_images=images[1:],
         duration=int(1000 / fps),
         loop=0,
+        optimize=False,
     )
 
 
@@ -396,6 +398,9 @@ class AimLogger(DummyLogger):
             loop=0,
         )
         self.log({name: aim.Image(file_name, caption=caption, format="gif")}, step=step)
+
+
+WANDB_USER = "franzknut"
 
 
 class WandbLogger(DummyLogger):
@@ -769,22 +774,37 @@ def create_sweep_interactively(
         else:
             sweep_config["name"] = git_hash
 
-    print("---------------------------------------")
-    print("## Sweep " + name)
-    print("Created at: " + time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))
-    print("Est. runs:", est_runs)
-    sweep_id = wandb.sweep(sweep_config, project=project, **kwargs)
-    print("")
-    print(">   " + sweep_id)
-    print("")
-    print("**Description**")
-    for k, v in extract_keys_with_values(sweep_config["parameters"]).items():
-        print(f"- {k}: {', '.join(map(str, v))}")
-    print("")
-    if config_repo_dir is not None:
-        # Create a git tag for the sweep
-        os.system(f'git -C {config_repo_dir} tag "sweep-{name.replace(" ", "-")}"')
-        print("Git hash:", git_hash)
+    os.makedirs("logs/sweeps", exist_ok=True)
+    with open(f"logs/sweeps/{name}.txt", "w") as f:
+        print("---------------------------------------", file=f)
+        print("## Sweep " + name, file=f)
+        print(
+            "Created at: " + time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()),
+            file=f,
+        )
+        print("Est. runs:", est_runs, file=f)
+        sweep_id = wandb.sweep(sweep_config, project=project, **kwargs)
+        print("", file=f)
+        print("> ID:   " + sweep_id, file=f)
+        print("", file=f)
+        print("**Description**", file=f)
+        for k, v in extract_keys_with_values(sweep_config["parameters"]).items():
+            print(f"- {k}: {', '.join(map(str, v))}", file=f)
+        print("", file=f)
+        if config_repo_dir is not None:
+            # Create a git tag for the sweep
+            os.system(f'git -C {config_repo_dir} tag "sweep-{name.replace(" ", "-")}"')
+            print("Git hash:", git_hash, file=f)
+        print(
+            "URL: https://wandb.ai/"
+            + WANDB_USER
+            + "/"
+            + project
+            + "/sweeps/"
+            + sweep_id,
+            file=f,
+        )
+
     return sweep_id
 
 
@@ -818,3 +838,59 @@ def update_sweep_dict(d, u):
                 print("Removing", old, "from", d)
                 del d[old]
     return d
+
+
+def get_representative_models_for_sweep(
+    sweep_path, select="best", group_key="model_name", metric_key="eval_reward"
+):
+    """Get representative models for a sweep grouped by the given key.
+
+    Parameters
+    ----------
+    sweep_path : str
+        Path to the sweep in the format "user/project/sweep_id".
+    select : str, optional
+        How to select the representative model for each group.
+        Options are "best", "worst", "median". By default "best".
+    group_key : str, optional
+        Key to group by. By default "model_name".
+    metric_key : str, optional
+        Key to use for selecting the representative model. By default "eval_reward".
+
+    Returns
+    -------
+    list
+        List of model paths for the representative models.
+    """
+    models = {}
+    import tqdm
+    import wandb
+
+    for run in tqdm.tqdm(wandb.Api().sweep(sweep_path).runs):
+        artifacts = [r for r in run.logged_artifacts() if r.type == "model"]
+        _cfg = run.load_full_data()["config"]
+        value = _cfg["policy_config"][group_key]
+        metric = run.summary[metric_key]
+        if value not in models:
+            models[value] = pd.DataFrame(columns=[metric_key, "model_path"])
+
+        models[value].loc[len(models[value])] = {
+            metric_key: metric,
+            "model_path": artifacts[-1].source_qualified_name,
+        }
+
+    for value in models:
+        if select == "worst":
+            idx = models[value][metric_key].idxmin()
+        elif select == "best":
+            idx = models[value][metric_key].idxmax()
+        elif select == "median":
+            idx = (
+                models[value][metric_key]
+                .sub(models[value][metric_key].median())
+                .abs()
+                .idxmin()
+            )
+        models[value] = models[value].iloc[[idx]]
+
+    return [models[value].iloc[0]["model_path"] for value in models]

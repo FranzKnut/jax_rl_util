@@ -1,6 +1,6 @@
 """Utiliy functions for working with environments."""
 
-from typing import Iterable
+from typing import Callable, Iterable
 
 import brax.envs
 import gymnasium as gym
@@ -13,17 +13,30 @@ from jax_rl_util.envs.plot_drones import plot_drones
 from jax_rl_util.util.logging_util import tree_stack
 
 
-def compute_agg_reward(states: brax.envs.State, agg_fn=jnp.mean):
-    """Compute the average reward per episode from a batch of trajectories."""
+def compute_agg_reward(states: brax.envs.State, agg_fn: Callable | None = jnp.mean):
+    """Compute the average reward per episode from a batch of trajectories.
+
+    Parameters
+    ----------
+    states : brax.envs.State
+        A batch of trajectories from a Brax environment with shape (T, B, ...), where T is the number of timesteps and B is the batch size.
+    agg_fn : callable, optional
+        A function to aggregate the rewards, by default jnp.mean.
+    """
     # For episodes that are done early, get the first occurence of done
     ep_until = jnp.where(
         states.done.any(axis=0), states.done.argmax(axis=0), states.done.shape[0]
     )
     # Compute cumsum and get value corresponding to end of episode per batch.
     # mean_reward = jnp.sum(traj_batch.reward) / jnp.max(jnp.array([jnp.sum(traj_batch.done), 1]))
-    return agg_fn(
-        states.reward.cumsum(axis=0)[ep_until, jnp.arange(ep_until.shape[-1])]
-    )
+    reward_per_episode = states.reward.cumsum(axis=0)[
+        ep_until, jnp.arange(ep_until.shape[-1])
+    ]
+    if agg_fn is not None:
+        return agg_fn(reward_per_episode)
+
+    else:
+        return reward_per_episode
 
 
 def render_brax(env, states, render_steps=100, render_start=0, camera=None):
@@ -146,7 +159,7 @@ def render_frames(
             return env.render(states)
         elif env is not None and isinstance(env.unwrapped, GymnaxBraxWrapper):
             from gymnax.visualize.vis_gym import get_gym_state
-            
+
             _env_name = env.name
             if "CartPole" in _env_name:
                 _env_name = "CartPole-v1"

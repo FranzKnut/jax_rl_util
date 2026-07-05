@@ -35,7 +35,7 @@ class BraxBaselineConfig(LoggableConfig):
 
     project_name: str = "brax_baselines"
     logging: str | None = "wandb"
-    force: bool = False
+    force: bool = True  # Force re-training even if model already exists
     env_config: EnvironmentConfig = field(
         default_factory=lambda: EnvironmentConfig(env_name="ant")
     )
@@ -98,7 +98,7 @@ TRAIN_FNS = {
         num_updates_per_batch=4,
         discounting=0.97,
         learning_rate=3e-4,
-        entropy_cost=1e-2,
+        entropy_cost=1e-3,
         num_envs=4096,
         batch_size=2048,
         seed=1,
@@ -378,13 +378,14 @@ def train_brax_baseline(config: BraxBaselineConfig, logger=DummyLogger()):
             )
         # TODO: allow sac training for mujoco_playground envs
         ppo_config = default_params.brax_ppo_config(env_name)
-        network_factory = ppo.ppo_networks.make_ppo_networks
-        if "network_factory" in ppo_config:
-            # HACK: construct network factory from mujoco_playground params
-            network_factory = functools.partial(
-                network_factory, **ppo_config.network_factory
-            )
-            del ppo_config["network_factory"]
+
+    network_factory = ppo.ppo_networks.make_ppo_networks
+    if "network_factory" in ppo_config:
+        # HACK: construct network factory from mujoco_playground params
+        network_factory = functools.partial(
+            network_factory, **ppo_config.network_factory
+        )
+        del ppo_config["network_factory"]
     pprint(ppo_config)
     _train_fn = TRAIN_FNS.get(
         env_name, functools.partial(ppo.train, **dict(ppo_config))
@@ -412,7 +413,7 @@ def train_brax_baseline(config: BraxBaselineConfig, logger=DummyLogger()):
     print(f"average reward: {avg_reward}")
     if config.render and not DEBUG:
         print("Rendering...")
-        frames = render_frames(states, env, start_idx=0, end_idx=200)
+        frames = render_frames(env, states, start_idx=0, end_idx=200)
         logger.log_video(
             "env/video",
             np.array(frames),
