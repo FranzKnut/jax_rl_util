@@ -24,6 +24,7 @@ import numpy as np
 
 from jax_rl_util.envs import wrappers
 from jax_rl_util.envs.wrappers import Env
+from jax_rl_util.util.config_util import dict_field
 
 # Try importing optional dependencies
 try:
@@ -106,8 +107,8 @@ class EnvironmentConfig:
     env_name: str = "CartPole-v1"
     # reward_scaling: int = 1
     obs_mask: str | tuple[int] | None = None
-    init_kwargs: dict = field(default_factory=dict, hash=False)
-    step_kwargs: dict = field(default_factory=dict, hash=False)
+    init_kwargs: dict = dict_field(default={}, hash=False)
+    step_kwargs: dict = dict_field(default={}, hash=False)
     max_ep_length: int = 1000
     batch_size: int | None = None
     transform_wrappers: list = field(default_factory=list, hash=False)
