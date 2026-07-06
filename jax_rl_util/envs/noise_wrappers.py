@@ -52,3 +52,51 @@ class SuddenNoiseWrapper(Wrapper):
                 )
             )
         return state
+
+class ShiftWrapper(Wrapper):
+    """Adds sudden shifts to the observations after a certain number of steps.
+
+    Can optionally restrict shifts to specific observation indices.
+    Supports both flat observations and nested observation trees (e.g. full_obs).
+    """
+
+    def __init__(
+        self,
+        env,
+        shift: float,
+        shift_start: int | None = None,
+        shift_indices: set[int] | None = None,
+    ):
+        super().__init__(env)
+        self.shift_strength = shift
+        self.sudden_shift_start = shift_start
+        self.sudden_shift_indices = shift_indices
+
+    def _make_shift(self, rng, shift_shape):
+        """Apply shift to a single observation array, optionally masking to specific indices."""
+        shift = jnp.full(shift_shape, self.shift_strength)
+        if self.sudden_shift_indices is not None:
+            mask = (
+                jnp.zeros(shift_shape[-1], dtype=bool)
+                .at[jnp.array(list(self.sudden_shift_indices))]
+                .set(True)
+            )
+            shift = jnp.where(mask, shift, 0.0)
+        return shift
+
+    def step(self, state, action: jnp.ndarray, shift_global_step: int, **kwargs):
+        state = self.env.step(state, action, **kwargs)
+        if self.sudden_shift_start is not None:
+            shift_rng, state.info["rng"] = jrandom.split(state.info["rng"])
+            shift_active = shift_global_step >= self.sudden_shift_start
+            state = state.replace(
+                obs=jax.tree.map(
+                    lambda obs: jnp.where(
+                        shift_active,
+                        obs + self._make_shift(shift_rng, obs.shape),
+                        obs,
+                    ),
+                    state.obs,
+                )
+            )
+        return state

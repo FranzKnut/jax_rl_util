@@ -37,7 +37,7 @@ class BraxBaselineConfig(LoggableConfig):
     logging: str | None = "wandb"
     force: bool = True  # Force re-training even if model already exists
     env_config: EnvironmentConfig = field(
-        default_factory=lambda: EnvironmentConfig(env_name="ant")
+        default_factory=lambda: EnvironmentConfig(env_name="humanoid")
     )
     render: bool = True
 
