@@ -43,7 +43,7 @@ class RolloutConfig:
     output_dir: str | None = None  # defaults to "data/{package}/{backend}/{env_name}"
     env_config: EnvironmentConfig = field(
         default_factory=lambda: EnvironmentConfig(
-            env_name="humanoid",
+            env_name="humanoidstandup",
             init_kwargs={
                 "backend": "mjx",
             },

@@ -123,7 +123,7 @@ TRAIN_FNS = {
     ),
     "reacher": functools.partial(
         ppo.train,
-        num_timesteps=50_000_000,
+        num_timesteps=100_000_000,
         num_evals=20,
         reward_scaling=5,
         episode_length=1000,

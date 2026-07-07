@@ -53,6 +53,7 @@ class SuddenNoiseWrapper(Wrapper):
             )
         return state
 
+
 class ShiftWrapper(Wrapper):
     """Adds sudden shifts to the observations after a certain number of steps.
 
@@ -65,20 +66,22 @@ class ShiftWrapper(Wrapper):
         env,
         shift: float,
         shift_start: int | None = None,
+        rampup_steps: int | None = None,
         shift_indices: set[int] | None = None,
     ):
         super().__init__(env)
         self.shift_strength = shift
-        self.sudden_shift_start = shift_start
-        self.sudden_shift_indices = shift_indices
+        self.obs_shift_start = shift_start
+        self.rampup_steps = rampup_steps
+        self.obs_shift_indices = shift_indices
 
-    def _make_shift(self, rng, shift_shape):
+    def _make_shift(self, shift_shape, strength):
         """Apply shift to a single observation array, optionally masking to specific indices."""
-        shift = jnp.full(shift_shape, self.shift_strength)
-        if self.sudden_shift_indices is not None:
+        shift = jnp.full(shift_shape, strength)
+        if self.obs_shift_indices is not None:
             mask = (
                 jnp.zeros(shift_shape[-1], dtype=bool)
-                .at[jnp.array(list(self.sudden_shift_indices))]
+                .at[jnp.array(list(self.obs_shift_indices))]
                 .set(True)
             )
             shift = jnp.where(mask, shift, 0.0)
@@ -86,14 +89,22 @@ class ShiftWrapper(Wrapper):
 
     def step(self, state, action: jnp.ndarray, shift_global_step: int, **kwargs):
         state = self.env.step(state, action, **kwargs)
-        if self.sudden_shift_start is not None:
-            shift_rng, state.info["rng"] = jrandom.split(state.info["rng"])
-            shift_active = shift_global_step >= self.sudden_shift_start
+        if self.obs_shift_start is not None:
+            shift_active = shift_global_step >= self.obs_shift_start
+            if self.rampup_steps is not None:
+                # Linear ramp up of shift strength over rampup_steps
+                rel_step = shift_global_step - self.obs_shift_start
+                strength = self.shift_strength * jnp.clip(
+                    rel_step / self.rampup_steps, 0.0, 1.0
+                )
+            else:
+                strength = self.shift_strength
+
             state = state.replace(
                 obs=jax.tree.map(
                     lambda obs: jnp.where(
                         shift_active,
-                        obs + self._make_shift(shift_rng, obs.shape),
+                        obs + self._make_shift(obs.shape, strength),
                         obs,
                     ),
                     state.obs,
