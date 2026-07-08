@@ -400,7 +400,7 @@ class AimLogger(DummyLogger):
         self.log({name: aim.Image(file_name, caption=caption, format="gif")}, step=step)
 
 
-WANDB_USER = "franzknut"
+WANDB_ENTITY = "franzknut"
 
 
 class WandbLogger(DummyLogger):
@@ -797,7 +797,7 @@ def create_sweep_interactively(
             print("Git hash:", git_hash, file=f)
         print(
             "URL: https://wandb.ai/"
-            + WANDB_USER
+            + WANDB_ENTITY
             + "/"
             + project
             + "/sweeps/"

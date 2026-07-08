@@ -18,7 +18,6 @@ from jax_rl_util.envs.environments import (
     BRAX_ENVS_POS_DIMS,
 )
 import flax
-from brax.envs import State
 
 
 @dataclass
@@ -52,7 +51,7 @@ class RolloutConfig:
         )
     )
     num_rollouts: int = 100
-    max_steps: int = 10_000
+    max_steps: int = 1000
     seed: int = 0
 
 
@@ -200,13 +199,20 @@ def load_rollouts(
         ep_until = jnp.where(
             data["done"].any(axis=1), data["done"].argmax(axis=1), data["done"].shape[1]
         )
-        data = jax.tree.map(lambda x: x[ep_until >= min_ep_length], data)
+        data, file_starts = jax.tree.map(
+            lambda x: x[ep_until >= min_ep_length], (data, file_starts)
+        )
     if min_reward is not None:
         states = Step(**{k: v for k, v in data.items() if k in Step.__annotations__})
-        states = jax.tree.map(lambda x: jnp.swapaxes(x, 0, 1), states)  # Exclude first step for reward computation
+        states = jax.tree.map(
+            lambda x: jnp.swapaxes(x, 0, 1), states
+        )  # Exclude first step for reward computation
         agg_rewards = compute_agg_reward(states, agg_fn=None)
         # Filter rollouts based on minimum reward
-        data = jax.tree.map(lambda x: x[agg_rewards >= min_reward], data)
+        data, file_starts = jax.tree.map(
+            lambda x: x[agg_rewards >= min_reward], (data, file_starts)
+        )
+    print(f"Loaded {len(file_starts)} rollouts from {data_folder} after filtering.")
     return data, file_starts
 
 
