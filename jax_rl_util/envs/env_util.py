@@ -1,6 +1,7 @@
 """Utiliy functions for working with environments."""
 
-from typing import Callable, Iterable
+from typing import Callable, Iterable, Literal
+from functools import partial
 
 import brax.envs
 import gymnasium as gym
@@ -13,7 +14,13 @@ from jax_rl_util.envs.plot_drones import plot_drones
 from jax_rl_util.util.logging_util import tree_stack
 
 
-def compute_agg_reward(states: brax.envs.State, agg_fn: Callable | None = jnp.mean):
+@partial(jax.jit, static_argnames=["agg_fn", "mode"])
+def compute_agg_reward(
+    states: brax.envs.State,
+    agg_fn: Callable | None = jnp.mean,
+    carry_over_reward: jnp.ndarray | None = None,
+    mode: Literal["first", "mean"] = "first",
+):
     """Compute the average reward per episode from a batch of trajectories.
 
     Parameters
@@ -22,21 +29,39 @@ def compute_agg_reward(states: brax.envs.State, agg_fn: Callable | None = jnp.me
         A batch of trajectories from a Brax environment with shape (T, B, ...), where T is the number of timesteps and B is the batch size.
     agg_fn : callable, optional
         A function to aggregate the rewards, by default jnp.mean.
+    carry_over_reward : jnp.ndarray, optional
+        Sometimes we want to compute the reward for an episode that has just ended but the first part is not in states.
+        The reward carried over from earlier can be given for each episode in the batch as tensor of shape (B,).
+        If carry_over_reward is not None, the function retursn also the next carry_over_reward in second position.
+    mode : str, optional
+        Mode of computing the reward. Options are 'first' (default) or 'mean'.
+        'first' computes the reward for the first episode in each batch dimension,
+        while 'mean' computes the mean reward across all episodes in each batch dimension.
     """
     # For episodes that are done early, get the first occurence of done
+    dones = states.done.cumsum(axis=0) if mode == "mean" else states.done
     ep_until = jnp.where(
-        states.done.any(axis=0), states.done.argmax(axis=0), states.done.shape[0]
+        states.done.any(axis=0),
+        dones.argmax(axis=0),
+        states.done.shape[0],
     )
     # Compute cumsum and get value corresponding to end of episode per batch.
     # mean_reward = jnp.sum(traj_batch.reward) / jnp.max(jnp.array([jnp.sum(traj_batch.done), 1]))
-    reward_per_episode = states.reward.cumsum(axis=0)[
+    reward_per_dim = states.reward.cumsum(axis=0)[
         ep_until, jnp.arange(ep_until.shape[-1])
     ]
-    if agg_fn is not None:
-        return agg_fn(reward_per_episode)
+    if carry_over_reward is not None:
+        carry_over_reward = states.reward.cumsum(axis=0)[-1] - reward_per_dim
+        reward_per_dim = reward_per_dim + carry_over_reward
 
-    else:
-        return reward_per_episode
+    if mode == "mean":
+        reward_per_dim = reward_per_dim / jnp.clip(states.done.sum(axis=0), min=1)
+
+    if agg_fn is not None:
+        reward_per_dim = agg_fn(reward_per_dim)
+    if carry_over_reward is not None:
+        return reward_per_dim, carry_over_reward
+    return reward_per_dim
 
 
 def render_brax(env, states, render_steps=100, render_start=0, camera=None):

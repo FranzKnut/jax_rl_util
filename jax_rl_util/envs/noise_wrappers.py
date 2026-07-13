@@ -91,7 +91,7 @@ class ShiftWrapper(Wrapper):
         state = self.env.step(state, action, **kwargs)
         if self.obs_shift_start is not None:
             shift_active = shift_global_step >= self.obs_shift_start
-            if self.rampup_steps is not None:
+            if self.rampup_steps is not None and self.rampup_steps > 0:
                 # Linear ramp up of shift strength over rampup_steps
                 rel_step = shift_global_step - self.obs_shift_start
                 strength = self.shift_strength * jnp.clip(

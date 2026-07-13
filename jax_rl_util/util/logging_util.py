@@ -776,7 +776,7 @@ def create_sweep_interactively(
 
     os.makedirs("logs/sweeps", exist_ok=True)
     with open(f"logs/sweeps/{name}.txt", "w") as f:
-        print("---------------------------------------", file=f)
+        print("---", file=f)
         print("## Sweep " + name, file=f)
         print(
             "Created at: " + time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()),
@@ -840,6 +840,32 @@ def update_sweep_dict(d, u):
     return d
 
 
+def get_all_models_for_sweep(sweep_path):
+    """Get all models for a sweep.
+
+    Parameters
+    ----------
+    sweep_path : str
+        Path to the sweep in the format "user/project/sweep_id".
+
+    Returns
+    -------
+    list
+        List of model paths for all runs in the sweep.
+    """
+    import tqdm
+    import wandb
+
+    models = []
+    for run in tqdm.tqdm(wandb.Api().sweep(sweep_path).runs):
+        artifacts = [r for r in run.logged_artifacts() if r.type == "model"]
+        if len(artifacts) == 0:
+            print(f"Run {run.name} has no model artifacts, skipping.")
+            continue
+        models.append(artifacts[-1].source_qualified_name)
+    return models
+
+
 def get_representative_models_for_sweep(
     sweep_path, select="best", group_key="model_name", metric_key="eval_reward"
 ):
@@ -868,6 +894,9 @@ def get_representative_models_for_sweep(
 
     for run in tqdm.tqdm(wandb.Api().sweep(sweep_path).runs):
         artifacts = [r for r in run.logged_artifacts() if r.type == "model"]
+        if len(artifacts) == 0:
+            print(f"Run {run.name} has no model artifacts, skipping.")
+            continue
         _cfg = run.load_full_data()["config"]
         value = _cfg["policy_config"][group_key]
         metric = run.summary[metric_key]
