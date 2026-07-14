@@ -73,7 +73,7 @@ class PPOParams(LoggableConfig):
     fresh: bool = True  # Only load the hyperparameters, not the model
     record_best_eval_episode: bool = True
     deterministic_eval: bool = True
-    
+
     # Env settings
     env_params: EnvironmentConfig = field(
         default_factory=lambda: EnvironmentConfig(
@@ -125,7 +125,7 @@ class PPOParams(LoggableConfig):
     ent_coef: float = 0e-5
     vf_coef: float = 0.5
     anneal_ent: bool = False
-    
+
     sparsity_penalty: float | None = None
 
 
@@ -404,13 +404,11 @@ class ActorCriticRNN(nn.Module):
             rnn_in = (embedding, dones)
             model = globals()[self.config.model](self.config, name="model")
             if "model" in self.variables:
-                hidden, embedding = model.apply({"params":self.variables["params"]["model"]},
-                    hidden, rnn_in
+                hidden, embedding = model.apply(
+                    {"params": self.variables["params"]["model"]}, hidden, rnn_in
                 )
             else:
-                hidden, embedding = model(
-                    hidden, rnn_in
-                )
+                hidden, embedding = model(hidden, rnn_in)
 
             actor_mean = nn.Dense(
                 self.config.num_units,
@@ -749,7 +747,7 @@ def make_train(
             runner_state, traj_batch = jax.lax.scan(
                 _env_step, runner_state, None, config.eval_steps
             )
-            mean_reward = compute_agg_reward(traj_batch)
+            mean_reward = compute_agg_reward(traj_batch.reward, traj_batch.done)
             return mean_reward, traj_batch
 
         # TRAIN LOOP
@@ -1009,7 +1007,9 @@ def make_train(
             for n in range(env.action_size):
                 loss_info["action_%d_mean" % n] = re_action[:, n].mean()
                 loss_info["action_%d_std" % n] = re_action[:, n].std()
-            loss_info["train_reward"] = compute_agg_reward(traj_batch)
+            loss_info["train_reward"] = compute_agg_reward(
+                traj_batch.reward, traj_batch.done
+            )
             return runner_state, loss_info
 
         runner_state = (
@@ -1092,7 +1092,7 @@ def make_train(
                         pbar.write("Rendering env...")
                         frames = render_frames(
                             _traj.env_state,
-                            env, 
+                            env,
                             config.render_start,
                             config.render_start + config.render_steps,
                         )

@@ -16,7 +16,8 @@ from jax_rl_util.util.logging_util import tree_stack
 
 @partial(jax.jit, static_argnames=["agg_fn", "mode"])
 def compute_agg_reward(
-    states: brax.envs.State,
+    rewards: jnp.ndarray,
+    dones: jnp.ndarray,
     agg_fn: Callable | None = jnp.mean,
     carry_over_reward: jnp.ndarray | None = None,
     mode: Literal["first", "mean"] = "first",
@@ -25,8 +26,10 @@ def compute_agg_reward(
 
     Parameters
     ----------
-    states : brax.envs.State
-        A batch of trajectories from a Brax environment with shape (T, B, ...), where T is the number of timesteps and B is the batch size.
+    rewards : jnp.ndarray
+        A batch of rewards from a Brax environment with shape (T, B), where T is the number of timesteps and B is the batch size.
+    dones : jnp.ndarray
+        A batch of done flags from a Brax environment with shape (T, B), where T is the number of timesteps and B is the batch size.
     agg_fn : callable, optional
         A function to aggregate the rewards, by default jnp.mean.
     carry_over_reward : jnp.ndarray, optional
@@ -39,23 +42,21 @@ def compute_agg_reward(
         while 'mean' computes the mean reward across all episodes in each batch dimension.
     """
     # For episodes that are done early, get the first occurence of done
-    dones = states.done.cumsum(axis=0) if mode == "mean" else states.done
+    _dones = dones.cumsum(axis=0) if mode == "mean" else dones
     ep_until = jnp.where(
-        states.done.any(axis=0),
-        dones.argmax(axis=0),
-        states.done.shape[0],
+        dones.any(axis=0),
+        _dones.argmax(axis=0),
+        dones.shape[0],
     )
     # Compute cumsum and get value corresponding to end of episode per batch.
     # mean_reward = jnp.sum(traj_batch.reward) / jnp.max(jnp.array([jnp.sum(traj_batch.done), 1]))
-    reward_per_dim = states.reward.cumsum(axis=0)[
-        ep_until, jnp.arange(ep_until.shape[-1])
-    ]
+    reward_per_dim = rewards.cumsum(axis=0)[ep_until, jnp.arange(ep_until.shape[-1])]
     if carry_over_reward is not None:
-        carry_over_reward = states.reward.cumsum(axis=0)[-1] - reward_per_dim
+        carry_over_reward = rewards.cumsum(axis=0)[-1] - reward_per_dim
         reward_per_dim = reward_per_dim + carry_over_reward
 
     if mode == "mean":
-        reward_per_dim = reward_per_dim / jnp.clip(states.done.sum(axis=0), min=1)
+        reward_per_dim = reward_per_dim / jnp.clip(dones.sum(axis=0), min=1)
 
     if agg_fn is not None:
         reward_per_dim = agg_fn(reward_per_dim)

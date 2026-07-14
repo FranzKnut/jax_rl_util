@@ -37,7 +37,10 @@ class BraxBaselineConfig(LoggableConfig):
     logging: str | None = "wandb"
     force: bool = True  # Force re-training even if model already exists
     env_config: EnvironmentConfig = field(
-        default_factory=lambda: EnvironmentConfig(env_name="humanoid")
+        default_factory=lambda: EnvironmentConfig(
+            env_name="ant",
+            init_kwargs={"backend": "mjx"},
+        )
     )
     render: bool = True
 
@@ -352,7 +355,7 @@ def train_brax_baseline(config: BraxBaselineConfig, logger=DummyLogger()):
     model_filename = file_dir + f"/trained/{env.package_name}"
     if env.package_name == "brax":
         model_filename += (
-            f"/{config.env_config.step_kwargs.get('backend', 'generalized')}"
+            f"/{config.env_config.init_kwargs.get('backend', 'generalized')}"
         )
     model_filename += f"/{env_name}.ckpt"
 

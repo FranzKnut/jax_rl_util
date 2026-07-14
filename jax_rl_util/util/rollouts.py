@@ -74,6 +74,7 @@ def collect_rollouts(
     rng = jax.random.PRNGKey(config.seed)
 
     if config.env_config.env_name in BRAX_ENVS_POS_DIMS:
+        # We always store the full brax observation here
         config.env_config.init_kwargs["exclude_current_positions_from_observation"] = (
             False
         )
@@ -207,7 +208,7 @@ def load_rollouts(
         states = jax.tree.map(
             lambda x: jnp.swapaxes(x, 0, 1), states
         )  # Exclude first step for reward computation
-        agg_rewards = compute_agg_reward(states, agg_fn=None)
+        agg_rewards = compute_agg_reward(states.reward, states.done, agg_fn=None)
         # Filter rollouts based on minimum reward
         data, file_starts = jax.tree.map(
             lambda x: x[agg_rewards >= min_reward], (data, file_starts)

@@ -1,6 +1,7 @@
 """Utilies for logging."""
 
 import collections
+from collections.abc import Callable
 import contextlib
 import os
 from pprint import pprint
@@ -8,7 +9,7 @@ import traceback
 from argparse import Namespace
 from dataclasses import asdict, dataclass, replace
 from operator import attrgetter
-from typing import Callable, Literal
+from typing import Literal
 import time
 
 import jax
@@ -207,7 +208,7 @@ def check_pytree_structure(tree1, tree2):
     return structure1 == structure2
 
 
-def tree_stack(trees, axis=0, concatenate=False):
+def tree_stack(trees, axis=0):
     """Take a list of trees and stack every corresponding leaf.
 
     For example, given two trees ((a, b), c) and ((a', b'), c'), returns
@@ -215,19 +216,7 @@ def tree_stack(trees, axis=0, concatenate=False):
     Useful for turning a list of objects into something you can feed to a
     vmapped function. Taken from https://gist.github.com/willwhitney/dd89cac6a5b771ccff18b06b33372c75
     """
-    leaves, treedef = jax.tree.flatten(trees[0])
-    leaves_list = [leaves]
-    for tree in trees[1:]:
-        leaves, _ = jax.tree.flatten(tree)
-        leaves_list.append(leaves)
-
-    result_leaves = []
-    leaves_list = list(zip(*leaves_list))
-    for leaf_id, leaf in enumerate(leaves_list):
-        _op = jnp.concatenate if concatenate else jnp.stack
-        leaf = [jnp.atleast_1d(l) for l in leaf]
-        result_leaves.append(_op(leaf, axis=axis))
-    return treedef.unflatten(result_leaves)
+    return jax.tree.map(lambda *leaves: jnp.stack(leaves, axis=axis), *trees)
 
 
 class AimLogger(DummyLogger):
@@ -777,7 +766,7 @@ def create_sweep_interactively(
     os.makedirs("logs/sweeps", exist_ok=True)
     with open(f"logs/sweeps/{name}.txt", "w") as f:
         print("---", file=f)
-        print("## Sweep " + name, file=f)
+        print("## Sweep " + name + " (" + git_hash + ")", file=f)
         print(
             "Created at: " + time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()),
             file=f,
