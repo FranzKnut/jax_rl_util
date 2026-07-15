@@ -1,22 +1,29 @@
 from jax_rl_util.baselines.brax_baselines import load_brax_model
+from pathlib import Path
+import os
 
 
-def load_brax_baseline_inference_fn(env_name: str, backend: str, obs_size, act_size, package="brax"):
+def load_brax_baseline_inference_fn(
+    env_name: str, obs_size, act_size, package: str = "brax", backend: str | None = None
+):
     """Load a trained Brax baseline policy function.
 
     Args:
         env_name (str): The name of the environment.
         obs_size (int): The size of the observation space.
         act_size (int): The size of the action space.
+        package (str): The package name of the environment, default is "brax".
         backend (str): The name of the brax backend.
 
     Returns:
         A pretrained policy function for the given brax environment and backend.
     """
-    import os
 
     file_dir = os.path.dirname(os.path.abspath(__file__))
-    path = file_dir + f"/trained/{package}/{backend}/{env_name}.ckpt"
+    path = Path(file_dir) / "trained" / package
+    if backend is not None:
+        path = path / backend
+    path = path / f"{env_name}.ckpt"
     return load_brax_model(
         path,
         env_name=env_name,

@@ -35,20 +35,19 @@ class BraxBaselineConfig(LoggableConfig):
 
     project_name: str = "brax_baselines"
     logging: str | None = "wandb"
-    force: bool = True  # Force re-training even if model already exists
+    force: bool = False  # Force re-training even if model already exists
     env_config: EnvironmentConfig = field(
         default_factory=lambda: EnvironmentConfig(
-            env_name="ant",
-            init_kwargs={"backend": "mjx"},
+            env_name="PandaPickCube",
+            # init_kwargs={"backend": "mjx"},
         )
     )
+    eval_steps: int = 10000  # Number of steps to evaluate the trained model
     render: bool = True
+    num_timesteps: int | None = (
+        None  # If None, use default timesteps for the environment
+    )
 
-
-ppo_defaults = {
-    "num_timesteps": 1_000_000,
-    "episode_length": 1000,
-}
 
 # We determined some reasonable hyperparameters offline and share them here.
 TRAIN_FNS = {
@@ -270,7 +269,7 @@ def load_brax_model(path, env_name: str, obs_size: int, act_size: int):
     def normalize(x, y):
         return x  # noqa
 
-    _train_fn = TRAIN_FNS.get(env_name, functools.partial(ppo.train, **ppo_defaults))
+    _train_fn = TRAIN_FNS.get(env_name, ppo.train)
 
     if _train_fn.keywords.get("normalize_observations", False):
         normalize = acme.running_statistics.normalize  # noqa
@@ -354,13 +353,14 @@ def train_brax_baseline(config: BraxBaselineConfig, logger=DummyLogger()):
     file_dir = os.path.dirname(os.path.abspath(__file__))
     model_filename = file_dir + f"/trained/{env.package_name}"
     if env.package_name == "brax":
-        model_filename += (
-            f"/{config.env_config.init_kwargs.get('backend', 'generalized')}"
-        )
+        model_filename += f"/{config.env_config.init_kwargs.get('backend')}"
     model_filename += f"/{env_name}.ckpt"
 
     wrap_env_fn = None
-    ppo_config = ppo_defaults.copy()
+    ppo_config = {
+        "num_timesteps": config.num_timesteps,
+        "episode_length": config.env_config.max_ep_length,
+    }
     if env.package_name == "mujoco_playground":
         import mujoco_playground
         from mujoco_playground import wrapper
@@ -368,19 +368,17 @@ def train_brax_baseline(config: BraxBaselineConfig, logger=DummyLogger()):
         wrap_env_fn = wrapper.wrap_for_brax_training
         _env_name = env_name.replace("mujoco_playground", "")
         if _env_name in mujoco_playground.manipulation._envs:
-            from mujoco_playground.config import manipulation_params as default_params
+            from mujoco_playground.config.manipulation_params import brax_ppo_config
         elif _env_name in mujoco_playground.locomotion._envs:
-            from mujoco_playground.config import locomotion_params as default_params
+            from mujoco_playground.config.locomotion_params import brax_ppo_config
         elif _env_name in mujoco_playground.dm_control_suite._envs:
-            from mujoco_playground.config import (
-                dm_control_suite_params as default_params,
-            )
+            from mujoco_playground.config.dm_control_suite_params import brax_ppo_config
         else:
             print(
                 f"Env {_env_name} not found in mujoco_playground registry. Using default PPO params."
             )
         # TODO: allow sac training for mujoco_playground envs
-        ppo_config = default_params.brax_ppo_config(env_name)
+        ppo_config = brax_ppo_config(env_name)
 
     network_factory = ppo.ppo_networks.make_ppo_networks
     if "network_factory" in ppo_config:
@@ -392,6 +390,14 @@ def train_brax_baseline(config: BraxBaselineConfig, logger=DummyLogger()):
     pprint(ppo_config)
     _train_fn = TRAIN_FNS.get(
         env_name, functools.partial(ppo.train, **dict(ppo_config))
+    )
+
+    # Set num_timesteps in _train_fn if specified in config
+    if config.num_timesteps is not None:
+        _train_fn.keywords["num_timesteps"] = config.num_timesteps
+
+    assert isinstance(_train_fn.keywords["num_timesteps"], int), (
+        f"num_timesteps must be an int, got {type(_train_fn.keywords['num_timesteps'])}"
     )
 
     if os.path.exists(model_filename) and not config.force:
@@ -412,7 +418,9 @@ def train_brax_baseline(config: BraxBaselineConfig, logger=DummyLogger()):
     model.save_params(model_filename, params)
     # logger.save_model(model_filename)
     print(f"Saved model to {model_filename}")
-    avg_reward, states = eval_baseline(config.env_config, model_filename)
+    avg_reward, states = eval_baseline(
+        config.env_config, model_filename, steps=config.eval_steps
+    )
     print(f"average reward: {avg_reward}")
     if config.render and not DEBUG:
         print("Rendering...")

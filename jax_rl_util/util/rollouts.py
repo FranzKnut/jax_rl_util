@@ -42,10 +42,10 @@ class RolloutConfig:
     output_dir: str | None = None  # defaults to "data/{package}/{backend}/{env_name}"
     env_config: EnvironmentConfig = field(
         default_factory=lambda: EnvironmentConfig(
-            env_name="humanoidstandup",
-            init_kwargs={
-                "backend": "mjx",
-            },
+            env_name="PandaPickCubeOrientation",
+            # init_kwargs={
+            #     "backend": "mjx",
+            # },
             batch_size=1,
             max_ep_length=100_000,
         )
@@ -84,12 +84,13 @@ def collect_rollouts(
         print_env_info(env_info)
 
     if config.ckpt_type == "brax":
-        backend = config.env_config.init_kwargs.get("backend", "none")
+        backend = config.env_config.init_kwargs.get("backend")
         policy_fn = load_brax_baseline_inference_fn(
             config.env_config.env_name,
-            backend,
             env.observation_size,
             env.action_size,
+            package=env.package_name,
+            backend=backend,
         )
         use_rnn = False
         init_carry = None
