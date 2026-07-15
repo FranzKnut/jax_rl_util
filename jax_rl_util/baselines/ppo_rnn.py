@@ -28,6 +28,7 @@ from flax.linen.initializers import constant, orthogonal
 from flax.training.train_state import TrainState
 from tqdm import trange
 
+from jax_rl_util.envs import EnvironmentConfig, print_env_info
 from jax_rl_util.util.logging_util import (
     DummyLogger,
     LoggableConfig,
@@ -38,9 +39,7 @@ from jax_rl_util.util.logging_util import (
 
 from jax_rl_util.envs.env_util import compute_agg_reward, render_frames
 from jax_rl_util.envs.environments import (
-    EnvironmentConfig,
     make_wrapped_env,
-    print_env_info,
 )
 from jax_rl_util.envs.wrappers import VmapWrapper
 from jax_rl_util.optimizers import OptimizerConfig, make_optimizer_for_model

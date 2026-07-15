@@ -5,7 +5,7 @@ import unittest
 import numpy as np
 
 from jax_rl_util.baselines.ppo_rnn import PPOParams, train_and_eval
-from jax_rl_util.envs.environments import EnvironmentConfig
+from jax_rl_util.envs import EnvironmentConfig
 
 
 class TestPPORNNIntegration(unittest.TestCase):

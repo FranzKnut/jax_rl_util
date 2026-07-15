@@ -15,7 +15,6 @@
 # pylint:disable=g-multiple-import
 """Wrappers to support Brax and Gymnax training."""
 
-from dataclasses import dataclass, field
 
 import brax
 import gymnasium as gym
@@ -23,8 +22,8 @@ from jax import numpy as jnp
 import numpy as np
 
 from jax_rl_util.envs import wrappers
+from jax_rl_util.envs import EnvironmentConfig
 from jax_rl_util.envs.wrappers import Env
-from jax_rl_util.util.config_util import dict_field
 
 # Try importing optional dependencies
 try:
@@ -85,54 +84,6 @@ from .wrappers import (
     RandomizedAutoResetWrapper,
     VmapWrapper,
 )
-
-BRAX_ENVS_POS_DIMS = {"ant": 2, "halfcheetah": 1, "humanoid": 2}
-
-
-@dataclass(frozen=True, eq=True)
-class EnvironmentConfig:
-    """Parameters for gym environments.
-
-    Attributes
-    ----------
-        env_name (str): Environment name. Supported are brax, gymnax, popjym, highway_env, mujoco_playgound and gym envs.
-        obs_mask (Union[str, tuple[int]]): Mask for the observation space.
-        init_kwargs (dict): Initialization arguments for the environment.
-        env_kwargs (dict): Arguments for the env step function.
-        max_ep_length (int): Maximum episode length.
-        batch_size (int): Number of parallel environments.
-        transform_wrappers (list): List of wrappers to apply to the environment.
-    """
-
-    env_name: str = "CartPole-v1"
-    # reward_scaling: int = 1
-    obs_mask: str | tuple[int] | None = None
-    init_kwargs: dict = dict_field(default={}, hash=False)
-    step_kwargs: dict = dict_field(default={}, hash=False)
-    max_ep_length: int = 1000
-    batch_size: int | None = None
-    transform_wrappers: list = field(default_factory=list, hash=False)
-
-    @property
-    def env_kwargs(self):
-        """For backwards compatibility."""
-        return self.step_kwargs
-
-
-def print_env_info(env_info):
-    """Print infos about an environment. Takes env_info from make_env."""
-    env_name, package, OBS_SIZE, DISCRETE, ACT_SIZE, obs_mask, act_clip = (
-        env_info.values()
-    )
-    print(f"ENV:         {env_name}")
-    print(f"package:     {package}")
-    print(f"obs_size:    {OBS_SIZE}")
-    print(f"obs_size:    {OBS_SIZE}")
-    print(f"act_size:    {ACT_SIZE}" + (" (discrete)" if DISCRETE else " (continuous)"))
-    print(f"obs_mask:    {obs_mask}")
-    print(f"act_clip:    {act_clip}")
-    # print(f'value_size: {VALUE_SIZE}')
-
 
 def get_env_specs(env: Env, obs_mask=None):
     """Infer the sizes for the observation and action space given a mask."""
@@ -274,17 +225,15 @@ def make_wrapped_env(
     eval_env : envs.Env, optional
         Eval environment (only if make_eval is True)
     """
-    # TODO refactor:
-    # [ ] Make env_info a field of the env.
 
     env: Env
-    env_name = config.env_name
 
     env = get_env(config)
     OBS_SIZE, DISCRETE, ACT_SIZE, obs_mask, act_clip = get_env_specs(
         env, config.obs_mask
     )
-    env.name = env_name
+    env.name = config.env_name
+    env.env_config = config
 
     for w in config.transform_wrappers:
         env = getattr(wrappers, w)(env)
@@ -310,7 +259,7 @@ def make_wrapped_env(
         env = VmapWrapper(env, batch_size=config.batch_size)
 
     env_info = dict(
-        env_name=env_name,
+        env_name=config.env_name,
         package_name=env.package_name,
         obs_size=OBS_SIZE,
         discrete=DISCRETE,
@@ -318,11 +267,14 @@ def make_wrapped_env(
         obs_mask=config.obs_mask,
         act_clip=act_clip,
     )
+    env.env_info = env_info
 
     if make_eval:
         # Eval env is the same as above but without batching
         eval_env = get_env(config=config, debug=debug)
-        eval_env.name = env_name
+        eval_env.name = config.env_name
+        eval_env.env_config = config
+        eval_env.env_info = env_info
         for w in config.transform_wrappers:
             eval_env = getattr(wrappers, w)(eval_env)
         eval_env = EpisodeWrapper(eval_env, config.max_ep_length, action_repeat=1)

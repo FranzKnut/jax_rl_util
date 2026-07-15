@@ -10,11 +10,10 @@ import numpy as np
 import simple_parsing
 from jax_rtrl.supervised.example_datasets import load_np_files_from_folder
 from jax_rl_util.baselines import load_brax_baseline_inference_fn
+from jax_rl_util.envs import EnvironmentConfig, print_env_info
 from jax_rl_util.envs.env_util import compute_agg_reward
 from jax_rl_util.envs.environments import (
-    EnvironmentConfig,
     make_wrapped_env,
-    print_env_info,
     BRAX_ENVS_POS_DIMS,
 )
 import flax
@@ -42,12 +41,12 @@ class RolloutConfig:
     output_dir: str | None = None  # defaults to "data/{package}/{backend}/{env_name}"
     env_config: EnvironmentConfig = field(
         default_factory=lambda: EnvironmentConfig(
-            env_name="PandaPickCubeOrientation",
-            # init_kwargs={
-            #     "backend": "mjx",
-            # },
-            batch_size=1,
-            max_ep_length=100_000,
+            env_name="inverted_pendulum",
+            init_kwargs={
+                "backend": "mjx",
+            },
+            # batch_size=1,
+            # max_ep_length=100_000,
         )
     )
     num_rollouts: int = 100
@@ -193,8 +192,10 @@ def load_rollouts(
     see load_np_files_from_folder
     """
     data, file_starts = load_np_files_from_folder(
-        data_folder, is_npz=True, num_files=num_files
+        data_folder, is_npz=True, num_files=num_files, stack=True
     )
+    if data["done"].ndim > 2 and data["done"].shape[1] == 1:
+        data = jax.tree.map(lambda x: x[:, 0], data)  # Remove the extra dimension if present
     data["done"][:, 0] = 0  # Ensure done is binary (0 or 1) for consistency
 
     if min_ep_length is not None:

@@ -18,7 +18,9 @@ class Transition(NamedTuple):
     state: jnp.ndarray
 
 
-def calculate_gae(transitions: Transition, values, last_val, gamma=0.99, gae_lambda=0.95):
+def calculate_gae(
+    transitions: Transition, values, last_val, gamma=0.99, gae_lambda=0.95
+):
     """Compute the generalized advantage estimates."""
 
     def _get_advantages(carry, _batch: tuple[Transition, jax.Array]):
@@ -37,10 +39,3 @@ def calculate_gae(transitions: Transition, values, last_val, gamma=0.99, gae_lam
         # unroll=rollout_horizon,
     )
     return advantages, advantages + transitions.value
-
-
-def partvmap(func, *args, **kwargs):
-    """Shorthand for jax.vmap(partial(func, *args, **kwargs))."""
-    if not isinstance(args, Iterable):
-        args = (args,)
-    return jax.vmap(partial(func, *args, **kwargs))

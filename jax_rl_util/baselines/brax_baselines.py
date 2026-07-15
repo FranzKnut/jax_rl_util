@@ -15,7 +15,8 @@ from brax.training.agents.ppo import train as ppo
 from brax.training.agents.sac import train as sac
 from jax import debug
 from jax import numpy as jnp
-from jax_rl_util.envs.environments import EnvironmentConfig, get_env, make_wrapped_env
+from jax_rl_util.envs import EnvironmentConfig
+from jax_rl_util.envs.environments import get_env, make_wrapped_env
 from jax_rl_util.util.logging_util import DummyLogger, LoggableConfig, with_logger
 
 from jax_rl_util.envs.env_util import render_frames
@@ -38,8 +39,9 @@ class BraxBaselineConfig(LoggableConfig):
     force: bool = False  # Force re-training even if model already exists
     env_config: EnvironmentConfig = field(
         default_factory=lambda: EnvironmentConfig(
-            env_name="PandaPickCubeOrientation",
+            env_name="inverted_pendulum",
             init_kwargs={
+                "backend": "spring",
             #     "reward_config": {
             #         "scales": {
             #             "gripper_box": 1.0,  # Gripper goes to the box.
