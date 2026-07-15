@@ -496,7 +496,12 @@ class WandbLogger(DummyLogger):
     def log_model(self, name, path, type="model"):
         """Upload a file to wandb."""
         artifact = wandb.Artifact(name.replace("/", "-"), type=type)
-        artifact.add_dir(path)
+        if os.path.isdir(path):
+            artifact.add_dir(path)
+        elif os.path.isfile(path):
+            artifact.add_file(path)
+        else:
+            print(f"ERROR: Path {path} does not exist, cannot log model.")
         self.run.log_artifact(artifact)
 
     @override
