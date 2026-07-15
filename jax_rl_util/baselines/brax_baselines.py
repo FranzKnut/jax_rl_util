@@ -47,6 +47,9 @@ class BraxBaselineConfig(LoggableConfig):
     num_timesteps: int | None = (
         None  # If None, use default timesteps for the environment
     )
+    num_evals: int | None = (
+        None  # If None, use default number of evaluations for the environment
+    )
 
 
 # We determined some reasonable hyperparameters offline and share them here.
@@ -397,6 +400,9 @@ def train_brax_baseline(config: BraxBaselineConfig, logger=DummyLogger()):
     # Set num_timesteps in _train_fn if specified in config
     if config.num_timesteps is not None:
         _train_fn.keywords["num_timesteps"] = config.num_timesteps
+
+    if config.num_evals is not None:
+        _train_fn.keywords["num_evals"] = config.num_evals
 
     assert isinstance(_train_fn.keywords["num_timesteps"], int), (
         f"num_timesteps must be an int, got {type(_train_fn.keywords['num_timesteps'])}"
