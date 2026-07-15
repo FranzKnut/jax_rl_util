@@ -40,14 +40,14 @@ class BraxBaselineConfig(LoggableConfig):
         default_factory=lambda: EnvironmentConfig(
             env_name="PandaPickCubeOrientation",
             init_kwargs={
-                "reward_config": {
-                    "scales": {
-                        "gripper_box": 1.0,  # Gripper goes to the box.
-                        "box_target": 8.0,  # Box goes to the target mocap.
-                        "no_floor_collision": 0.25,  # Do not collide the gripper with the floor.
-                        "robot_target_qpos": 0.3,  # Arm stays close to target pose.
-                    }
-                }
+            #     "reward_config": {
+            #         "scales": {
+            #             "gripper_box": 1.0,  # Gripper goes to the box.
+            #             "box_target": 8.0,  # Box goes to the target mocap.
+            #             "no_floor_collision": 0.25,  # Do not collide the gripper with the floor.
+            #             "robot_target_qpos": 0.3,  # Arm stays close to target pose.
+            #         }
+            #     }
             },
         )
     )
@@ -301,7 +301,7 @@ def load_brax_model(path, env_name: str, obs_size: int, act_size: int):
             )
 
     _fn = make_inference_fn(obs_size, act_size, preprocess_observations_fn=normalize)(
-        params
+        params, deterministic=True
     )
     return jax.jit(lambda obs, key: _fn(obs, key)[0])
 
