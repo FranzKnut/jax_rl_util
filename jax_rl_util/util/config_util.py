@@ -6,7 +6,14 @@ from typing import Any
 # TODO: add tests (also copy from SAELens)
 # calling this "json_dict" so error messages will reference "json_dict" being invalid
 def json_dict(s: str) -> Any:
-    res = json.loads(s)
+    try:
+        res = json.loads(s)
+    except json.JSONDecodeError as e:
+        print()
+        print(f"ERROR while parsing JSON string: {e}")
+        print(f"Input string: {s}")
+        print()
+        raise e
     if res is not None and not isinstance(res, dict):
         raise ValueError(f"Expected a dictionary, got {type(res)}")
     return res

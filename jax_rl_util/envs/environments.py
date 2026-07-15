@@ -209,7 +209,10 @@ def get_env(config: EnvironmentConfig, debug=0) -> gym.Env:
         env_name.startswith("playground-")
         or env_name in mujoco_playground.registry.ALL_ENVS
     ):
-        env = mujoco_playground.registry.load(env_name.replace("playground-", ""))
+        _name = env_name.replace("playground-", "")
+        env_kwargs = mujoco_playground.registry.get_default_config(_name)
+        env_kwargs["impl"] = "jax"
+        env = mujoco_playground.registry.load(_name, env_kwargs, config.init_kwargs)
         # env = GymnaxBraxWrapper(env, params.env_kwargs)
         env.package_name = "mujoco_playground"
     else:

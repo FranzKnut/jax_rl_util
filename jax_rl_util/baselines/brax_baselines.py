@@ -39,9 +39,19 @@ class BraxBaselineConfig(LoggableConfig):
     env_config: EnvironmentConfig = field(
         default_factory=lambda: EnvironmentConfig(
             env_name="PandaPickCubeOrientation",
-            # init_kwargs={"backend": "mjx"},
+            init_kwargs={
+                "reward_config": {
+                    "scales": {
+                        "gripper_box": 1.0,  # Gripper goes to the box.
+                        "box_target": 8.0,  # Box goes to the target mocap.
+                        "no_floor_collision": 0.25,  # Do not collide the gripper with the floor.
+                        "robot_target_qpos": 0.3,  # Arm stays close to target pose.
+                    }
+                }
+            },
         )
     )
+    
     eval_steps: int = 10000  # Number of steps to evaluate the trained model
     render: bool = True
     num_timesteps: int | None = (
@@ -390,7 +400,7 @@ def train_brax_baseline(config: BraxBaselineConfig, logger=DummyLogger()):
             network_factory, **ppo_config.network_factory
         )
         del ppo_config["network_factory"]
-    pprint(ppo_config)
+
     _train_fn = TRAIN_FNS.get(
         env_name, functools.partial(ppo.train, **dict(ppo_config))
     )
@@ -407,6 +417,11 @@ def train_brax_baseline(config: BraxBaselineConfig, logger=DummyLogger()):
     assert isinstance(_train_fn.keywords["num_timesteps"], int), (
         f"num_timesteps must be an int, got {type(_train_fn.keywords['num_timesteps'])}"
     )
+
+    train_kwargs = _train_fn.keywords.copy()
+    train_kwargs["algorithm"] = algorithm
+    logger.log_params(train_kwargs)
+    pprint(train_kwargs)
 
     if os.path.exists(model_filename) and not config.force:
         print("Loading existing model")
