@@ -262,11 +262,41 @@ MAX_YS = {
 MIN_YS = {"reacher": -100, "pusher": -150}
 
 
+def load_brax_model(path, env_name: str, obs_size: int, act_size: int):
+    """Load a trained model from given path."""
+    params = model.load_params(path)
+
+    def normalize(x, y):
+        return x  # noqa
+
+    _train_fn = TRAIN_FNS.get(env_name, functools.partial(ppo.train))
+
+    if _train_fn.keywords.get("normalize_observations", False):
+        normalize = acme.running_statistics.normalize  # noqa
+
+    if _train_fn.func.__module__.split(".")[-2] == "ppo":
+
+        def make_inference_fn(*args, **kwargs):  # noqa
+            return ppo.ppo_networks.make_inference_fn(
+                ppo.ppo_networks.make_ppo_networks(*args, **kwargs)
+            )
+    elif _train_fn.func.__module__.split(".")[-2] == "sac":
+
+        def make_inference_fn(*args, **kwargs):  # noqa
+            return sac.sac_networks.make_inference_fn(
+                sac.sac_networks.make_sac_networks(*args, **kwargs)
+            )
+
+    _fn = make_inference_fn(obs_size, act_size, preprocess_observations_fn=normalize)(
+        params
+    )
+    return jax.jit(lambda obs, key: _fn(obs, key)[0])
+
+
 # @jax.jit # TODO: refactor to make_eval_fn() -> jitted function
 def eval_baseline(
     env_config,
-    train_kwargs,
-    params,
+    path: str,
     steps=10000,
 ):
     """Evaluate a baseline model on the given environment."""
@@ -276,30 +306,9 @@ def eval_baseline(
     jit_env_step = jax.jit(env.step)
     rng = jax.random.PRNGKey(seed=1)
     state = jit_env_reset(seed=rng)
-
-    def normalize(x, y):
-        return x  # noqa
-
-    if train_kwargs.get("normalize_observations", False):
-        normalize = acme.running_statistics.normalize  # noqa
-
-    if train_kwargs["algorithm"] == "ppo":
-
-        def make_inference_fn(*args, **kwargs):  # noqa
-            return ppo.ppo_networks.make_inference_fn(
-                ppo.ppo_networks.make_ppo_networks(*args, **kwargs)
-            )
-    elif train_kwargs["algorithm"] == "sac":
-
-        def make_inference_fn(*args, **kwargs):  # noqa
-            return sac.sac_networks.make_inference_fn(
-                sac.sac_networks.make_sac_networks(*args, **kwargs)
-            )
-
-    _fn = make_inference_fn(
-        env.observation_size, env.action_size, preprocess_observations_fn=normalize
-    )(params)
-    jit_inference_fn = jax.jit(lambda obs, key: _fn(obs, key)[0])
+    jit_inference_fn = load_brax_model(
+        path, env_config.env_name, env.observation_size, env.action_size
+    )
 
     print(f"Running {steps} steps of {env_config.env_name} environment")
 
@@ -412,10 +421,8 @@ def train_brax_baseline(config: BraxBaselineConfig, logger=DummyLogger()):
         logger.log_model(env_name + "_brax_" + algorithm + "_policy", model_filename)
         print(f"Saved model to {model_filename}")
 
-    train_kwargs = _train_fn.keywords.copy()
-    train_kwargs["algorithm"] = algorithm
     avg_reward, states = eval_baseline(
-        config.env_config, train_kwargs, params, steps=config.eval_steps
+        config.env_config, model_filename, steps=config.eval_steps
     )
     print(f"average reward: {avg_reward}")
     if config.render and not DEBUG:
