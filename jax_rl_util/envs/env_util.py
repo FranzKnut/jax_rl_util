@@ -97,7 +97,6 @@ def render_brax(env, states, render_steps=100, render_start=0, camera=None):
     return image.render_array(env.sys, states_to_render, camera=camera)
 
 
-@deprecated("Deprecated for Brax Envs. Will be removed in the future.")
 def make_obs_mask(
     base_obs_size: int, obs_mask: Iterable[int] | str | int | None = None
 ):
@@ -108,7 +107,6 @@ def make_obs_mask(
     # Flat observation size
     if not isinstance(base_obs_size, int):
         base_obs_size = np.prod(base_obs_size)
-
     if obs_mask == "odd" or obs_mask == "even":
         obs_mask = [i for i in range(base_obs_size) if i % 2 == (obs_mask == "odd")]
     elif obs_mask == "first_half":

@@ -15,15 +15,16 @@
 # pylint:disable=g-multiple-import
 """Wrappers to support Brax and Gymnax training."""
 
-
 import brax
 import gymnasium as gym
 from jax import numpy as jnp
 import numpy as np
+from brax.envs import State as EnvState  # noqa
 
 from jax_rl_util.envs import wrappers
 from jax_rl_util.envs import EnvironmentConfig
 from jax_rl_util.envs.wrappers import Env
+
 
 # Try importing optional dependencies
 try:
@@ -84,6 +85,7 @@ from .wrappers import (
     RandomizedAutoResetWrapper,
     VmapWrapper,
 )
+
 
 def get_env_specs(env: Env, obs_mask=None):
     """Infer the sizes for the observation and action space given a mask."""
