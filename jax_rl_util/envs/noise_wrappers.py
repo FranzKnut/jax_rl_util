@@ -17,16 +17,18 @@ class SuddenNoiseWrapper(Wrapper):
         env,
         noise_strength: float = 1.0,
         sudden_noise_start: int | None = None,
+        rampup_steps: int | None = None,
         sudden_noise_indices: set[int] | None = None,
     ):
         super().__init__(env)
         self.noise_strength = noise_strength
         self.sudden_noise_start = sudden_noise_start
+        self.rampup_steps = rampup_steps
         self.sudden_noise_indices = sudden_noise_indices
 
-    def _make_noise(self, rng, noise_shape):
+    def _make_noise(self, rng, noise_shape, strength):
         """Apply noise to a single observation array, optionally masking to specific indices."""
-        noise = jrandom.normal(rng, shape=noise_shape) * self.noise_strength
+        noise = jrandom.normal(rng, shape=noise_shape) * strength
         if self.sudden_noise_indices is not None:
             mask = (
                 jnp.zeros(noise_shape[-1], dtype=bool)
@@ -41,11 +43,19 @@ class SuddenNoiseWrapper(Wrapper):
         if self.sudden_noise_start is not None:
             noise_rng, state.info["rng"] = jrandom.split(state.info["rng"])
             noise_active = noise_global_step >= self.sudden_noise_start
+            if self.rampup_steps is not None and self.rampup_steps > 0:
+                # Linear ramp up of shift strength over rampup_steps
+                rel_step = noise_global_step - self.sudden_noise_start
+                strength = self.noise_strength * jnp.clip(
+                    rel_step / self.rampup_steps, 0.0, 1.0
+                )
+            else:
+                strength = self.noise_strength
             state = state.replace(
                 obs=jax.tree.map(
                     lambda obs: jnp.where(
                         noise_active,
-                        obs + self._make_noise(noise_rng, obs.shape),
+                        obs + self._make_noise(noise_rng, obs.shape, strength),
                         obs,
                     ),
                     state.obs,
