@@ -473,16 +473,16 @@ class RandomizedAutoResetWrapper(Wrapper):
             reset_state = self.env.reset(_rng)
             reset_state.info["rng"] = rng
 
-            if "full_obs" in state.info:
-                # For compatibility with POBraxWrapper
-                reset_state.info["full_obs"] = reset_state.obs
+            # if "full_obs" in state.info:
+            #     # For compatibility with POBraxWrapper
+            #     reset_state.info["full_obs"] = reset_state.obs
             return reset_state
 
         try:
             state = jax.lax.cond(state.done, _reset, lambda: state)
         except Exception as e:
             raise ValueError(
-                "IO-related error likely due to using a GymJaxWrapper. Try using a batch_size of 1."
+                "If this error is due to a GymJaxWrapper, try using a batch_size of 1."
             ) from e
 
         return state.replace(done=done, reward=reward)

@@ -2,7 +2,7 @@
 
 import os
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import Literal, Callable
 
 import jax
 import jax.numpy as jnp
@@ -18,6 +18,8 @@ from jax_rl_util.envs.environments import (
 )
 import flax
 
+from jax_rl_util.envs.wrappers import Env
+
 
 @dataclass
 class RolloutConfig:
@@ -27,8 +29,7 @@ class RolloutConfig:
         policy_path (str | None): Path to the policy checkpoint. Defaults to "artifacts/baselines/{env_name}.ckpt".
         ckpt_type (Literal["brax", "orbax"]): Type of checkpoint. Defaults to "brax".
         output_dir (str): Directory to save the rollout data. Defaults to "data".
-        env_config (EnvironmentConfig): Configuration for the environment. Defaults to an EnvironmentConfig with
-                                        env_name="inverted_pendulum" and init_kwargs={"backend": "spring"}.
+        env_config (EnvironmentConfig): Configuration for the environment.
         num_rollouts (int): Number of rollouts to collect. Defaults to 100.
         max_steps (int): Maximum number of steps per rollout. Defaults to 1000.
         seed (int): Random seed for reproducibility. Defaults to 0.
@@ -41,7 +42,7 @@ class RolloutConfig:
     output_dir: str | None = None  # defaults to "data/{package}/{backend}/{env_name}"
     env_config: EnvironmentConfig = field(
         default_factory=lambda: EnvironmentConfig(
-            env_name="inverted_pendulum",
+            env_name="ant",
             init_kwargs={
                 "backend": "mjx",
             },
@@ -64,6 +65,63 @@ class Step:
     @property
     def reward(self):
         return self.rew
+
+
+def make_rollout_fn(
+    env: Env, policy_fn: Callable, steps: int, init_carry=None
+) -> Callable:
+    """Make a rollout function for the given environment and policy.
+
+    Parameters
+    ----------
+    env : Environment
+        The environment to rollout in.
+    policy_fn : Callable
+        The policy function to use for action selection. It should take in observations and return actions.
+    steps : int
+        The number of steps to rollout.
+    init_carry : Any
+        The initial carry state for the RNN. If None, the policy is assumed to be feedforward.
+
+    Returns
+    -------
+    Callable
+        A function that takes in a random key and returns the rollout states and actions.
+        Shape of the returned states and actions will be (steps, batch_size, ...).
+        You can transpose them like this: `jax.tree.map(lambda x: x.swapaxes(0, 1), (states, actions))`
+    """
+    use_rnn = init_carry is not None
+
+    def _step(carry, _):
+        print("Tracing _step")
+        prev_state, _hidden, _rng = carry
+        _rng, policy_key = jax.random.split(_rng)
+        obs = prev_state.obs
+        if not getattr(env, "_exclude_current_positions_from_observation", True):
+            obs = obs[:, BRAX_ENVS_POS_DIMS[env.env_name] :]
+        if use_rnn:
+            # Reset when done
+            _hidden = jax.tree.map(
+                jax.tree_util.Partial(jnp.where, jnp.squeeze(prev_state.done)),
+                jax.tree.map(lambda x: x[0], init_carry),
+                _hidden,
+            )
+            _hidden, action = policy_fn(_hidden, obs, policy_key)
+        else:
+            action = policy_fn(obs, policy_key)
+        _state = env.step(prev_state, action)
+        return (_state, _hidden, _rng), (prev_state, action)
+
+    def rollout_fn(rng, init_carry):
+        reset_key, step_key = jax.random.split(rng)
+        env_state = env.reset(reset_key)
+
+        _, (states, actions) = jax.lax.scan(
+            _step, (env_state, init_carry, step_key), xs=None, length=steps
+        )
+        return states, actions
+
+    return rollout_fn
 
 
 def collect_rollouts(
@@ -91,7 +149,6 @@ def collect_rollouts(
             package=env.package_name,
             backend=backend,
         )
-        use_rnn = False
         init_carry = None
     elif config.ckpt_type == "orbax":
         from rtr_iil import make_flax_inference_fn  # FIXME
@@ -99,31 +156,12 @@ def collect_rollouts(
         policy_fn, reset_carry, policy = make_flax_inference_fn(
             config.policy_path, env.observation_size, env.action_size
         )
-        use_rnn = policy.use_rnn
         rng, policy_key = jax.random.split(rng)
         init_carry = (
             reset_carry(policy_key, (env.observation_size,)) if policy.use_rnn else None
         )
 
-    def _step(carry, _):
-        print("Tracing _step")
-        prev_state, _hidden, _rng = carry
-        _rng, policy_key = jax.random.split(_rng)
-        obs = prev_state.obs
-        if not getattr(env, "_exclude_current_positions_from_observation", True):
-            obs = obs[:, BRAX_ENVS_POS_DIMS[config.env_config.env_name] :]
-        if use_rnn:
-            # Reset when done
-            _hidden = jax.tree.map(
-                jax.tree_util.Partial(jnp.where, jnp.squeeze(prev_state.done)),
-                jax.tree.map(lambda x: x[0], init_carry),
-                _hidden,
-            )
-            _hidden, action = policy_fn(_hidden, obs, policy_key)
-        else:
-            action = policy_fn(obs, policy_key)
-        _state = env.step(prev_state, action)
-        return (_state, _hidden, _rng), (prev_state, action)
+    rollout_fn = make_rollout_fn(env, policy_fn, config.max_steps, init_carry)
 
     # Make output directory
     if config.output_dir is None:
@@ -135,12 +173,15 @@ def collect_rollouts(
     total_reward = 0
     total_num_eps = 0
     for i in range(config.num_rollouts):
-        rng, reset_key, step_key = jax.random.split(rng, 3)
-        env_state = env.reset(reset_key)
+        rng, _rng = jax.random.split(rng)
 
-        _, (states, actions) = jax.lax.scan(
-            _step, (env_state, init_carry, step_key), xs=None, length=config.max_steps
-        )
+        states, actions = rollout_fn(_rng, init_carry)
+
+        states = states.replace(
+            done=states.done.at[:, 0].set(0)
+        )  # Ensure done is binary (0 or 1) for consistency
+
+        _reward = compute_agg_reward(states.reward, states.done)
         states, actions = jax.tree.map(lambda x: x.swapaxes(0, 1), (states, actions))
         episode_ends = jnp.where(
             jnp.any(states.done[:, 1:], axis=1),
@@ -148,9 +189,10 @@ def collect_rollouts(
             states.done.shape[-1],
         )
         num_episodes = max(1, len(episode_ends))
-        _reward = np.sum(
-            [np.sum(states.reward[i, :l]) for i, l in enumerate(episode_ends)]
+        print(
+            f"Rollout {i}: Collected {num_episodes} episodes. Average reward: {_reward}. Average Episode length: {jnp.mean(episode_ends)}"
         )
+
         total_reward += _reward
         total_num_eps += num_episodes
         if save_rollouts:
@@ -165,7 +207,9 @@ def collect_rollouts(
             print(
                 f"Saved {num_episodes} episodes to {filename}. Average reward: {_reward / num_episodes}"
             )
-    return total_reward / total_num_eps
+    mean_reward = total_reward / total_num_eps
+    print(f"Collected {total_num_eps} episodes. Average reward: {mean_reward}")
+    return mean_reward, (states, actions)
 
 
 def load_rollouts(
@@ -195,7 +239,9 @@ def load_rollouts(
         data_folder, is_npz=True, num_files=num_files, stack=True
     )
     if data["done"].ndim > 2 and data["done"].shape[1] == 1:
-        data = jax.tree.map(lambda x: x[:, 0], data)  # Remove the extra dimension if present
+        data = jax.tree.map(
+            lambda x: x[:, 0], data
+        )  # Remove the extra dimension if present
     data["done"][:, 0] = 0  # Ensure done is binary (0 or 1) for consistency
 
     if min_ep_length is not None:
@@ -223,5 +269,5 @@ if __name__ == "__main__":
     parser = simple_parsing.ArgumentParser()
     parser.add_arguments(RolloutConfig, dest="config")
     args = parser.parse_args()
-    avg_reward = collect_rollouts(args.config)
+    avg_reward, _ = collect_rollouts(args.config)
     print(f"Average reward: {avg_reward}")

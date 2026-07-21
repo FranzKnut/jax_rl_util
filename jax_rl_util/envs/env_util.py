@@ -8,7 +8,6 @@ import gymnasium as gym
 import jax
 import numpy as np
 from jax import numpy as jnp
-from typing_extensions import deprecated
 
 from jax_rl_util.envs.plot_drones import plot_drones
 from jax_rl_util.util.logging_util import tree_stack

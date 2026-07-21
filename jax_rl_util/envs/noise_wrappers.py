@@ -111,3 +111,44 @@ class ShiftWrapper(Wrapper):
                 )
             )
         return state
+
+
+class SensorFailureWrapper(Wrapper):
+    """Simulates sensor failures by zeroing out specific observation indices after a certain number of steps."""
+
+    def __init__(
+        self,
+        env,
+        failure_start: int | None = None,
+        failure_indices: set[int] | None = None,
+    ):
+        super().__init__(env)
+        self.failure_start = failure_start
+        self.failure_indices = failure_indices
+
+    def _apply_failure(self, obs):
+        """Zero out the specified indices in the observation."""
+        if self.failure_indices is not None:
+            mask = (
+                jnp.zeros(obs.shape[-1], dtype=bool)
+                .at[jnp.array(list(self.failure_indices))]
+                .set(True)
+            )
+            obs = jnp.where(mask, 0.0, obs)
+        return obs
+
+    def step(self, state, action: jnp.ndarray, failure_global_step: int, **kwargs):
+        state = self.env.step(state, action, **kwargs)
+        if self.failure_start is not None:
+            failure_active = failure_global_step >= self.failure_start
+            state = state.replace(
+                obs=jax.tree.map(
+                    lambda obs: jnp.where(
+                        failure_active,
+                        self._apply_failure(obs),
+                        obs,
+                    ),
+                    state.obs,
+                )
+            )
+        return state
