@@ -6,6 +6,7 @@ from typing import Literal, Callable
 
 import jax
 import jax.numpy as jnp
+from jaxtyping import PyTree
 import numpy as np
 import simple_parsing
 from jax_rtrl.supervised.example_datasets import load_np_files_from_folder
@@ -69,7 +70,7 @@ class Step:
 
 def make_rollout_fn(
     env: Env, policy_fn: Callable, steps: int, init_carry=None
-) -> Callable:
+) -> Callable[[jax.random.PRNGKey, PyTree], tuple[PyTree, jnp.ndarray]]:
     """Make a rollout function for the given environment and policy.
 
     Parameters
@@ -190,8 +191,8 @@ def collect_rollouts(
         )
         num_episodes = max(1, len(episode_ends))
         print(
-            f"Rollout {i}: Collected {num_episodes} episodes. Average reward: {_reward}. Average Episode length: {jnp.mean(episode_ends)}"
-        )
+            f"Rollout {i:4d}: Collected {num_episodes} episodes. Average reward: {_reward:.2e}. Average Episode length: {jnp.mean(episode_ends):.2e}"
+        , end=" ")
 
         total_reward += _reward
         total_num_eps += num_episodes
@@ -205,7 +206,7 @@ def collect_rollouts(
                 done=states.done,
             )
             print(
-                f"Saved {num_episodes} episodes to {filename}. Average reward: {_reward / num_episodes}"
+                f"Saved to {filename}"
             )
     mean_reward = total_reward / total_num_eps
     print(f"Collected {total_num_eps} episodes. Average reward: {mean_reward}")
