@@ -18,15 +18,15 @@ from flax import struct
 
 @struct.dataclass
 class EnvParams(gymnax.environments.EnvParams):
-    force_mag: float = 10.0
+    force_mag: float = 5.0
     tau: float = 0.02  # seconds between state updates
     length: float = 0.5  # length to center of mass
     masscart: float = 1.0
     masspole: float = 0.1
     x_threshold: float = 2.4
     theta_threshold_radians: float = 12 * 2 * jnp.pi / 360
-    pole_friction: float = 2.1e-3  # kg m² / s²
-    momentum_inertia: float = 1.05e-2  # kg m²
+    pole_friction: float = 0.01  # kg m² / s²
+    momentum_inertia: float = 1.0e-2  # kg m²
 
 
 class ContinuousCartPoleEnv(CartPoleEnv, gymnax.environments.environment.Environment):
@@ -220,7 +220,7 @@ class CartPoleSwingUp(ContinuousCartPoleEnv):
         theta_dot_penalty_factor=1e-3,
         switch_x_dir_penalty_factor=1e-2,
     ):
-        super().__init__(task="swingup-dv")
+        super().__init__(task="swingup")
         self.start_theta = np.pi
         self.theta_threshold_radians = np.pi / 2
         self.offcenter_penalty_factor = offcenter_penalty_factor

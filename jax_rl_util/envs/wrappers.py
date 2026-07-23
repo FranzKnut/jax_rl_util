@@ -156,7 +156,7 @@ class GymWrapper(Wrapper, gym.Env):
             self._state.obs,
             self._state.reward,
             bool(self._state.done),
-            bool(self._state.info["truncation"]),
+            bool(self._state.info.get("truncation", False)),
             self._state.info,
         )
 
