@@ -862,7 +862,11 @@ def get_all_models_for_sweep(sweep_path):
 
 
 def get_representative_models_for_sweep(
-    sweep_path, select="best", group_key="model_name", metric_key="eval_reward"
+    sweep_path,
+    select="best",
+    group_keys: str | list[str] = "model_name",
+    metric_key="eval_reward",
+    filter_fn: Callable | None = None,
 ):
     """Get representative models for a sweep grouped by the given key.
 
@@ -873,10 +877,12 @@ def get_representative_models_for_sweep(
     select : str, optional
         How to select the representative model for each group.
         Options are "best", "worst", "median". By default "best".
-    group_key : str, optional
-        Key to group by. By default "model_name".
+    group_keys : str | list[str], optional
+        Key(s) to group by. By default "model_name".
     metric_key : str, optional
         Key to use for selecting the representative model. By default "eval_reward".
+    filter_fn : Callable | None, optional
+        Function to filter runs. Should take a run object and return True if the run should be included.
 
     Returns
     -------
@@ -892,13 +898,17 @@ def get_representative_models_for_sweep(
         if len(artifacts) == 0:
             print(f"Run {run.name} has no model artifacts, skipping.")
             continue
+        if filter_fn and not filter_fn(run):
+            continue
         _cfg = run.load_full_data()["config"]
-        value = _cfg["policy_config"][group_key]
+        if isinstance(group_keys, str):
+            group_keys = [group_keys]
+        values = [_cfg["policy_config"].get(key) for key in group_keys]
         metric = run.summary[metric_key]
-        if value not in models:
-            models[value] = pd.DataFrame(columns=[metric_key, "model_path"])
+        if tuple(values) not in models:
+            models[tuple(values)] = pd.DataFrame(columns=[metric_key, "model_path"])
 
-        models[value].loc[len(models[value])] = {
+        models[tuple(values)].loc[len(models[tuple(values)])] = {
             metric_key: metric,
             "model_path": artifacts[-1].source_qualified_name,
         }
