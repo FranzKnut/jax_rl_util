@@ -121,12 +121,28 @@ class GymBraxWrapper(Wrapper):
         return state.replace(pipeline_state=obs, obs=obs, reward=reward, done=done)
 
 
+class GymnaxGymSpaceAdapter(gym.Space):
+    """Adapter to convert Gymnax spaces to Gym spaces."""
+
+    def __init__(self, gymnax_space):
+        self.gymnax_space = gymnax_space
+        super().__init__(gymnax_space.shape, gymnax_space.dtype)
+
+    def contains(self, x):
+        return self.gymnax_space.contains(x)
+
+
 class GymWrapper(Wrapper, gym.Env):
     """A wrapper that converts Env to one that follows Gym API."""
 
     def __init__(self, env: Env, render_mode: str = None):
         Wrapper.__init__(self, env)
         self.render_mode = render_mode
+
+    @property
+    def action_space(self, params=None):
+        """Get action size."""
+        return GymnaxGymSpaceAdapter(self.env.action_space)
 
     def reset(self, seed: int = None, options=None):
         self._seed = jrandom.PRNGKey(seed or 0)

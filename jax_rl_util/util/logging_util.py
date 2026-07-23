@@ -208,7 +208,7 @@ def check_pytree_structure(tree1, tree2):
     return structure1 == structure2
 
 
-def tree_stack(trees, axis=0):
+def tree_stack(trees, axis=0, concatenate=False):
     """Take a list of trees and stack every corresponding leaf.
 
     For example, given two trees ((a, b), c) and ((a', b'), c'), returns
@@ -216,7 +216,8 @@ def tree_stack(trees, axis=0):
     Useful for turning a list of objects into something you can feed to a
     vmapped function. Taken from https://gist.github.com/willwhitney/dd89cac6a5b771ccff18b06b33372c75
     """
-    return jax.tree.map(lambda *leaves: jnp.stack(leaves, axis=axis), *trees)
+    _op = jnp.concatenate if concatenate else jnp.stack
+    return jax.tree.map(lambda *leaves: _op(leaves, axis=axis), *trees)
 
 
 class AimLogger(DummyLogger):
