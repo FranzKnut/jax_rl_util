@@ -63,7 +63,7 @@ class TestSuddenNoiseWrapper(unittest.TestCase):
     def test_no_noise_when_start_is_none(self):
         """When sudden_noise_start is None, observations should never be modified."""
         env = SuddenNoiseWrapper(
-            self.base_env, noise_strength=1.0, sudden_noise_start=None
+            self.base_env, noise_strength=1.0, noise_start=None
         )
         state = env.reset(self.rng)
 
@@ -80,7 +80,7 @@ class TestSuddenNoiseWrapper(unittest.TestCase):
     def test_noise_from_step_zero(self):
         """When sudden_noise_start=0, noise should be applied from the very first step."""
         env = SuddenNoiseWrapper(
-            self.base_env, noise_strength=1.0, sudden_noise_start=0
+            self.base_env, noise_strength=1.0, noise_start=0
         )
         state = env.reset(self.rng)
 
@@ -103,7 +103,7 @@ class TestSuddenNoiseWrapper(unittest.TestCase):
         """
         noise_start = 5
         env = SuddenNoiseWrapper(
-            self.base_env, noise_strength=1.0, sudden_noise_start=noise_start
+            self.base_env, noise_strength=1.0, noise_start=noise_start
         )
         state = env.reset(self.rng)
 
@@ -133,7 +133,7 @@ class TestSuddenNoiseWrapper(unittest.TestCase):
     def test_noise_strength_zero(self):
         """When noise_strength=0, observations should be unchanged even after threshold."""
         env = SuddenNoiseWrapper(
-            self.base_env, noise_strength=0.0, sudden_noise_start=0
+            self.base_env, noise_strength=0.0, noise_start=0
         )
         state = env.reset(self.rng)
 
@@ -150,7 +150,7 @@ class TestSuddenNoiseWrapper(unittest.TestCase):
         """Noise magnitude should scale with noise_strength."""
         noise_strength = 2.0
         env = SuddenNoiseWrapper(
-            self.base_env, noise_strength=noise_strength, sudden_noise_start=0
+            self.base_env, noise_strength=noise_strength, noise_start=0
         )
         state = env.reset(self.rng)
 
@@ -166,7 +166,7 @@ class TestSuddenNoiseWrapper(unittest.TestCase):
 
         # Run again with a different seed to verify noise is random
         env2 = SuddenNoiseWrapper(
-            self.base_env, noise_strength=noise_strength, sudden_noise_start=0
+            self.base_env, noise_strength=noise_strength, noise_start=0
         )
         state2 = env2.reset(jrandom.PRNGKey(123))
         state2 = env2.step(state2, action, noise_global_step=0)
@@ -181,7 +181,7 @@ class TestSuddenNoiseWrapper(unittest.TestCase):
     def test_noise_shape_matches_obs(self):
         """Noise should have the same shape as the observation."""
         env = SuddenNoiseWrapper(
-            self.base_env, noise_strength=1.0, sudden_noise_start=0
+            self.base_env, noise_strength=1.0, noise_start=0
         )
         state = env.reset(self.rng)
 
@@ -193,10 +193,10 @@ class TestSuddenNoiseWrapper(unittest.TestCase):
     def test_noise_is_deterministic_with_same_seed(self):
         """Running the same sequence with the same seed should produce identical noise."""
         env1 = SuddenNoiseWrapper(
-            self.base_env, noise_strength=1.0, sudden_noise_start=0
+            self.base_env, noise_strength=1.0, noise_start=0
         )
         env2 = SuddenNoiseWrapper(
-            self.base_env, noise_strength=1.0, sudden_noise_start=0
+            self.base_env, noise_strength=1.0, noise_start=0
         )
 
         def run_episode(env, rng):
@@ -220,7 +220,7 @@ class TestSuddenNoiseWrapper(unittest.TestCase):
     def test_noise_does_not_affect_internal_env_state(self):
         """The wrapper should not modify the underlying env's pipeline_state."""
         env = SuddenNoiseWrapper(
-            self.base_env, noise_strength=1.0, sudden_noise_start=0
+            self.base_env, noise_strength=1.0, noise_start=0
         )
         state = env.reset(self.rng)
 
@@ -238,7 +238,7 @@ class TestSuddenNoiseWrapper(unittest.TestCase):
         """Once past sudden_noise_start, noise should be applied on every subsequent step."""
         noise_start = 3
         env = SuddenNoiseWrapper(
-            self.base_env, noise_strength=1.0, sudden_noise_start=noise_start
+            self.base_env, noise_strength=1.0, noise_start=noise_start
         )
         state = env.reset(self.rng)
 
@@ -267,7 +267,7 @@ class TestSuddenNoiseWrapper(unittest.TestCase):
         env = SuddenNoiseWrapper(
             self.base_env,
             noise_strength=1.0,
-            sudden_noise_start=0,
+            noise_start=0,
             sudden_noise_indices=indices,
         )
         state = env.reset(self.rng)
@@ -288,7 +288,7 @@ class TestSuddenNoiseWrapper(unittest.TestCase):
         env = SuddenNoiseWrapper(
             self.base_env,
             noise_strength=1.0,
-            sudden_noise_start=0,
+            noise_start=0,
             sudden_noise_indices=indices,
         )
         state = env.reset(self.rng)
@@ -307,7 +307,7 @@ class TestSuddenNoiseWrapper(unittest.TestCase):
         env = SuddenNoiseWrapper(
             self.base_env,
             noise_strength=1.0,
-            sudden_noise_start=0,
+            noise_start=0,
             sudden_noise_indices=indices,
         )
         state = env.reset(self.rng)
@@ -326,7 +326,7 @@ class TestSuddenNoiseWrapper(unittest.TestCase):
         env = SuddenNoiseWrapper(
             self.base_env,
             noise_strength=0.0,
-            sudden_noise_start=0,
+            noise_start=0,
             sudden_noise_indices=indices,
         )
         state = env.reset(self.rng)

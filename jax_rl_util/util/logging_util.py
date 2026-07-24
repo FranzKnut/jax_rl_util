@@ -736,6 +736,12 @@ def create_sweep_interactively(
     """
     import wandb
 
+    pprint(sweep_config)
+    # Estimate number of runs and upload to wandb
+    est_runs = count_combinations(sweep_config["parameters"])
+    print("Est. runs:", est_runs)
+    name = input(f'Enter custom sweep name ("{sweep_config.get("name", "")}"):  ')
+
     if config_repo_dir is not None:
         # Check if the directory is a git repository and has no uncommited changes
         git_status = (
@@ -751,12 +757,6 @@ def create_sweep_interactively(
             os.popen(f"git -C {config_repo_dir} rev-parse --short HEAD").read().strip()
         )
         print(f"Git hash for sweep: {git_hash}")
-
-    pprint(sweep_config)
-    # Estimate number of runs and upload to wandb
-    est_runs = count_combinations(sweep_config["parameters"])
-    print("Est. runs:", est_runs)
-    name = input(f'Enter custom sweep name ("{sweep_config.get("name", "")}"):  ')
 
     if name:
         sweep_config["name"] = name
@@ -835,13 +835,15 @@ def update_sweep_dict(d, u):
     return d
 
 
-def get_all_models_for_sweep(sweep_path):
+def get_all_models_for_sweep(sweep_path, filter_fn: Callable | None = None):
     """Get all models for a sweep.
 
     Parameters
     ----------
     sweep_path : str
         Path to the sweep in the format "user/project/sweep_id".
+    filter_fn : Callable | None, optional
+        Function to filter runs. Should take a run object and return True if the run should be included.
 
     Returns
     -------
@@ -856,6 +858,8 @@ def get_all_models_for_sweep(sweep_path):
         artifacts = [r for r in run.logged_artifacts() if r.type == "model"]
         if len(artifacts) == 0:
             print(f"Run {run.name} has no model artifacts, skipping.")
+            continue
+        if filter_fn and not filter_fn(run):
             continue
         models.append(artifacts[-1].source_qualified_name)
     return models

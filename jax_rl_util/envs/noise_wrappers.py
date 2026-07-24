@@ -16,15 +16,15 @@ class SuddenNoiseWrapper(Wrapper):
         self,
         env,
         noise_strength: float = 1.0,
-        sudden_noise_start: int | None = None,
+        noise_start: int | None = None,
         rampup_steps: int | None = None,
-        sudden_noise_indices: set[int] | None = None,
+        noise_indices: set[int] | None = None,
     ):
         super().__init__(env)
         self.noise_strength = noise_strength
-        self.sudden_noise_start = sudden_noise_start
+        self.sudden_noise_start = noise_start
         self.rampup_steps = rampup_steps
-        self.sudden_noise_indices = sudden_noise_indices
+        self.sudden_noise_indices = noise_indices
 
     def _make_noise(self, rng, noise_shape, strength):
         """Apply noise to a single observation array, optionally masking to specific indices."""
