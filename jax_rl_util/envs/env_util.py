@@ -9,7 +9,6 @@ import jax
 import numpy as np
 from jax import numpy as jnp
 
-from jax_rl_util.envs.plot_drones import plot_drones
 from jax_rl_util.util.logging_util import tree_stack
 
 
@@ -154,6 +153,8 @@ def render_frames(
     try:
         is_brax = env.name.startswith("brax-") or env.name in brax.envs._envs
         if env.name == "dronegym":
+            from jax_rl_util.envs.plot_drones import plot_drones
+
             states = tree_stack(states)
             data = states.pipeline_state
             data["reward"] = states.reward
