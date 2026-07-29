@@ -1,22 +1,30 @@
-"""Tests for the SuddenNoiseWrapper."""
+"""Tests for the observation-corruption wrappers in noise_wrappers.py."""
 
 import unittest
 
-import jax
 import jax.numpy as jnp
 import jax.random as jrandom
 from brax.envs.base import State
 
-from jax_rl_util.envs.noise_wrappers import SuddenNoiseWrapper
+from jax_rl_util.envs.noise_wrappers import (
+    SensorFailureWrapper,
+    ShiftWrapper,
+    SuddenNoiseWrapper,
+)
 from jax_rl_util.envs.wrappers import Wrapper
 
 
 class _DummyEnv(Wrapper):
-    """A minimal environment that tracks step count for testing wrappers."""
+    """A minimal environment whose obs deterministically equals the (pre-increment) step count.
 
-    def __init__(self, obs_size: int = 4, action_size: int = 2):
+    If `tree_obs` is set, obs is a dict of two identical arrays instead of a single array,
+    to exercise the wrappers' `jax.tree.map`-based support for nested observations.
+    """
+
+    def __init__(self, obs_size: int = 4, action_size: int = 2, tree_obs: bool = False):
         self._obs_size = obs_size
         self._action_size = action_size
+        self._tree_obs = tree_obs
 
     @property
     def observation_size(self) -> int:
@@ -26,23 +34,22 @@ class _DummyEnv(Wrapper):
     def action_size(self) -> int:
         return self._action_size
 
+    def _make_obs(self, value):
+        obs = jnp.ones(self._obs_size) * value
+        return {"a": obs, "b": obs} if self._tree_obs else obs
+
     def reset(self, rng: jnp.ndarray) -> State:
-        obs = jnp.zeros(self._obs_size)
-        state = State(
-            pipeline_state=obs,
-            obs=obs,
+        return State(
+            pipeline_state=self._make_obs(0),
+            obs=self._make_obs(0),
             reward=jnp.zeros(1),
             done=jnp.zeros((), dtype=jnp.bool),
             info={"steps": jnp.zeros((), dtype=jnp.int32), "rng": rng},
         )
-        return state
 
     def step(self, state: State, action: jnp.ndarray) -> State:
-        obs = (
-            jnp.ones(self._obs_size) * state.info["steps"]
-        )  # deterministic obs based on step count
         new_state = state.replace(
-            obs=obs,
+            obs=self._make_obs(state.info["steps"]),
             reward=jnp.ones(1),
             done=jnp.zeros((), dtype=jnp.bool),
         )
@@ -58,287 +65,250 @@ class TestSuddenNoiseWrapper(unittest.TestCase):
         self.obs_size = 4
         self.action_size = 2
         self.base_env = _DummyEnv(obs_size=self.obs_size, action_size=self.action_size)
+        self.action = jnp.zeros(self.action_size)
         self.rng = jrandom.PRNGKey(42)
 
     def test_no_noise_when_start_is_none(self):
-        """When sudden_noise_start is None, observations should never be modified."""
-        env = SuddenNoiseWrapper(
-            self.base_env, noise_strength=1.0, noise_start=None
-        )
+        """When noise_start is None, observations should never be modified."""
+        env = SuddenNoiseWrapper(self.base_env, noise_strength=1.0, noise_start=None)
         state = env.reset(self.rng)
-
-        for i in range(10):
-            action = jnp.zeros(self.action_size)
-            state = env.step(state, action, noise_global_step=i)
-            # The dummy env sets obs = ones * step_count, so obs should equal step count
+        for _ in range(3):
+            state = env.step(state, self.action)
             expected_obs = jnp.ones(self.obs_size) * (state.info["steps"] - 1)
-            self.assertTrue(
-                jnp.allclose(state.obs, expected_obs),
-                f"Expected {expected_obs}, got {state.obs} at step {state.info['steps']}",
-            )
+            self.assertTrue(jnp.allclose(state.obs, expected_obs))
 
-    def test_noise_from_step_zero(self):
-        """When sudden_noise_start=0, noise should be applied from the very first step."""
-        env = SuddenNoiseWrapper(
-            self.base_env, noise_strength=1.0, noise_start=0
-        )
+    def test_noise_threshold_behavior(self):
+        """Noise should only be applied once steps >= noise_start (checked post-increment)."""
+        noise_start = 3
+        env = SuddenNoiseWrapper(self.base_env, noise_strength=1.0, noise_start=noise_start)
         state = env.reset(self.rng)
 
-        action = jnp.zeros(self.action_size)
-        state = env.step(state, action, noise_global_step=0)
-
-        # The dummy env returns obs = ones * 0 at step 0, so obs should be 0 + noise
-        expected_base = jnp.zeros(self.obs_size)
-        self.assertFalse(
-            jnp.allclose(state.obs, expected_base),
-            "Observations should be different from base when noise is applied",
-        )
-
-    def test_noise_starts_after_threshold(self):
-        """Noise should only be applied after sudden_noise_start steps.
-
-        Note: The wrapper checks state.info['steps'] >= sudden_noise_start
-        *after* the env step has incremented steps. So noise_start=5 means
-        noise starts when steps >= 5, which occurs after the 5th env.step call.
-        """
-        noise_start = 5
-        env = SuddenNoiseWrapper(
-            self.base_env, noise_strength=1.0, noise_start=noise_start
-        )
-        state = env.reset(self.rng)
-
-        total_steps = noise_start + 3
-        for step_idx in range(total_steps):
-            action = jnp.zeros(self.action_size)
-            state = env.step(state, action, noise_global_step=step_idx)
-
-            # After the step, steps counter = step_idx + 1 (reset sets to 0, then step increments)
+        for step_idx in range(noise_start + 3):
+            state = env.step(state, self.action)
             steps_counter = state.info["steps"]
-            # The dummy env sets obs = ones * (steps - 1) = ones * step_idx
             expected_base = jnp.ones(self.obs_size) * step_idx
+            with self.subTest(step_idx=step_idx):
+                if steps_counter <= noise_start:
+                    self.assertTrue(jnp.allclose(state.obs, expected_base))
+                else:
+                    self.assertFalse(jnp.allclose(state.obs, expected_base))
 
-            if steps_counter <= noise_start:
-                # Before threshold: obs should match the base env exactly
-                self.assertTrue(
-                    jnp.allclose(state.obs, expected_base),
-                    f"At step_idx {step_idx} (steps={steps_counter}): expected {expected_base}, got {state.obs}",
+    def test_noise_strength_zero_yields_no_noise(self):
+        """With noise_strength=0, obs should be unchanged, with or without an index mask."""
+        for indices in (None, {0, 1}):
+            with self.subTest(indices=indices):
+                env = SuddenNoiseWrapper(
+                    self.base_env, noise_strength=0.0, noise_start=0, noise_indices=indices
                 )
-            else:
-                # At and after threshold: obs should differ from base
-                self.assertFalse(
-                    jnp.allclose(state.obs, expected_base),
-                    f"At step_idx {step_idx} (steps={steps_counter}): expected noise, got {state.obs}",
-                )
+                state = env.reset(self.rng)
+                state = env.step(state, self.action)
+                self.assertTrue(jnp.allclose(state.obs, jnp.zeros(self.obs_size)))
 
-    def test_noise_strength_zero(self):
-        """When noise_strength=0, observations should be unchanged even after threshold."""
-        env = SuddenNoiseWrapper(
-            self.base_env, noise_strength=0.0, noise_start=0
-        )
-        state = env.reset(self.rng)
+    def test_noise_scales_and_is_random(self):
+        """Noise should be non-zero, shaped like obs, and differ across seeds."""
+        env = SuddenNoiseWrapper(self.base_env, noise_strength=2.0, noise_start=0)
 
-        for i in range(5):
-            action = jnp.zeros(self.action_size)
-            state = env.step(state, action, noise_global_step=i)
-            expected_obs = jnp.ones(self.obs_size) * (state.info["steps"] - 1)
-            self.assertTrue(
-                jnp.allclose(state.obs, expected_obs),
-                f"With zero noise strength, expected {expected_obs}, got {state.obs}",
-            )
+        state1 = env.step(env.reset(jrandom.PRNGKey(1)), self.action)
+        state2 = env.step(env.reset(jrandom.PRNGKey(2)), self.action)
 
-    def test_noise_strength_scaling(self):
-        """Noise magnitude should scale with noise_strength."""
-        noise_strength = 2.0
-        env = SuddenNoiseWrapper(
-            self.base_env, noise_strength=noise_strength, noise_start=0
-        )
-        state = env.reset(self.rng)
+        self.assertEqual(state1.obs.shape, (self.obs_size,))
+        self.assertFalse(jnp.allclose(state1.obs, jnp.zeros(self.obs_size)))
+        self.assertFalse(jnp.allclose(state1.obs, state2.obs))
 
-        action = jnp.zeros(self.action_size)
-        state = env.step(state, action, noise_global_step=0)
+    def test_noise_reproducible_with_same_seed(self):
+        """The same seed should produce an identical noise trajectory."""
 
-        # The noise should be non-zero and scaled by noise_strength
-        noise = state.obs  # base obs is zeros at step 0
-        self.assertFalse(
-            jnp.allclose(noise, jnp.zeros(self.obs_size)),
-            "Noise should be non-zero",
-        )
-
-        # Run again with a different seed to verify noise is random
-        env2 = SuddenNoiseWrapper(
-            self.base_env, noise_strength=noise_strength, noise_start=0
-        )
-        state2 = env2.reset(jrandom.PRNGKey(123))
-        state2 = env2.step(state2, action, noise_global_step=0)
-        noise2 = state2.obs
-
-        # Different seeds should produce different noise
-        self.assertFalse(
-            jnp.allclose(noise, noise2),
-            "Different seeds should produce different noise",
-        )
-
-    def test_noise_shape_matches_obs(self):
-        """Noise should have the same shape as the observation."""
-        env = SuddenNoiseWrapper(
-            self.base_env, noise_strength=1.0, noise_start=0
-        )
-        state = env.reset(self.rng)
-
-        action = jnp.zeros(self.action_size)
-        state = env.step(state, action, noise_global_step=0)
-
-        self.assertEqual(state.obs.shape, (self.obs_size,))
-
-    def test_noise_is_deterministic_with_same_seed(self):
-        """Running the same sequence with the same seed should produce identical noise."""
-        env1 = SuddenNoiseWrapper(
-            self.base_env, noise_strength=1.0, noise_start=0
-        )
-        env2 = SuddenNoiseWrapper(
-            self.base_env, noise_strength=1.0, noise_start=0
-        )
-
-        def run_episode(env, rng):
+        def run_episode(rng):
+            env = SuddenNoiseWrapper(self.base_env, noise_strength=1.0, noise_start=0)
             state = env.reset(rng)
-            action = jnp.zeros(self.action_size)
             obs_list = []
-            for i in range(5):
-                state = env.step(state, action, noise_global_step=i)
+            for _ in range(5):
+                state = env.step(state, self.action)
                 obs_list.append(state.obs)
             return jnp.stack(obs_list)
 
         rng = jrandom.PRNGKey(99)
-        traj1 = run_episode(env1, rng)
-        traj2 = run_episode(env2, rng)
-
-        self.assertTrue(
-            jnp.allclose(traj1, traj2),
-            "Same seed should produce identical trajectories",
-        )
-
-    def test_noise_does_not_affect_internal_env_state(self):
-        """The wrapper should not modify the underlying env's pipeline_state."""
-        env = SuddenNoiseWrapper(
-            self.base_env, noise_strength=1.0, noise_start=0
-        )
-        state = env.reset(self.rng)
-
-        action = jnp.zeros(self.action_size)
-        state = env.step(state, action, noise_global_step=0)
-
-        # pipeline_state should still be the base env's output (no noise)
-        expected_pipeline = jnp.zeros(self.obs_size)  # step 0 in dummy env
-        self.assertTrue(
-            jnp.allclose(state.pipeline_state, expected_pipeline),
-            "pipeline_state should not be affected by noise wrapper",
-        )
-
-    def test_noise_applied_every_step_after_start(self):
-        """Once past sudden_noise_start, noise should be applied on every subsequent step."""
-        noise_start = 3
-        env = SuddenNoiseWrapper(
-            self.base_env, noise_strength=1.0, noise_start=noise_start
-        )
-        state = env.reset(self.rng)
-
-        total_steps = noise_start + 4
-        for step_idx in range(total_steps):
-            action = jnp.zeros(self.action_size)
-            state = env.step(state, action, noise_global_step=step_idx)
-
-            steps_counter = state.info["steps"]
-            expected_base = jnp.ones(self.obs_size) * step_idx
-
-            if steps_counter <= noise_start:
-                self.assertTrue(
-                    jnp.allclose(state.obs, expected_base),
-                    f"At step_idx {step_idx} (steps={steps_counter}): expected no noise",
-                )
-            else:
-                self.assertFalse(
-                    jnp.allclose(state.obs, expected_base),
-                    f"At step_idx {step_idx} (steps={steps_counter}): noise should be applied",
-                )
+        self.assertTrue(jnp.allclose(run_episode(rng), run_episode(rng)))
 
     def test_noise_indices_mask(self):
-        """When sudden_noise_indices is set, only the specified indices should be noisy."""
+        """Only indices in noise_indices should receive noise; others stay exactly at base value."""
+        cases = {
+            "subset": {0, 2},
+            "single": {1},
+            "all": {0, 1, 2, 3},
+        }
+        for name, indices in cases.items():
+            with self.subTest(case=name):
+                env = SuddenNoiseWrapper(
+                    self.base_env, noise_strength=1.0, noise_start=0, noise_indices=indices
+                )
+                state = env.reset(self.rng)
+                state = env.step(state, self.action)
+                for i in range(self.obs_size):
+                    if i in indices:
+                        self.assertNotEqual(state.obs[i], 0.0)
+                    else:
+                        self.assertEqual(state.obs[i], 0.0)
+
+    def test_noise_rampup_scales_linearly(self):
+        """Noise magnitude should ramp from 0 to full strength over rampup_steps."""
+        rampup_steps = 4
+        env = SuddenNoiseWrapper(
+            self.base_env, noise_strength=10.0, noise_start=0, rampup_steps=rampup_steps
+        )
+        state = env.reset(self.rng)
+        state = env.step(state, self.action)  # rel_step=0 -> strength 0
+        self.assertTrue(jnp.allclose(state.obs, jnp.zeros(self.obs_size)))
+
+        for _ in range(rampup_steps):
+            state = env.step(state, self.action)
+        # At and beyond rel_step >= rampup_steps, strength is clipped to full noise_strength.
+        self.assertFalse(jnp.allclose(state.obs, jnp.ones(self.obs_size) * state.info["steps"] - 1))
+
+    def test_noise_does_not_affect_pipeline_state(self):
+        """The wrapper should not modify the underlying env's pipeline_state."""
+        env = SuddenNoiseWrapper(self.base_env, noise_strength=1.0, noise_start=0)
+        state = env.reset(self.rng)
+        state = env.step(state, self.action)
+        self.assertTrue(jnp.allclose(state.pipeline_state, jnp.zeros(self.obs_size)))
+
+
+class TestShiftWrapper(unittest.TestCase):
+    """Tests for ShiftWrapper."""
+
+    def setUp(self):
+        self.obs_size = 4
+        self.action_size = 2
+        self.base_env = _DummyEnv(obs_size=self.obs_size, action_size=self.action_size)
+        self.action = jnp.zeros(self.action_size)
+        self.rng = jrandom.PRNGKey(42)
+
+    def test_no_shift_when_start_is_none(self):
+        """When shift_start is None, observations should never be modified."""
+        env = ShiftWrapper(self.base_env, shift=5.0, shift_start=None)
+        state = env.reset(self.rng)
+        for _ in range(3):
+            state = env.step(state, self.action)
+            expected_obs = jnp.ones(self.obs_size) * (state.info["steps"] - 1)
+            self.assertTrue(jnp.allclose(state.obs, expected_obs))
+
+    def test_shift_threshold_behavior(self):
+        """The constant shift should only be added once steps >= shift_start."""
+        shift_start = 3
+        shift = 5.0
+        env = ShiftWrapper(self.base_env, shift=shift, shift_start=shift_start)
+        state = env.reset(self.rng)
+
+        for step_idx in range(shift_start + 3):
+            state = env.step(state, self.action)
+            steps_counter = state.info["steps"]
+            base = jnp.ones(self.obs_size) * step_idx
+            with self.subTest(step_idx=step_idx):
+                expected = base if steps_counter <= shift_start else base + shift
+                self.assertTrue(jnp.allclose(state.obs, expected))
+
+    def test_shift_rampup_scales_linearly(self):
+        """Shift magnitude should ramp linearly from 0 to full strength over rampup_steps."""
+        rampup_steps = 4
+        shift = 8.0
+        env = ShiftWrapper(
+            self.base_env, shift=shift, shift_start=0, rampup_steps=rampup_steps
+        )
+        state = env.reset(self.rng)
+
+        for rel_step in range(rampup_steps + 1):
+            state = env.step(state, self.action)
+            base = jnp.ones(self.obs_size) * rel_step
+            expected_strength = shift * min(rel_step / rampup_steps, 1.0)
+            with self.subTest(rel_step=rel_step):
+                self.assertTrue(jnp.allclose(state.obs, base + expected_strength))
+
+    def test_shift_indices_mask(self):
+        """Only indices in shift_indices should be shifted; others stay at base value."""
         indices = {0, 2}
-        env = SuddenNoiseWrapper(
-            self.base_env,
-            noise_strength=1.0,
-            noise_start=0,
-            sudden_noise_indices=indices,
+        shift = 3.0
+        env = ShiftWrapper(self.base_env, shift=shift, shift_start=0, shift_indices=indices)
+        state = env.reset(self.rng)
+        state = env.step(state, self.action)
+
+        for i in range(self.obs_size):
+            with self.subTest(index=i):
+                expected = shift if i in indices else 0.0
+                self.assertEqual(state.obs[i], expected)
+
+    def test_shift_supports_tree_obs(self):
+        """The shift should apply identically across every leaf of a nested observation tree."""
+        tree_env = _DummyEnv(obs_size=self.obs_size, tree_obs=True)
+        env = ShiftWrapper(tree_env, shift=3.0, shift_start=0)
+        state = env.reset(self.rng)
+        state = env.step(state, self.action)
+
+        self.assertTrue(jnp.allclose(state.obs["a"], jnp.full(self.obs_size, 3.0)))
+        self.assertTrue(jnp.allclose(state.obs["b"], jnp.full(self.obs_size, 3.0)))
+
+    def test_shift_does_not_affect_pipeline_state(self):
+        """The wrapper should not modify the underlying env's pipeline_state."""
+        env = ShiftWrapper(self.base_env, shift=5.0, shift_start=0)
+        state = env.reset(self.rng)
+        state = env.step(state, self.action)
+        self.assertTrue(jnp.allclose(state.pipeline_state, jnp.zeros(self.obs_size)))
+
+
+class TestSensorFailureWrapper(unittest.TestCase):
+    """Tests for SensorFailureWrapper."""
+
+    def setUp(self):
+        self.obs_size = 4
+        self.action_size = 2
+        self.base_env = _DummyEnv(obs_size=self.obs_size, action_size=self.action_size)
+        self.action = jnp.zeros(self.action_size)
+        self.rng = jrandom.PRNGKey(42)
+
+    def test_no_failure_when_start_is_none(self):
+        """When failure_start is None, observations should never be modified."""
+        env = SensorFailureWrapper(self.base_env, failure_start=None, failure_indices={0, 1})
+        state = env.reset(self.rng)
+        for _ in range(3):
+            state = env.step(state, self.action)
+            expected_obs = jnp.ones(self.obs_size) * (state.info["steps"] - 1)
+            self.assertTrue(jnp.allclose(state.obs, expected_obs))
+
+    def test_failure_zeroes_indices_after_threshold(self):
+        """Indices in failure_indices should read as 0 once steps >= failure_start, not before."""
+        failure_start = 3
+        indices = {1, 3}
+        env = SensorFailureWrapper(
+            self.base_env, failure_start=failure_start, failure_indices=indices
         )
         state = env.reset(self.rng)
 
-        action = jnp.zeros(self.action_size)
-        state = env.step(state, action, noise_global_step=0)
+        for step_idx in range(failure_start + 3):
+            state = env.step(state, self.action)
+            steps_counter = state.info["steps"]
+            base = jnp.ones(self.obs_size) * step_idx
+            with self.subTest(step_idx=step_idx):
+                if steps_counter <= failure_start:
+                    self.assertTrue(jnp.allclose(state.obs, base))
+                else:
+                    for i in range(self.obs_size):
+                        expected = 0.0 if i in indices else step_idx
+                        self.assertEqual(state.obs[i], expected)
 
-        # Base obs is zeros at step 0
-        # Indices 0 and 2 should have noise, indices 1 and 3 should be exactly zero
-        self.assertNotEqual(state.obs[0], 0.0, "Index 0 should have noise")
-        self.assertEqual(state.obs[1], 0.0, "Index 1 should not have noise")
-        self.assertNotEqual(state.obs[2], 0.0, "Index 2 should have noise")
-        self.assertEqual(state.obs[3], 0.0, "Index 3 should not have noise")
-
-    def test_noise_indices_all(self):
-        """When sudden_noise_indices includes all indices, all obs positions should have noise."""
-        indices = {0, 1, 2, 3}
-        env = SuddenNoiseWrapper(
-            self.base_env,
-            noise_strength=1.0,
-            noise_start=0,
-            sudden_noise_indices=indices,
-        )
+    def test_failure_without_indices_leaves_obs_unchanged(self):
+        """With no failure_indices specified, no observation values should be zeroed."""
+        env = SensorFailureWrapper(self.base_env, failure_start=0, failure_indices=None)
         state = env.reset(self.rng)
+        for _ in range(3):
+            state = env.step(state, self.action)
+            expected_obs = jnp.ones(self.obs_size) * (state.info["steps"] - 1)
+            self.assertTrue(jnp.allclose(state.obs, expected_obs))
 
-        action = jnp.zeros(self.action_size)
-        state = env.step(state, action, noise_global_step=0)
-
-        self.assertTrue(
-            jnp.all(state.obs != 0.0),
-            "All indices should have noise when all are specified",
-        )
-
-    def test_noise_indices_single(self):
-        """A single index in sudden_noise_indices should only affect that position."""
-        indices = {1}
-        env = SuddenNoiseWrapper(
-            self.base_env,
-            noise_strength=1.0,
-            noise_start=0,
-            sudden_noise_indices=indices,
-        )
+    def test_failure_does_not_affect_pipeline_state(self):
+        """The wrapper should not modify the underlying env's pipeline_state."""
+        env = SensorFailureWrapper(self.base_env, failure_start=0, failure_indices={0})
         state = env.reset(self.rng)
-
-        action = jnp.zeros(self.action_size)
-        state = env.step(state, action, noise_global_step=0)
-
-        self.assertEqual(state.obs[0], 0.0, "Index 0 should not have noise")
-        self.assertNotEqual(state.obs[1], 0.0, "Index 1 should have noise")
-        self.assertEqual(state.obs[2], 0.0, "Index 2 should not have noise")
-        self.assertEqual(state.obs[3], 0.0, "Index 3 should not have noise")
-
-    def test_noise_indices_with_noise_strength_zero(self):
-        """When noise_strength=0, even specified indices should have no noise."""
-        indices = {0, 1}
-        env = SuddenNoiseWrapper(
-            self.base_env,
-            noise_strength=0.0,
-            noise_start=0,
-            sudden_noise_indices=indices,
-        )
-        state = env.reset(self.rng)
-
-        action = jnp.zeros(self.action_size)
-        state = env.step(state, action, noise_global_step=0)
-
-        expected_base = jnp.zeros(self.obs_size)
-        self.assertTrue(
-            jnp.allclose(state.obs, expected_base),
-            "With zero noise strength, no indices should have noise",
-        )
+        state = env.step(state, self.action)
+        self.assertTrue(jnp.allclose(state.pipeline_state, jnp.zeros(self.obs_size)))
 
 
 if __name__ == "__main__":

@@ -38,14 +38,19 @@ class SuddenNoiseWrapper(Wrapper):
             noise = jnp.where(mask, noise, 0.0)
         return noise
 
-    def step(self, state, action: jnp.ndarray, noise_global_step: int, **kwargs):
+    def reset(self, rng):
+        state = self.env.reset(rng)
+        state.info["noise_global_step"] = state.info.get("noise_global_step", 0)
+        return state
+
+    def step(self, state, action: jnp.ndarray, **kwargs):
         state = self.env.step(state, action, **kwargs)
         if self.sudden_noise_start is not None:
             noise_rng, state.info["rng"] = jrandom.split(state.info["rng"])
-            noise_active = noise_global_step >= self.sudden_noise_start
+            noise_active = state.info["noise_global_step"] >= self.sudden_noise_start
             if self.rampup_steps is not None and self.rampup_steps > 0:
                 # Linear ramp up of shift strength over rampup_steps
-                rel_step = noise_global_step - self.sudden_noise_start
+                rel_step = state.info["noise_global_step"] - self.sudden_noise_start
                 strength = self.noise_strength * jnp.clip(
                     rel_step / self.rampup_steps, 0.0, 1.0
                 )
@@ -61,6 +66,7 @@ class SuddenNoiseWrapper(Wrapper):
                     state.obs,
                 )
             )
+        state.info["noise_global_step"] = state.info.get("noise_global_step", 0) + 1
         return state
 
 
@@ -97,13 +103,18 @@ class ShiftWrapper(Wrapper):
             shift = jnp.where(mask, shift, 0.0)
         return shift
 
-    def step(self, state, action: jnp.ndarray, shift_global_step: int, **kwargs):
+    def reset(self, rng):
+        state = self.env.reset(rng)
+        state.info["shift_global_step"] = state.info.get("shift_global_step", 0)
+        return state
+
+    def step(self, state, action: jnp.ndarray, **kwargs):
         state = self.env.step(state, action, **kwargs)
         if self.obs_shift_start is not None:
-            shift_active = shift_global_step >= self.obs_shift_start
+            shift_active = state.info["shift_global_step"] >= self.obs_shift_start
             if self.rampup_steps is not None and self.rampup_steps > 0:
                 # Linear ramp up of shift strength over rampup_steps
-                rel_step = shift_global_step - self.obs_shift_start
+                rel_step = state.info["shift_global_step"] - self.obs_shift_start
                 strength = self.shift_strength * jnp.clip(
                     rel_step / self.rampup_steps, 0.0, 1.0
                 )
@@ -120,6 +131,7 @@ class ShiftWrapper(Wrapper):
                     state.obs,
                 )
             )
+        state.info["shift_global_step"] = state.info["shift_global_step"] + 1
         return state
 
 
@@ -146,11 +158,16 @@ class SensorFailureWrapper(Wrapper):
             )
             obs = jnp.where(mask, 0.0, obs)
         return obs
+    
+    def reset(self, rng):
+        state = self.env.reset(rng)
+        state.info["failure_global_step"] = state.info.get("failure_global_step", 0)
+        return state
 
-    def step(self, state, action: jnp.ndarray, failure_global_step: int, **kwargs):
+    def step(self, state, action: jnp.ndarray, **kwargs):
         state = self.env.step(state, action, **kwargs)
         if self.failure_start is not None:
-            failure_active = failure_global_step >= self.failure_start
+            failure_active = state.info["failure_global_step"] >= self.failure_start
             state = state.replace(
                 obs=jax.tree.map(
                     lambda obs: jnp.where(
@@ -161,4 +178,5 @@ class SensorFailureWrapper(Wrapper):
                     state.obs,
                 )
             )
+        state.info["failure_global_step"] = state.info["failure_global_step"] + 1
         return state

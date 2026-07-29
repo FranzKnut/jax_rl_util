@@ -32,12 +32,10 @@ def is_discrete(env: gym.Env):
 class Env(BraxEnv):
     """Abstract base class for environments, based on brax.envs.base.Env."""
 
-    package_name: str | None = (
-        None  # Default package name, overridden upon env creation in make_wrapped_env
-    )
-    env_name: str | None = (
-        None  # Default env name, overridden upon env creation in make_wrapped_env
-    )
+    # These values are overridden by the wrappers, but are here for type checking.
+    package_name: str | None = None
+    env_name: str | None = None
+    env_info: dict | None = None
 
 
 class Wrapper:
@@ -376,6 +374,7 @@ class EpisodeWrapper(Wrapper):
         state = self.env.reset(rng)
         state.info["steps"] = jnp.zeros(rng.shape[:-1])
         state.info["truncation"] = jnp.zeros(rng.shape[:-1], dtype=jnp.int32)
+        state.info["global_step"] = state.info.get("global_step", 0)
         return state
 
     def step(self, state: State, action: jnp.ndarray, **kwargs) -> State:
@@ -396,6 +395,7 @@ class EpisodeWrapper(Wrapper):
             )
         )
         state.info["steps"] = steps
+        state.info["global_step"] = state.info["global_step"] + self.action_repeat
         return state.replace(done=done)
 
 

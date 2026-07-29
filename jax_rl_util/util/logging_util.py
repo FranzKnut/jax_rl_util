@@ -1,16 +1,16 @@
 """Utilies for logging."""
 
 import collections
-from collections.abc import Callable
 import contextlib
 import os
-from pprint import pprint
+import time
 import traceback
 from argparse import Namespace
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, replace
 from operator import attrgetter
+from pprint import pprint
 from typing import Literal
-import time
 
 import jax
 import jax.numpy as jnp
@@ -711,7 +711,7 @@ def extract_keys_with_values(d, parent_key=""):
 
 
 def create_sweep_interactively(
-    sweep_config, project=None, config_repo_dir=None, **kwargs
+    sweep_config, project=None, config_repo_dir=None, based_on_sweep=None, **kwargs
 ):
     """Create a wandb sweep with the given config.
 
@@ -763,22 +763,21 @@ def create_sweep_interactively(
     else:
         name = sweep_config.get("name")
 
-    if config_repo_dir:
-        if "name" in sweep_config:
-            sweep_config["name"] += f" ({git_hash})"
-        else:
-            sweep_config["name"] = git_hash
+    if config_repo_dir and "name" not in sweep_config:
+        sweep_config["name"] = git_hash
+
+    # Create the sweep
+    sweep_id = wandb.sweep(sweep_config, project=project, **kwargs)
 
     os.makedirs("logs/sweeps", exist_ok=True)
     with open(f"logs/sweeps/{name}.txt", "w") as f:
         print("---", file=f)
-        print("## Sweep " + name + " (" + git_hash + ")", file=f)
+        print("## Sweep " + name + " (" + sweep_id + ")", file=f)
         print(
             "Created at: " + time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()),
             file=f,
         )
         print("Est. runs:", est_runs, file=f)
-        sweep_id = wandb.sweep(sweep_config, project=project, **kwargs)
         print("", file=f)
         print("> ID:   " + sweep_id, file=f)
         print("", file=f)
@@ -790,6 +789,8 @@ def create_sweep_interactively(
             # Create a git tag for the sweep
             os.system(f'git -C {config_repo_dir} tag "sweep-{name.replace(" ", "-")}"')
             print("Git hash:", git_hash, file=f)
+        if based_on_sweep is not None:
+            print("Based on sweep:", based_on_sweep, file=f)
         print(
             "URL: https://wandb.ai/"
             + WANDB_ENTITY

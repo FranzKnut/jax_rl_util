@@ -239,11 +239,12 @@ def load_rollouts(
     data, file_starts = load_np_files_from_folder(
         data_folder, is_npz=True, num_files=num_files, stack=True
     )
-    if data["done"].ndim > 2 and data["done"].shape[1] == 1:
+    if data["obs"].ndim > 2 and data["obs"].shape[1] == 1:
         data = jax.tree.map(
             lambda x: x[:, 0], data
         )  # Remove the extra dimension if present
-    data["done"][:, 0] = 0  # Ensure done is binary (0 or 1) for consistency
+    if "done" in data:
+        data["done"][:, 0] = 0  # Ensure done is binary (0 or 1) for consistency
 
     if min_ep_length is not None:
         ep_until = jnp.where(

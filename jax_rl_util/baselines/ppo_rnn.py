@@ -7,6 +7,8 @@ from dataclasses import dataclass, field
 import pickle
 from typing import NamedTuple, Sequence
 
+from pprint import pprint
+
 import brax
 import distrax
 import flax.linen as nn
@@ -41,7 +43,7 @@ from jax_rl_util.envs.env_util import compute_agg_reward, render_frames
 from jax_rl_util.envs.environments import (
     make_wrapped_env,
 )
-from jax_rl_util.envs.wrappers import VmapWrapper
+from jax_rl_util.envs.wrappers import Env, VmapWrapper
 from jax_rl_util.optimizers import OptimizerConfig, make_optimizer_for_model
 from jax_rl_util.util import running_statistics
 
@@ -72,6 +74,7 @@ class PPOParams(LoggableConfig):
     fresh: bool = True  # Only load the hyperparameters, not the model
     record_best_eval_episode: bool = True
     deterministic_eval: bool = True
+    measure_time: bool = False
 
     # Env settings
     env_params: EnvironmentConfig = field(
@@ -409,13 +412,13 @@ class ActorCriticRNN(nn.Module):
             else:
                 hidden, embedding = model(hidden, rnn_in)
 
-            actor_mean = nn.Dense(
+            embedding = nn.Dense(
                 self.config.num_units,
                 kernel_init=orthogonal(np.sqrt(2)),
                 bias_init=constant(0.0),
                 name="actor0",
             )(embedding)
-            actor_mean = nn.relu(actor_mean)
+            embedding = nn.relu(embedding)
         action_dim = (
             self.action_dim
             if self.discrete or self.config.act_dist_name == "normal"
@@ -438,6 +441,7 @@ class ActorCriticRNN(nn.Module):
             bias_init=constant(0.0),
             name="critic0",
         )(embedding)
+        critic = nn.relu(critic)
         critic = nn.Dense(
             self.config.num_units,
             kernel_init=orthogonal(np.sqrt(2)),
@@ -506,12 +510,18 @@ def make_train(
     network_cls=None,
     obs_transform_fn=None,
     act_transform_fn=None,
+    env: Env = None,
 ):
     """Create the training function."""
     if network_cls is None:
         network_cls = ActorCriticRNN
 
-    env, env_info, eval_env = make_wrapped_env(config.env_params, make_eval=True)
+    if env is None:
+        env, env_info, eval_env = make_wrapped_env(config.env_params, make_eval=True)
+    else:
+        env_info = env.env_info
+        eval_env = env
+        env = VmapWrapper(env, config.env_params.batch_size)
     eval_env = VmapWrapper(eval_env, config.eval_batch_size)
     _discrete = env_info["discrete"]
     if env_info["act_clip"]:
@@ -1031,6 +1041,12 @@ def make_train(
         pbar = trange(config.episodes, desc="Training")
         try:
             for i in pbar:
+                if config.debug == 2 and i == 0:
+                    lowered = jax.jit(update_step).lower(runner_state, 0)
+                    # print(lowered.as_text())
+                    compiled = lowered.compile()
+                    pprint(compiled.cost_analysis())
+                    jax.profiler.start_trace("tmp/jax-trace", create_perfetto_link=True)
                 runner_state, loggables = jax.lax.scan(
                     update_step,
                     runner_state,
@@ -1090,8 +1106,8 @@ def make_train(
                     ):
                         pbar.write("Rendering env...")
                         frames = render_frames(
-                            _traj.env_state,
                             env,
+                            _traj.env_state,
                             config.render_start,
                             config.render_start + config.render_steps,
                         )
@@ -1112,6 +1128,10 @@ def make_train(
                                     fps=30,
                                     caption=f"Reward: {eval_reward:.2f}",
                                 )
+
+                    if config.debug == 2 and i == 0:
+                        jax.profiler.stop_trace()
+                        print("Saved jax trace to tmp/jax-trace")
 
                     # Early stopping
                     if config.patience and steps_since_best >= config.patience:
@@ -1173,6 +1193,7 @@ def train_and_eval(
     network_cls=None,
     obs_transform_fn=None,
     act_transform_fn=None,
+    env: Env = None,
 ):
     """Run training."""
     rng = jax.random.PRNGKey(config.seed)
@@ -1185,6 +1206,7 @@ def train_and_eval(
             network_cls=network_cls,
             obs_transform_fn=obs_transform_fn,
             act_transform_fn=act_transform_fn,
+            env=env,
         )(rng)
 
         if config.env_params.env_name == "dronegym":
