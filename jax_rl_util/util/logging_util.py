@@ -117,7 +117,7 @@ class DummyLogger(dict, object):
         """Log a figure."""
         self.log({name: fig}, step=step)
 
-    def log_video(self, name: str, frames, step: int = None, fps=4, **kwargs):
+    def log_video(self, name: str, frames, step: int | None = None, fps=4, **kwargs):
         """Save a video given as array.
 
         Parameters
@@ -163,7 +163,7 @@ def save_video(frames, file_name, out_dir, fps=30):
     )
 
 
-def update_nested_dict(d: dict, u: dict | None, path=""):
+def update_nested_dict(d: dict, u: dict | None, path="", strict=True):
     """Update nested dict d with values from nested dict u.
 
     Parameters
@@ -186,7 +186,8 @@ def update_nested_dict(d: dict, u: dict | None, path=""):
                 d.get(k, {}), v, path + "." + str(k) if path else str(k)
             )
         else:
-            assert k in d, f"Key {path + '.' + k} not in base dict."
+            if strict:
+                assert k in d, f"Key {path + '.' + k} not in base dict."
             # assert type(v) is type(d[k]), (
             #     f"Type mismatch for key {k}: {type(d[k])} vs {type(v)}"
             # )

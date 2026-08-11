@@ -168,7 +168,12 @@ def make_optimizer(config: OptimizerConfig) -> optax.GradientTransformation:
 
     @optax.inject_hyperparams
     def _make_opt(learning_rate):
-        _opt = getattr(optax, config.opt_name)
+        if config.opt_name in dir(optax):
+            _opt = getattr(optax, config.opt_name)
+        elif config.opt_name in dir(optax.contrib):
+            _opt = getattr(optax.contrib, config.opt_name)
+        else:
+            raise ValueError(f"Optimizer {config.opt_name} not found in optax.")
 
         reg_types = {
             "l2": optax.add_decayed_weights(weight_decay),
