@@ -5,6 +5,7 @@ import functools
 import os
 from dataclasses import dataclass, field
 import pickle
+import time
 from typing import NamedTuple, Sequence
 
 from pprint import pprint
@@ -14,6 +15,7 @@ import distrax
 import flax.linen as nn
 import flashbax as fbx
 import jax
+import jax.experimental
 import jax.numpy as jnp
 import jax.random as jrandom
 
@@ -845,6 +847,12 @@ def make_train(
                 )
                 return runner_state, transition
 
+            start_time = jax.experimental.io_callback(
+                lambda: jnp.array(time.process_time()),
+                result_shape_dtypes=jnp.zeros(()),
+                ordered=True,
+            )
+
             # initial_hstate = runner_state[-2]
             runner_state, traj_batch = jax.lax.scan(
                 _env_step, runner_state, None, config.collect_steps
@@ -1019,6 +1027,17 @@ def make_train(
             loss_info["train_reward"] = compute_agg_reward(
                 traj_batch.reward, traj_batch.done
             )
+
+            if config.debug == 2:
+                jax.experimental.io_callback(
+                    lambda t: print(
+                        f"{(time.process_time() - t):.3e}" + "s for network update"
+                    ),
+                    result_shape_dtypes=(),
+                    ordered=True,
+                    t=start_time,
+                )
+
             return runner_state, loss_info
 
         runner_state = (

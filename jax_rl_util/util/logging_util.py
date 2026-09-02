@@ -64,7 +64,7 @@ class DummyLogger(dict, object):
         """
         pass
 
-    def log_params(self, params_dict):
+    def log_params(self, params_dict, **kwargs):
         """Log the given hyperparameters.
 
         Parameters
@@ -88,7 +88,7 @@ class DummyLogger(dict, object):
         """
         pass
 
-    def finalize(self, all_param_norms=None):
+    def finalize(self, all_param_norms=None, **kwargs):
         """Log additional plots or media.
 
         Parameters
@@ -98,8 +98,9 @@ class DummyLogger(dict, object):
         """
         pass
 
-    def log_model(self, name: str, path: str):
+    def log_model(self, name: str, path: str, **kwargs):
         """Save a file as an artifact.
+        TODO: make name optional and use the run hash as name if not provided.
 
         Parameters
         ----------
@@ -110,10 +111,10 @@ class DummyLogger(dict, object):
         """
         pass
 
-    def log_img(self, name, img, step=None, caption="", pil_mode="RGB"):
+    def log_img(self, name, img, step=None, caption="", pil_mode="RGB", **kwargs):
         """Log an image."""
 
-    def log_figure(self, name, fig, step=None):
+    def log_figure(self, name, fig, step=None, **kwargs):
         """Log a figure."""
         self.log({name: fig}, step=step)
 
@@ -200,13 +201,6 @@ def update_nested_dict(d: dict, u: dict | None, path="", strict=True):
                 )
             d[k] = v
     return d
-
-
-def check_pytree_structure(tree1, tree2):
-    """Checks if two parameter dictionaries have the same tree structure."""
-    structure1 = jax.tree_util.tree_structure(tree1)
-    structure2 = jax.tree_util.tree_structure(tree2)
-    return structure1 == structure2
 
 
 def tree_stack(trees, axis=0, concatenate=False):
