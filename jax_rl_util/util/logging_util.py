@@ -699,6 +699,15 @@ def extract_keys_with_values(d, parent_key=""):
         if isinstance(v, dict):
             if "values" in v:
                 result[key_path] = v["values"]
+            elif "distribution" in v:
+                result[key_path] = (
+                    v["distribution"]
+                    + " ["
+                    + str(v.get("min", ""))
+                    + ", "
+                    + str(v.get("max", ""))
+                    + "]"
+                )
             else:
                 # Recurse into nested dict
                 result.update(extract_keys_with_values(v, key_path))
