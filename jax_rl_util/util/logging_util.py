@@ -715,7 +715,12 @@ def extract_keys_with_values(d, parent_key=""):
 
 
 def create_sweep_interactively(
-    sweep_config, project=None, config_repo_dir=None, based_on_sweep=None, **kwargs
+    sweep_config,
+    project=None,
+    config_repo_dir=None,
+    based_on_sweep=None,
+    entity=WANDB_ENTITY,
+    **kwargs,
 ):
     """Create a wandb sweep with the given config.
 
@@ -796,12 +801,7 @@ def create_sweep_interactively(
         if based_on_sweep is not None:
             print("Based on sweep:", based_on_sweep, file=f)
         print(
-            "URL: https://wandb.ai/"
-            + WANDB_ENTITY
-            + "/"
-            + project
-            + "/sweeps/"
-            + sweep_id,
+            "URL: https://wandb.ai/" + entity + "/" + project + "/sweeps/" + sweep_id,
             file=f,
         )
 

@@ -17,11 +17,14 @@ import pygame
 
 
 class CarRacingPenaltyEnv(CarRacing):
-    """A version of CarRacing environment with penalty for going off track."""
+    """A version of CarRacing environment with penalty for going off track and additional reward for going fast."""
 
-    def __init__(self, penalty_coeff: float = 0.01, **kwargs):
+    def __init__(
+        self, penalty_coeff: float = 0.01, speed_reward_coeff: float = 0.001, **kwargs
+    ):
         super().__init__(**kwargs)
         self.penalty_coeff = penalty_coeff
+        self.speed_reward_coeff = speed_reward_coeff
 
     def reset(self, **kwargs):
         obs, info = super().reset(**kwargs)
@@ -33,6 +36,8 @@ class CarRacingPenaltyEnv(CarRacing):
         # Apply penalty for going off track
         position = np.array(self.car.hull.position)
         distances = np.array(self.track)[:, -2:] - position
+        speed = np.linalg.norm(np.array(self.car.hull.linearVelocity))
+        reward += self.speed_reward_coeff * speed
         penalty = np.linalg.norm(distances, axis=-1).min()  # Number of wheels off track
         reward -= self.penalty_coeff * penalty
         self.reward -= self.penalty_coeff * penalty
