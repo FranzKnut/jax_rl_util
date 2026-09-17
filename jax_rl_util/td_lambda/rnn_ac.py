@@ -181,7 +181,7 @@ class RNNActorCritic(nn.RNNCellBase):
             encoded = encoded.reshape(enc_shape[0] * enc_shape[1], *enc_shape[2:])
 
         encoded, (combined_dist, dists) = self.actor(
-            pi_state, encoded, img, training=training
+            pi_state, encoded, training, img
         )
         if sample_act:
             greedy_action = dists.mode()

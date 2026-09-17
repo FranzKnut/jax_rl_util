@@ -159,7 +159,9 @@ def collect_rollouts(
         )
         rng, policy_key = jax.random.split(rng)
         init_carry = (
-            reset_carry(policy_key, (env.observation_size,)) if policy.use_rnn else None
+            reset_carry(policy_key, (env.batch_size, env.observation_size))
+            if policy.use_rnn
+            else None
         )
 
     rollout_fn = make_rollout_fn(env, policy_fn, config.max_steps, init_carry)
