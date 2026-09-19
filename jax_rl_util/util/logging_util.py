@@ -748,6 +748,8 @@ def create_sweep_interactively(
     pprint(sweep_config)
     # Estimate number of runs and upload to wandb
     est_runs = count_combinations(sweep_config["parameters"])
+    print("Entity:", entity)
+    print("Project:", project)
     print("Est. runs:", est_runs)
     name = input(f'Enter custom sweep name ("{sweep_config.get("name", "")}"):  ')
 
@@ -776,7 +778,7 @@ def create_sweep_interactively(
         sweep_config["name"] = git_hash
 
     # Create the sweep
-    sweep_id = wandb.sweep(sweep_config, project=project, **kwargs)
+    sweep_id = wandb.sweep(sweep_config, project=project, entity=entity, **kwargs)
 
     os.makedirs("logs/sweeps", exist_ok=True)
     with open(f"logs/sweeps/{name}.txt", "w") as f:
