@@ -20,7 +20,7 @@ class CarRacingPenaltyEnv(CarRacing):
     """A version of CarRacing environment with penalty for going off track and additional reward for going fast."""
 
     def __init__(
-        self, penalty_coeff: float = 0.01, speed_reward_coeff: float = 0.001, **kwargs
+        self, penalty_coeff: float = 0.01, speed_reward_coeff: float = 0.0, **kwargs
     ):
         super().__init__(**kwargs)
         self.penalty_coeff = penalty_coeff

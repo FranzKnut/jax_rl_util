@@ -82,6 +82,7 @@ from .wrappers import (
     PopJymBraxWrapper,
     RandomizedAutoResetWrapper,
     VmapWrapper,
+    Wrapper,
 )
 
 
@@ -194,7 +195,7 @@ def make_wrapped_env(
     make_eval=False,
     autoreset=True,
     use_vmap_wrapper=True,
-    extra_wrappers: list | None = None,
+    extra_wrappers: list[Wrapper] | None = None,
 ) -> tuple[Env, dict] | tuple[Env, dict, Env]:
     """Make brax or gymnax env.
 
