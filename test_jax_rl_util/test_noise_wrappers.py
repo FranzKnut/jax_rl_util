@@ -98,7 +98,7 @@ class TestSuddenNoiseWrapper(unittest.TestCase):
         for indices in (None, {0, 1}):
             with self.subTest(indices=indices):
                 env = SuddenNoiseWrapper(
-                    self.base_env, noise_strength=0.0, noise_start=0, noise_indices=indices
+                    self.base_env, noise_strength=0.0, noise_start=0, obs_noise_indices=indices
                 )
                 state = env.reset(self.rng)
                 state = env.step(state, self.action)
@@ -140,7 +140,7 @@ class TestSuddenNoiseWrapper(unittest.TestCase):
         for name, indices in cases.items():
             with self.subTest(case=name):
                 env = SuddenNoiseWrapper(
-                    self.base_env, noise_strength=1.0, noise_start=0, noise_indices=indices
+                    self.base_env, noise_strength=1.0, noise_start=0, obs_noise_indices=indices
                 )
                 state = env.reset(self.rng)
                 state = env.step(state, self.action)
@@ -227,7 +227,7 @@ class TestShiftWrapper(unittest.TestCase):
         """Only indices in shift_indices should be shifted; others stay at base value."""
         indices = {0, 2}
         shift = 3.0
-        env = ShiftWrapper(self.base_env, shift=shift, shift_start=0, shift_indices=indices)
+        env = ShiftWrapper(self.base_env, shift=shift, shift_start=0, obs_shift_indices=indices)
         state = env.reset(self.rng)
         state = env.step(state, self.action)
 
