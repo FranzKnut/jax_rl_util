@@ -113,6 +113,16 @@ class DummyLogger(dict, object):
 
     def log_img(self, name, img, step=None, caption="", pil_mode="RGB", **kwargs):
         """Log an image."""
+        plt.imshow(img)
+        plt.title(caption)
+        out_file =(
+            os.path.join(self.run_artifacts_dir, f"{name}_{step}.png")
+            if step is not None
+            else os.path.join(self.run_artifacts_dir, f"{name}.png")
+        )
+        plt.savefig(out_file)
+        plt.close()
+        print(f"DummyLogger: Saved image to {out_file}")
 
     def log_figure(self, name, fig, step=None, **kwargs):
         """Log a figure."""
