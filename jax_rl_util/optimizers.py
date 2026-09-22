@@ -17,6 +17,8 @@ ALL_LR_DECAY_TYPES = [
     "cosine_restarts",
     "warmup",
     "exponential",
+    "step",
+    "delayed_warmup",
 ]
 
 
@@ -136,6 +138,47 @@ def make_optimizer(config: OptimizerConfig) -> optax.GradientTransformation:
             init_value=learning_rate * config.lr_kwargs.get("initial_multiplier", 0),
             end_value=learning_rate,
             transition_steps=config.lr_kwargs["warmup_steps"],
+        )
+    elif config.lr_decay_type == "delayed_warmup":
+        """Schedule with a delayed warmup.
+
+        Args:
+            initial_multiplier: initial multiplier for the LR (default 0).
+            warmup_steps: the number of steps to warm up the learning rate.
+            delay_steps: the number of steps to delay the start of the learning rate.
+        """
+        learning_rate = optax.join_schedules(
+            schedules=[
+                optax.constant_schedule(
+                    config.lr_kwargs.get("initial_multiplier", 0) * learning_rate,
+                ),
+                optax.linear_schedule(
+                    init_value=learning_rate * config.lr_kwargs.get("initial_multiplier", 0),
+                    end_value=learning_rate,
+                    transition_steps=config.lr_kwargs["warmup_steps"],
+                ),
+            ],
+            boundaries=[config.lr_kwargs["delay_steps"]],
+        )
+    elif config.lr_decay_type == "step":
+        """Schedule with constant learning rate that starts after a certain number of steps.
+    
+            Args:
+                initial_multiplier: initial multiplier for the LR (default 0).
+                delay_steps: the number of steps to delay the start of the learning rate.
+    
+            Returns:
+                schedule
+                A function that maps step counts to values.
+            """
+        learning_rate = optax.join_schedules(
+            schedules=[
+                optax.constant_schedule(
+                    config.lr_kwargs.get("initial_multiplier", 0) * learning_rate,
+                ),
+                optax.constant_schedule(learning_rate),
+            ],
+            boundaries=[config.lr_kwargs["delay_steps"]],
         )
 
     elif config.lr_decay_type == "exponential":

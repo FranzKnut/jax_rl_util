@@ -20,28 +20,66 @@ class CarRacingPenaltyEnv(CarRacing):
     """A version of CarRacing environment with penalty for going off track and additional reward for going fast."""
 
     def __init__(
-        self, penalty_coeff: float = 0.01, speed_reward_coeff: float = 0.0, **kwargs
+        self,
+        penalty_coeff: float = 0.01,
+        speed_reward_coeff: float = 0.0,
+        speed_reward_distance_boundary: float = 1.0,
+        **kwargs,
     ):
+        """
+
+        Parameters
+        ----------
+        penalty_coeff : float, optional
+            The coefficient for the penalty for going off track, by default 0.01
+        speed_reward_coeff : float, optional
+            The coefficient for the reward for going fast, by default 0.0
+        speed_reward_distance_boundary : float, optional
+            The distance boundary for the speed reward, no reward is given beyond this distance, by default 1.0
+        """
         super().__init__(**kwargs)
         self.penalty_coeff = penalty_coeff
         self.speed_reward_coeff = speed_reward_coeff
+        self.speed_reward_distance_boundary = speed_reward_distance_boundary
+
+    def _get_distance_to_track_centerline(self):
+        """Compute the distance to the track centerline."""
+        position = np.array(self.car.hull.position)
+        distances = np.array(self.track)[:, -2:] - position
+        dist_to_closest = np.linalg.norm(
+            distances, axis=-1
+        ).min()  # distance to track centerline
+        return dist_to_closest
+
+    def _get_speed(self):
+        """Compute the speed of the car."""
+        speed = np.linalg.norm(np.array(self.car.hull.linearVelocity))
+        return speed
 
     def reset(self, **kwargs):
         obs, info = super().reset(**kwargs)
+        _, reward_info = self.compute_reward()
         info["pos"] = np.array(self.car.hull.position)
+        info.update(reward_info)
         return obs, info
+
+    def compute_reward(self):
+        """Compute the reward for the current step."""
+        distance = self._get_distance_to_track_centerline()
+        reward = -self.penalty_coeff * np.log(distance + 1)
+
+        speed = self._get_speed()
+        reward += self.speed_reward_coeff * speed * np.exp(-distance)
+        return reward, {"penalty": distance, "speed": speed}
 
     def step(self, action):
         obs, reward, done, truncated, info = super().step(action)
         # Apply penalty for going off track
-        position = np.array(self.car.hull.position)
-        distances = np.array(self.track)[:, -2:] - position
-        speed = np.linalg.norm(np.array(self.car.hull.linearVelocity))
-        reward += self.speed_reward_coeff * speed
-        penalty = np.linalg.norm(distances, axis=-1).min()  # Number of wheels off track
-        reward -= self.penalty_coeff * penalty
-        self.reward -= self.penalty_coeff * penalty
+        extra_reward, reward_info = self.compute_reward()
+        reward += extra_reward
+
         info["pos"] = np.array(self.car.hull.position)
+        info.update(reward_info)
         return obs, reward, done, truncated, info
 
     def _render(self, mode: str):
