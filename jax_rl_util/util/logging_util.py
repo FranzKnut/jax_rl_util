@@ -115,7 +115,7 @@ class DummyLogger(dict, object):
         """Log an image."""
         plt.imshow(img)
         plt.title(caption)
-        out_file =(
+        out_file = (
             os.path.join(self.run_artifacts_dir, f"{name}_{step}.png")
             if step is not None
             else os.path.join(self.run_artifacts_dir, f"{name}.png")
@@ -508,7 +508,9 @@ class WandbLogger(DummyLogger):
             artifact.add_file(path)
         else:
             print(f"ERROR: Path {path} does not exist, cannot log model.")
+            return
         self.run.log_artifact(artifact)
+        print(f"WandbLogger: Logged model {name} from {path} as artifact.")
 
     @override
     def log_img(self, name, img, step=None, caption="", pil_mode="RGB", format=None):

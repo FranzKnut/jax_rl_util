@@ -72,6 +72,45 @@ def make_background(rng=None, env=None, env_name="CarRacingPenalty-v0"):
     return np.flip(bg_img, axis=0)
 
 
+def speed_norm(speeds) -> Normalize:
+    """Make a Normalize spanning all given speed arrays.
+
+    Pass the result to several `plot_carracing` calls to make the speed colors
+    comparable across axes.
+    """
+    return Normalize(
+        vmin=min(np.min(s) for s in speeds), vmax=max(np.max(s) for s in speeds)
+    )
+
+
+def add_colorbar(fig, mappable, label, ax, **kwargs):
+    """Add a horizontal colorbar in the layout used by the CarRacing plots."""
+    return fig.colorbar(
+        mappable,
+        label=label,
+        orientation="horizontal",
+        shrink=kwargs.pop("shrink", 0.6),
+        ax=ax,
+        pad=kwargs.pop("pad", 0.02),
+        fraction=kwargs.pop("fraction", 0.046),
+        **kwargs,
+    )
+
+
+def add_speed_colorbar(fig, norm, ax, cmap=SPEED_CMAP, label="Speed", **kwargs):
+    """Add the speed colorbar, e.g. shared by a grid of axes."""
+    return add_colorbar(
+        fig, plt.cm.ScalarMappable(cmap=cmap, norm=norm), label, ax, **kwargs
+    )
+
+
+def save_figure(fig, path) -> str:
+    """Save a figure to `path`, creating parent directories as needed."""
+    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+    fig.savefig(path, bbox_inches="tight")
+    return path
+
+
 def _select_batch(data, batch_index=0, ndim=2):
     """Reduce data to `ndim` axes by indexing trailing batch axes."""
     data = np.asarray(data)
@@ -152,10 +191,13 @@ def plot_carracing(
     batch_index=0,
     cmap=DEFAULT_CMAP,
     speed_cmap=SPEED_CMAP,
+    norm=None,
     cbar_label="Finetuning Laps",
     speed_cbar_label="Speed",
     labels=None,
     bg_alpha=0.6,
+    title=None,
+    save_path=None,
 ) -> Figure:
     """Plot CarRacing trajectories on top of the track.
 
@@ -177,6 +219,9 @@ def plot_carracing(
         Colormap used to color the trajectories in order.
     speed_cmap : matplotlib.colors.Colormap
         Colormap used when coloring by speed.
+    norm : matplotlib.colors.Normalize, optional
+        Speed normalization. Defaults to the range over all given speeds. Pass a
+        shared norm to make colors comparable across several axes.
     cbar_label : str or None
         Label of the colorbar. No colorbar is drawn if None or for a single trajectory.
     speed_cbar_label : str or None
@@ -185,6 +230,10 @@ def plot_carracing(
         Colorbar tick labels. Defaults to the trajectory index starting at 1.
     bg_alpha : float
         Alpha of the background image.
+    title : str, optional
+        Figure title.
+    save_path : str, optional
+        Where to save the figure. Parent directories are created.
 
     Returns
     -------
@@ -208,17 +257,17 @@ def plot_carracing(
     speeds = [speeds[i] for i in keep]
     by_speed = speeds[0] is not None
 
-    if ax is None:
+    own_figure = ax is None
+    if own_figure:
         fig, ax = plt.subplots()
     else:
         fig = ax.get_figure()
 
     ticks = np.linspace(0, 1, len(trajectories))
     if by_speed:
-        # Shared scale so colors are comparable across trajectories
-        norm = Normalize(
-            vmin=min(np.min(s) for s in speeds), vmax=max(np.max(s) for s in speeds)
-        )
+        if norm is None:
+            # Shared scale so colors are comparable across trajectories
+            norm = speed_norm(speeds)
         colors = [None] * len(trajectories)
     else:
         norm = None
@@ -241,19 +290,10 @@ def plot_carracing(
     else:
         ax.autoscale_view()
 
-    cbar_kwargs = dict(
-        orientation="horizontal", shrink=0.6, ax=ax, pad=0.02, fraction=0.046
-    )
     if by_speed and speed_cbar_label is not None:
-        fig.colorbar(
-            plt.cm.ScalarMappable(cmap=speed_cmap, norm=norm),
-            label=speed_cbar_label,
-            **cbar_kwargs,
-        )
+        add_speed_colorbar(fig, norm, ax, cmap=speed_cmap, label=speed_cbar_label)
     elif not by_speed and cbar_label is not None and len(trajectories) > 1:
-        cbar = fig.colorbar(
-            plt.cm.ScalarMappable(cmap=cmap), label=cbar_label, **cbar_kwargs
-        )
+        cbar = add_colorbar(fig, plt.cm.ScalarMappable(cmap=cmap), cbar_label, ax)
         cbar.set_ticks(ticks)
         cbar.set_ticklabels(
             labels
@@ -261,8 +301,13 @@ def plot_carracing(
             else [str(i + 1) for i in range(len(trajectories))]
         )
 
-    fig.subplots_adjust(left=0, right=1, top=1, bottom=0.08)
-    fig.tight_layout(pad=0)
+    if own_figure:
+        fig.subplots_adjust(left=0, right=1, top=1, bottom=0.08)
+        fig.tight_layout(pad=0)
+    if title is not None:
+        fig.suptitle(title)
+    if save_path is not None:
+        save_figure(fig, save_path)
     return fig
 
 
@@ -360,6 +405,5 @@ if __name__ == "__main__":
         color_by_speed=not args.no_speed,
     )
     if args.out:
-        os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
-        fig.savefig(args.out, bbox_inches="tight")
+        save_figure(fig, args.out)
     plt.show()
