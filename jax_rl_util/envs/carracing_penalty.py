@@ -61,6 +61,7 @@ class CarRacingPenaltyEnv(CarRacing):
         _, reward_info = self.compute_reward()
         info["pos"] = np.array(self.car.hull.position)
         info.update(reward_info)
+        info["base_reward"] = 0.0  # No base reward on reset
         return obs, info
 
     def compute_reward(self):
@@ -76,6 +77,7 @@ class CarRacingPenaltyEnv(CarRacing):
         obs, reward, done, truncated, info = super().step(action)
         # Apply penalty for going off track
         extra_reward, reward_info = self.compute_reward()
+        reward_info["base_reward"] = reward
         reward += extra_reward
 
         info["pos"] = np.array(self.car.hull.position)
