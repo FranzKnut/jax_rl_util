@@ -1,6 +1,7 @@
 """A version of CarRacing environment with penalty for going off track."""
 
 import gymnasium as gym
+from gymnasium.utils import seeding
 from gymnasium.envs.box2d.car_racing import (
     CarRacing,
     ZOOM,
@@ -57,6 +58,9 @@ class CarRacingPenaltyEnv(CarRacing):
         return speed
 
     def reset(self, **kwargs):
+        self._np_random, seed = seeding.np_random(
+            kwargs.get("seed", None)
+        )  # Ensure reproducibility
         obs, info = super().reset(**kwargs)
         _, reward_info = self.compute_reward()
         info["pos"] = np.array(self.car.hull.position)
@@ -67,7 +71,7 @@ class CarRacingPenaltyEnv(CarRacing):
     def compute_reward(self):
         """Compute the reward for the current step."""
         distance = self._get_distance_to_track_centerline()
-        reward = -self.penalty_coeff * np.log(distance + 1)
+        reward = -self.penalty_coeff * distance
 
         speed = self._get_speed()
         reward += self.speed_reward_coeff * speed * np.exp(-distance)
@@ -78,7 +82,8 @@ class CarRacingPenaltyEnv(CarRacing):
         # Apply penalty for going off track
         extra_reward, reward_info = self.compute_reward()
         reward_info["base_reward"] = reward
-        reward += extra_reward
+        reward = np.log(np.clip(reward, a_min=0, a_max=None) + 1) + extra_reward
+        # reward = (reward > 0) + extra_reward
 
         info["pos"] = np.array(self.car.hull.position)
         info.update(reward_info)

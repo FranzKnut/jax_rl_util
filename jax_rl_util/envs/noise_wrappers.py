@@ -153,25 +153,28 @@ class ShiftWrapper(Wrapper):
     def reset(self, rng):
         state = self.env.reset(rng)
         state.info["shift_global_step"] = state.info.get("shift_global_step", 0)
+        state.info["shift_strength"] = self._strength(state.info["shift_global_step"])
         return state
 
     def step(self, state, action: jnp.ndarray, **kwargs):
         global_step = state.info.get("shift_global_step", 0)
+        # Remove additional info for wrapped env
         del state.info["shift_global_step"]
+        del state.info["shift_strength"]
         shift_active = (
             global_step >= self.shift_start if self.shift_start is not None else False
         )
 
+        strength = self._strength(global_step)
         if self.shift_start is not None and self.shift_target in ("act", "both"):
             action = jnp.where(
                 shift_active,
-                action + self._make_act_shift(action.shape, self._strength(global_step)),
+                action + self._make_act_shift(action.shape, strength),
                 action,
             )
 
         state = self.env.step(state, action, **kwargs)
         if self.shift_start is not None and self.shift_target in ("obs", "both"):
-            strength = self._strength(global_step)
             state = state.replace(
                 obs=jax.tree.map(
                     lambda obs: jnp.where(
@@ -183,6 +186,7 @@ class ShiftWrapper(Wrapper):
                 )
             )
         state.info["shift_global_step"] = global_step + 1
+        state.info["shift_strength"] = strength
         return state
 
 

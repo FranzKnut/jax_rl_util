@@ -39,3 +39,23 @@ def calculate_gae(
         # unroll=rollout_horizon,
     )
     return advantages, advantages + transitions.value
+
+
+def quantile_huber_loss(
+    pred: jnp.ndarray,  # (..., n_quantiles)
+    target: jnp.ndarray,  # (...,) or (..., n_targets)
+    taus: jnp.ndarray,  # (n_quantiles,)
+    kappa: float = 1.0,
+):
+    error = target[..., None] - pred
+
+    abs_error = jnp.abs(error)
+    huber = jnp.where(
+        abs_error <= kappa,
+        0.5 * error**2,
+        kappa * (abs_error - 0.5 * kappa),
+    )
+
+    weight = jnp.abs(taus[None, ...] - (error < 0).astype(jnp.float32))
+
+    return (weight * huber).mean()

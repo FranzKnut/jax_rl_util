@@ -180,9 +180,7 @@ class RNNActorCritic(nn.RNNCellBase):
             # Collapse the first two dimensions to get total number of modules
             encoded = encoded.reshape(enc_shape[0] * enc_shape[1], *enc_shape[2:])
 
-        encoded, (combined_dist, dists) = self.actor(
-            pi_state, encoded, training, img
-        )
+        encoded, (combined_dist, dists) = self.actor(pi_state, encoded, training, img)
         if sample_act:
             greedy_action = dists.mode()
             if not training:
@@ -201,8 +199,8 @@ class RNNActorCritic(nn.RNNCellBase):
                 action = jnp.clip(
                     action, jnp.array(self.act_bounds[0]), jnp.array(self.act_bounds[1])
                 )
-            return encoded, (action, combined_dist)
-        return encoded, combined_dist
+            return encoded, (action, (combined_dist, dists))
+        return encoded, (combined_dist, dists)
 
     @nn.compact
     def __call__(
