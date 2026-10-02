@@ -771,10 +771,11 @@ def create_sweep_interactively(
             os.popen(f"git -C {config_repo_dir} status --porcelain").read().strip()
         )
         if git_status:
-            raise RuntimeError(
+            print(
                 f"Git repository at {os.path.abspath(config_repo_dir)} has uncommited changes.\n"
                 + "                 Please commit or stash them before creating a sweep."
             )
+            input("Press Enter to continue anyway, or Ctrl+C to abort.")
         # Get the current commit hash and add it to the sweep name
         git_hash = (
             os.popen(f"git -C {config_repo_dir} rev-parse --short HEAD").read().strip()
