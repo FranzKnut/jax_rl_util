@@ -25,10 +25,9 @@ from typing_extensions import override
 
 
 @dataclass
-class LoggableConfig(simple_parsing.Serializable):
+class LoggableConfig(simple_parsing.Serializable, decode_into_subclasses=True):
     """Base class for loggable configuration dataclasses."""
 
-    decode_into_subclasses = True
     logging: Literal["wandb", "aim", None] = None
     repo: str | None = None
     project_name: str | None = None

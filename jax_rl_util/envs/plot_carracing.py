@@ -108,6 +108,7 @@ def save_figure(fig, path) -> str:
     """Save a figure to `path`, creating parent directories as needed."""
     os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
     fig.savefig(path, bbox_inches="tight")
+    print(f"Saved figure to {path}")
     return path
 
 
