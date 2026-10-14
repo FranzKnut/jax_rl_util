@@ -286,7 +286,9 @@ class AimLogger(DummyLogger):
         params_dict : dict
             Dict of hyperparameters.
         """
-        self.run["hparams"] = params_dict
+        if self.run["hparams"] is None:
+            self.run["hparams"] = {}
+        self.run["hparams"].update(params_dict)
 
     def log_dist(self, values: dict, step=None, context=None):
         """Log the given distribution with aim."""
