@@ -193,7 +193,7 @@ def update_nested_dict(d: dict, u: dict | None, path="", strict=True):
     for k, v in u.items():
         if isinstance(v, collections.abc.Mapping):
             d[k] = update_nested_dict(
-                d.get(k, {}), v, path + "." + str(k) if path else str(k)
+                d.get(k, {}), v, path + "." + str(k) if path else str(k), strict
             )
         else:
             if strict:
@@ -440,7 +440,7 @@ class WandbLogger(DummyLogger):
         # If called by wandb.agent,
         # this config will be set by Sweep Controller
         self.hparams = hparams.from_dict(
-            update_nested_dict(hparams.to_dict(), self.run.config),
+            update_nested_dict(hparams.to_dict(), self.run.config, strict=False),
             drop_extra_fields=False,
         )
         if hparams.log_code:
