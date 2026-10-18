@@ -25,6 +25,8 @@ class CarRacingPenaltyEnv(CarRacing):
         penalty_coeff: float = 0.01,
         speed_reward_coeff: float = 0.0,
         speed_reward_distance_boundary: float = 1.0,
+        reset_threshold: float | None = None,
+        off_track_reset_penalty: float = -1.0,
         **kwargs,
     ):
         """
@@ -37,11 +39,17 @@ class CarRacingPenaltyEnv(CarRacing):
             The coefficient for the reward for going fast, by default 0.0
         speed_reward_distance_boundary : float, optional
             The distance boundary for the speed reward, no reward is given beyond this distance, by default 1.0
+        reset_threshold : float | None, optional
+            The threshold for the distance from track center that triggers resetting the environment, by default None
+        off_track_reset_penalty : float, optional
+            The penalty for going off track, by default -10.0
         """
         super().__init__(**kwargs)
         self.penalty_coeff = penalty_coeff
         self.speed_reward_coeff = speed_reward_coeff
         self.speed_reward_distance_boundary = speed_reward_distance_boundary
+        self.reset_threshold = reset_threshold
+        self.off_track_reset_penalty = off_track_reset_penalty
 
     def _get_distance_to_track_centerline(self):
         """Compute the distance to the track centerline."""
@@ -82,11 +90,16 @@ class CarRacingPenaltyEnv(CarRacing):
         # Apply penalty for going off track
         extra_reward, reward_info = self.compute_reward()
         reward_info["base_reward"] = reward
-        reward = np.log(np.clip(reward, a_min=0, a_max=None) + 1) + extra_reward
+        # reward = np.log(np.clip(reward, a_min=0, a_max=None) + 1) + extra_reward
         # reward = (reward > 0) + extra_reward
-
+        reward = reward + extra_reward
+        
         info["pos"] = np.array(self.car.hull.position)
         info.update(reward_info)
+        if self.reset_threshold is not None:
+            if info["penalty"] > self.reset_threshold:
+                done = True
+                reward = self.off_track_reset_penalty
         return obs, reward, done, truncated, info
 
     def _render(self, mode: str):

@@ -2,6 +2,7 @@
 
 import collections
 import contextlib
+import dataclasses
 import os
 import time
 import traceback
@@ -725,6 +726,33 @@ def extract_keys_with_values(d, parent_key=""):
                 # Recurse into nested dict
                 result.update(extract_keys_with_values(v, key_path))
     return result
+
+
+def check_fields(params: dict, config_cls: type[LoggableConfig], path: str = ""):
+    """Check that every swept key names a field of `config_cls`.
+
+    Nested `parameters` blocks and dict-valued `values` are followed into
+    nested config dataclasses; plain dict fields such as `loss_weights` take
+    arbitrary keys and are left alone.
+
+    Raises
+    ------
+    KeyError
+        If a key doesn't exist, which otherwise only shows up once the first
+        agent has already loaded the data and started training.
+    """
+    fields = {f.name: f.type for f in dataclasses.fields(config_cls)}
+    for key, spec in params.items():
+        if key not in fields:
+            raise KeyError(f"Unknown config field in sweep space: {path}{key}")
+        if not (isinstance(spec, dict) and dataclasses.is_dataclass(fields[key])):
+            continue
+        nested = dict(spec.get("parameters", {}))
+        for value in spec.get("values", []):
+            if isinstance(value, dict):
+                nested.update({k: {"value": v} for k, v in value.items()})
+        if nested:
+            check_fields(nested, fields[key], f"{path}{key}.")
 
 
 def create_sweep_interactively(
