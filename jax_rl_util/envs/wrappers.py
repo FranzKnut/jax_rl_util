@@ -807,6 +807,7 @@ class SaveToFileWrapper(Wrapper):
             rew = np.array(self.rew_buffer)
             filename = os.path.join(self.output_folder, f"episode-{self.filenum}.npz")
             np.savez(filename, obs=obs, act=act, rew=rew)
+            print(f"Saved episode to {filename}")
             self.filenum += 1
 
         # In any case, wipe the buffers
