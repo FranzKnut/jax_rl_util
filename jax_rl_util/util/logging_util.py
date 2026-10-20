@@ -548,6 +548,43 @@ class WandbLogger(DummyLogger):
         )
 
 
+class NamespacedLogger:
+    """Log one leg into a shared run under `prefix/`, on its own step axis.
+
+    Metrics, summary keys and params all go under `prefix`, so they don't
+    collide with the training leg's. Steps restart at 0 as ``prefix/step``,
+    which wandb's charts use as their x-axis, since the run's own step only
+    moves forward. Everything else passes through to `logger`.
+    """
+
+    def __init__(self, logger, prefix: str):
+        self._logger = logger
+        self._prefix = prefix
+        if isinstance(logger, WandbLogger):
+            logger.run.define_metric(f"{prefix}/step")
+            logger.run.define_metric(f"{prefix}/*", step_metric=f"{prefix}/step")
+
+    def __getattr__(self, name):
+        return getattr(self._logger, name)
+
+    def log(self, metrics: dict, step=None, **kwargs):
+        """Log `metrics` under the prefix, with `step` as ``prefix/step``."""
+        metrics = {f"{self._prefix}/{k}": v for k, v in metrics.items()}
+        if step is not None:
+            metrics[f"{self._prefix}/step"] = step
+        self._logger.log(metrics, **kwargs)
+
+    def log_params(self, params_dict: dict):
+        """Log `params_dict` nested under the prefix."""
+        self._logger.log_params({self._prefix: params_dict})
+
+    def __setitem__(self, key, value):
+        self._logger[f"{self._prefix}/{key}"] = value
+
+    def __getitem__(self, key):
+        return self._logger[f"{self._prefix}/{key}"]
+
+
 class ExceptionPrinter(contextlib.AbstractContextManager):
     """Hacky way to print exceptions in wandb agent."""
 
