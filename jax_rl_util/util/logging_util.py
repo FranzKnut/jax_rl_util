@@ -957,6 +957,8 @@ def get_representative_models_for_sweep(
     group_keys: str | list[str] = "model_name",
     metric_key="eval_reward",
     filter_fn: Callable | None = None,
+    artifact_filter: Callable | None = None,
+    minimize: bool = False,
 ):
     """Get representative models for a sweep grouped by the given key.
 
@@ -968,11 +970,17 @@ def get_representative_models_for_sweep(
         How to select the representative model for each group.
         Options are "best", "worst", "median". By default "best".
     group_keys : str | list[str], optional
-        Key(s) to group by. By default "model_name".
+        Key(s) to group by, looked up in the run's top-level config first,
+        then in its ``policy_config``. By default "model_name".
     metric_key : str, optional
         Key to use for selecting the representative model. By default "eval_reward".
     filter_fn : Callable | None, optional
         Function to filter runs. Should take a run object and return True if the run should be included.
+    artifact_filter : Callable | None, optional
+        Takes a model artifact and returns True if it may be picked; the run's
+        last such artifact is used. By default every model artifact.
+    minimize : bool, optional
+        Whether a lower `metric_key` is better, e.g. for a loss.
 
     Returns
     -------
@@ -983,17 +991,24 @@ def get_representative_models_for_sweep(
     import tqdm
     import wandb
 
+    if isinstance(group_keys, str):
+        group_keys = [group_keys]
     for run in tqdm.tqdm(wandb.Api().sweep(sweep_path).runs):
-        artifacts = [r for r in run.logged_artifacts() if r.type == "model"]
+        artifacts = [
+            r
+            for r in run.logged_artifacts()
+            if r.type == "model" and (artifact_filter is None or artifact_filter(r))
+        ]
         if len(artifacts) == 0:
             print(f"Run {run.name} has no model artifacts, skipping.")
             continue
         if filter_fn and not filter_fn(run):
             continue
         _cfg = run.load_full_data()["config"]
-        if isinstance(group_keys, str):
-            group_keys = [group_keys]
-        values = [_cfg["policy_config"].get(key) for key in group_keys]
+        values = [
+            _cfg[key] if key in _cfg else _cfg["policy_config"].get(key)
+            for key in group_keys
+        ]
         metric = run.summary[metric_key]
         if tuple(values) not in models:
             models[tuple(values)] = pd.DataFrame(columns=[metric_key, "model_path"])
@@ -1004,10 +1019,10 @@ def get_representative_models_for_sweep(
         }
 
     for value in models:
-        if select == "worst":
-            idx = models[value][metric_key].idxmin()
-        elif select == "best":
-            idx = models[value][metric_key].idxmax()
+        if select in ("best", "worst"):
+            highest = (select == "best") != minimize
+            metric = models[value][metric_key]
+            idx = metric.idxmax() if highest else metric.idxmin()
         elif select == "median":
             idx = (
                 models[value][metric_key]
