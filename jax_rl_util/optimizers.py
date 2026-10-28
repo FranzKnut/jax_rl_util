@@ -211,7 +211,9 @@ def make_optimizer(config: OptimizerConfig) -> optax.GradientTransformation:
 
     @optax.inject_hyperparams
     def _make_opt(learning_rate):
-        if config.opt_name in dir(optax):
+        if config.opt_name in CUSTOM_OPTIMIZERS:
+            _opt = CUSTOM_OPTIMIZERS[config.opt_name]
+        elif config.opt_name in dir(optax):
             _opt = getattr(optax, config.opt_name)
         elif config.opt_name in dir(optax.contrib):
             _opt = getattr(optax.contrib, config.opt_name)
@@ -257,6 +259,77 @@ def make_optimizer(config: OptimizerConfig) -> optax.GradientTransformation:
         return optimizer
 
     return _make_opt(learning_rate)
+
+
+def scale_by_running_max(beta: float = 0.99995, eps: float = 1e-8) -> base.GradientTransformation:
+    """Divide each coordinate of the update by its decaying running maximum.
+
+    Parameters
+    ----------
+    beta : float
+        Retained fraction of the running maximum per step, in [0, 1).
+    eps : float
+        Small constant for numerical stability.
+
+    Returns
+    -------
+    transform : GradientTransformation
+        Transformation with the running maximum ``v`` as state.
+
+    Notes
+    -----
+    ``v ← max(beta * v, |u|)`` and ``u ← u / (v + eps)``, element-wise with ``v`` initialized
+    to zero. Since ``v >= |u|``, every coordinate of the result has magnitude below 1.
+    """
+
+    def init_fn(params):
+        return jax.tree.map(jnp.zeros_like, params)
+
+    def update_fn(updates, state, params=None):
+        del params
+        v = jax.tree.map(lambda _v, u: jnp.maximum(beta * _v, jnp.abs(u)), state, updates)
+        updates = jax.tree.map(lambda u, _v: u / (_v + eps), updates, v)
+        return updates, v
+
+    return base.GradientTransformation(init_fn, update_fn)
+
+
+def streaming_optimizer(
+    learning_rate, beta: float = 0.99995, eps: float = 1e-8, b1: float = 0.0
+) -> base.GradientTransformation:
+    """StreamingOptimizer of Elsayed et al. (2026, arXiv:2410.14606).
+
+    Parameters
+    ----------
+    learning_rate : float or schedule
+        Step size, which bounds the per-coordinate displacement.
+    beta : float
+        Retained fraction of the running maximum.
+    eps : float
+        Small constant for numerical stability.
+    b1 : float
+        Decay of the bias-corrected first moment. 0 gives the StreamingOptimizer,
+        ``b1 > 0`` the BoundedOptimizer (Appendix A.4).
+
+    Returns
+    -------
+    optimizer : GradientTransformation
+        ``w ← w - lr * u / (v + eps)`` with ``v`` the decaying element-wise running max of ``|u|``.
+
+    Notes
+    -----
+    For TD learning the increment ``u`` is the full update ``delta * z``, so pass the trace-weighted TD update, not the raw gradient.
+    With ``b1 > 0``, ``u`` is replaced by its bias-corrected moving average, which the running max then normalizes,
+    so the displacement stays below ``lr`` per coordinate.
+    """
+    return optax.chain(
+        optax.ema(b1, debias=True) if b1 else optax.identity(),
+        scale_by_running_max(beta, eps),
+        optax.scale_by_learning_rate(learning_rate),
+    )
+
+
+CUSTOM_OPTIMIZERS = {"streaming": streaming_optimizer}
 
 
 def add_decayed_weights_l1(

@@ -39,14 +39,28 @@ class RNNActorCritic(nn.RNNCellBase):
     act_bounds: tuple[float] | None = None
     # pass_obs: bool = False
     pred_obs: bool = False
+    skip_critic: bool = False  # Concatenate the observation to the critic input
+    skip_actor: bool = False  # Concatenate the observation to the actor input
 
     @property
     def use_shared_rnn(self) -> bool:
         """Whether to use a shared RNN for actor and critic."""
         return self.rnn_config is not None and self.rnn_config.model_name is not None
 
+    def _skip(self, encoded, obs):
+        """Concatenate the observation to every ensemble member's latent.
+
+        Without a shared RNN the latent already is the observation, so nothing is added.
+        """
+        if obs is None or not self.use_shared_rnn:
+            return encoded
+        obs = jnp.broadcast_to(obs, encoded.shape[:-1] + obs.shape[-1:])
+        return jnp.concatenate([encoded, obs], axis=-1)
+
     def setup(self) -> None:
         """Initialize components."""
+        if self.use_cnn and (self.skip_critic or self.skip_actor):
+            raise NotImplementedError("skip_critic and skip_actor are not supported with a CNN encoder.")
 
         if self.rnn_config is not None:
             assert self.policy_config.num_modules % self.rnn_config.num_modules == 0, (
@@ -117,8 +131,8 @@ class RNNActorCritic(nn.RNNCellBase):
         carry, hidden = self.rnn(carry, obs, training, **kwargs)
         return hidden, carry
 
-    def value(self, encoded, img=None, v_hidden=None, training=True):
-        """Compute value from latent."""
+    def value(self, encoded, img=None, v_hidden=None, training=True, obs=None):
+        """Compute value from latent, with ``obs`` appended if ``skip_critic``."""
         # if not self.shared:
         #     # hidden = jnp.concatenate([jax.lax.stop_gradient(hidden[0]), hidden[1]], axis=-1)
         #     hidden = hidden[..., 1:, :]
@@ -139,6 +153,8 @@ class RNNActorCritic(nn.RNNCellBase):
             # Collapse the first two dimensions to get total number of modules
             encoded = encoded.reshape(enc_shape[0] * enc_shape[1], *enc_shape[2:])
 
+        if self.skip_critic:
+            encoded = self._skip(encoded, obs)
         return self.critic(v_hidden, encoded, training=training)
 
     def obs_prediction(self, hidden, a, x=None):
@@ -159,7 +175,9 @@ class RNNActorCritic(nn.RNNCellBase):
         training: bool = True,
         selected_act=None,
         epsilon: float = 0.0,
+        obs=None,
     ) -> tuple[jax.Array, distrax.Distribution] | jax.Array:
+        """Compute the action distribution from latent, with ``obs`` appended if ``skip_actor``."""
         # if not self.shared:
         #     # hidden = jnp.concatenate([hidden[0], jax.lax.stop_gradient(hidden[1])], axis=-1)
         #     hidden = hidden[..., :1, :]
@@ -180,6 +198,8 @@ class RNNActorCritic(nn.RNNCellBase):
             # Collapse the first two dimensions to get total number of modules
             encoded = encoded.reshape(enc_shape[0] * enc_shape[1], *enc_shape[2:])
 
+        if self.skip_actor:
+            encoded = self._skip(encoded, obs)
         encoded, (combined_dist, dists) = self.actor(pi_state, encoded, training, img)
         if sample_act:
             greedy_action = dists.mode()
@@ -220,12 +240,12 @@ class RNNActorCritic(nn.RNNCellBase):
         )
 
         # Critic
-        v_state, v_hat = self.value(encoded, x, carry[1], training=training)
+        v_state, v_hat = self.value(encoded, x, carry[1], training=training, obs=x)
         # selected_act = v_hat.argmax()
 
         # Actor
         pi_state, (action, _) = self.policy(
-            encoded, img, carry[2], True, training=training, epsilon=epsilon
+            encoded, img, carry[2], True, training=training, epsilon=epsilon, obs=x
         )
 
         if self.pred_obs:
@@ -252,11 +272,27 @@ class RNNActorCritic(nn.RNNCellBase):
 
         if self.use_cnn:
             input_shape = input_shape[:-3] + (self.policy_config.latent_size,)
+        obs_dim = input_shape[-1]
         if self.rnn_config is not None and self.rnn_config.model_name:
             rnn_state = self._init_shared_rnn(rng, input_shape)
             input_shape = input_shape[:-1] + self.rnn_config.layers[-1:]
         else:
             rnn_state = None
-        v_state = self.critic.initialize_carry(rng, input_shape)
-        pi_state = self.actor.initialize_carry(rng, input_shape)
+
+        v_shape = input_shape
+        pi_shape = input_shape
+        if self.use_shared_rnn:
+            if self.skip_critic:
+                v_shape = input_shape[:-1] + (input_shape[-1] + obs_dim,)
+            if self.skip_actor:
+                pi_shape = input_shape[:-1] + (input_shape[-1] + obs_dim,)
+
+        v_state = self.critic.initialize_carry(
+            rng,
+            (self.critic_config.num_modules,) + v_shape if self.critic.split_input else v_shape,
+        )
+        pi_state = self.actor.initialize_carry(
+            rng,
+            (self.policy_config.num_modules,) + pi_shape if self.actor.split_input else pi_shape,
+        )
         return (rnn_state, v_state, pi_state)
