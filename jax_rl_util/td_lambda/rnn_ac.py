@@ -39,8 +39,22 @@ class RNNActorCritic(nn.RNNCellBase):
     act_bounds: tuple[float] | None = None
     # pass_obs: bool = False
     pred_obs: bool = False
-    skip_critic: bool = False  # Concatenate the observation to the critic input
-    skip_actor: bool = False  # Concatenate the observation to the actor input
+    critic_subset_start_idx: int | None = None
+    """Index of the start of the rnn hidden state subset to be used for the critic. 
+    
+    The critic input has input shape (..., hidden_size-critic_subset_start_idx).
+    If None, the full hidden state is used.
+    """
+    actor_subset_stop_idx: int | None = None
+    """Index of the stop of the rnn hidden state subset to be used for the actor. 
+
+    If set, the actor input has input shape (..., actor_subset_stop_idx).
+    If None, the full hidden state is used.
+    """
+    skip_critic: bool = False
+    """Concatenate the observation to the critic input"""
+    skip_actor: bool = False
+    """Concatenate the observation to the actor input"""
 
     @property
     def use_shared_rnn(self) -> bool:
@@ -60,7 +74,9 @@ class RNNActorCritic(nn.RNNCellBase):
     def setup(self) -> None:
         """Initialize components."""
         if self.use_cnn and (self.skip_critic or self.skip_actor):
-            raise NotImplementedError("skip_critic and skip_actor are not supported with a CNN encoder.")
+            raise NotImplementedError(
+                "skip_critic and skip_actor are not supported with a CNN encoder."
+            )
 
         if self.rnn_config is not None:
             assert self.policy_config.num_modules % self.rnn_config.num_modules == 0, (
@@ -141,6 +157,9 @@ class RNNActorCritic(nn.RNNCellBase):
         #         x = jnp.expand_dims(x, -2)
         #     encoded = jnp.concatenate([encoded, x], axis=-1)
 
+        # Slice the subset of the hidden state for the critic
+        encoded = encoded[..., self.critic_subset_start_idx :]
+
         if self.use_shared_rnn:
             # Tile the hidden state for the critic ensemble
             if encoded.ndim == 1:
@@ -185,6 +204,9 @@ class RNNActorCritic(nn.RNNCellBase):
         #     if len(x.shape) < len(hidden.shape):
         #         x = jnp.expand_dims(x, -2)
         #     hidden = jnp.concatenate([hidden, x], axis=-1)
+
+        if self.actor_subset_stop_idx is not None:
+            encoded = encoded[..., : self.actor_subset_stop_idx]
 
         if self.use_shared_rnn:
             # Tile the hidden state for the policy ensemble
@@ -279,20 +301,33 @@ class RNNActorCritic(nn.RNNCellBase):
         else:
             rnn_state = None
 
-        v_shape = input_shape
-        pi_shape = input_shape
+        v_shape = input_shape[:-1] + (
+            input_shape[-1]
+            if self.critic_subset_start_idx is None
+            else input_shape[-1] - self.critic_subset_start_idx,
+        )
+
+        pi_shape = input_shape[:-1] + (
+            input_shape[-1]
+            if self.actor_subset_stop_idx is None
+            else self.actor_subset_stop_idx,
+        )
         if self.use_shared_rnn:
             if self.skip_critic:
-                v_shape = input_shape[:-1] + (input_shape[-1] + obs_dim,)
+                v_shape = input_shape[:-1] + (v_shape[-1] + obs_dim,)
             if self.skip_actor:
-                pi_shape = input_shape[:-1] + (input_shape[-1] + obs_dim,)
+                pi_shape = input_shape[:-1] + (pi_shape[-1] + obs_dim,)
 
         v_state = self.critic.initialize_carry(
             rng,
-            (self.critic_config.num_modules,) + v_shape if self.critic.split_input else v_shape,
+            (self.critic_config.num_modules,) + v_shape
+            if self.critic.split_input
+            else v_shape,
         )
         pi_state = self.actor.initialize_carry(
             rng,
-            (self.policy_config.num_modules,) + pi_shape if self.actor.split_input else pi_shape,
+            (self.policy_config.num_modules,) + pi_shape
+            if self.actor.split_input
+            else pi_shape,
         )
         return (rnn_state, v_state, pi_state)

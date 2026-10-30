@@ -338,7 +338,7 @@ def add_decayed_weights_l1(
 ) -> base.GradientTransformation:
     """Add the derivative of L1 loss of the params scaled by `weight_decay`.
 
-    More precisely, this will add sign(p) for each entry p.
+    More precisely, this will add weight_decay *sign(p) for each entry p.
 
     Args:
       weight_decay: A scalar weight decay rate.
@@ -354,8 +354,7 @@ def add_decayed_weights_l1(
     def update_fn(updates, state, params):
         if params is None:
             raise ValueError(base.NO_PARAMS_MSG)
-        additions = jax.tree.map(lambda p: jnp.sign(p), params)
-        updates = jax.tree.map(lambda g, p: g + weight_decay * p, updates, additions)
+        updates = jax.tree.map(lambda g, p: g + weight_decay * jnp.sign(p), updates, params)
         return updates, state
 
     # If mask is not `None`, apply mask to the gradient transformation.

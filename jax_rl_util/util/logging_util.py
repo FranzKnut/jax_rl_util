@@ -120,6 +120,7 @@ class DummyLogger(dict, object):
             if step is not None
             else os.path.join(self.run_artifacts_dir, f"{name}.png")
         )
+        os.makedirs(out_file.rsplit("/", 1)[0], exist_ok=True)
         plt.savefig(out_file)
         plt.close()
         print(f"DummyLogger: Saved image to {out_file}")
