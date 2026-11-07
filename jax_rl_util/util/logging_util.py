@@ -30,7 +30,7 @@ class LoggableConfig(simple_parsing.Serializable, decode_into_subclasses=True):
     """Base class for loggable configuration dataclasses."""
 
     logging: Literal["wandb", "aim", None] = None
-    repo: str | None = None
+    repo: str | None = None  # FIXME: misnomer! this is the wandb entity, not the repo
     project_name: str | None = None
     debug: bool | int = False
     log_code: bool = False
@@ -195,7 +195,7 @@ def update_nested_dict(d: dict, u: dict | None, path="", strict=True):
     for k, v in u.items():
         if isinstance(v, collections.abc.Mapping):
             d[k] = update_nested_dict(
-                d.get(k, {}), v, path + "." + str(k) if path else str(k), strict
+                d.get(k) or {}, v, path + "." + str(k) if path else str(k), strict
             )
         else:
             if strict:
