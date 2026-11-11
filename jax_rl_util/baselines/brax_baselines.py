@@ -39,21 +39,21 @@ class BraxBaselineConfig(LoggableConfig):
     force: bool = False  # Force re-training even if model already exists
     env_config: EnvironmentConfig = field(
         default_factory=lambda: EnvironmentConfig(
-            env_name="inverted_pendulum",
+            env_name="hopper",
             init_kwargs={
                 "backend": "spring",
-            #     "reward_config": {
-            #         "scales": {
-            #             "gripper_box": 1.0,  # Gripper goes to the box.
-            #             "box_target": 8.0,  # Box goes to the target mocap.
-            #             "no_floor_collision": 0.25,  # Do not collide the gripper with the floor.
-            #             "robot_target_qpos": 0.3,  # Arm stays close to target pose.
-            #         }
-            #     }
+                #     "reward_config": {
+                #         "scales": {
+                #             "gripper_box": 1.0,  # Gripper goes to the box.
+                #             "box_target": 8.0,  # Box goes to the target mocap.
+                #             "no_floor_collision": 0.25,  # Do not collide the gripper with the floor.
+                #             "robot_target_qpos": 0.3,  # Arm stays close to target pose.
+                #         }
+                #     }
             },
         )
     )
-    
+
     eval_steps: int = 10000  # Number of steps to evaluate the trained model
     render: bool = True
     num_timesteps: int | None = (
@@ -394,8 +394,14 @@ def train_brax_baseline(config: BraxBaselineConfig, logger=DummyLogger()):
             )
         # TODO: allow sac training for mujoco_playground envs
         ppo_config = brax_ppo_config(env_name)
-
-    network_factory = ppo.ppo_networks.make_ppo_networks
+    algorithm = TRAIN_FNS.get(
+        env_name, functools.partial(ppo.train)
+    ).func.__module__.split(".")[-2]
+    network_factory = (
+        ppo.ppo_networks.make_ppo_networks
+        if algorithm == "ppo"
+        else sac.sac_networks.make_sac_networks
+    )
     if "network_factory" in ppo_config:
         # HACK: construct network factory from mujoco_playground params
         network_factory = functools.partial(

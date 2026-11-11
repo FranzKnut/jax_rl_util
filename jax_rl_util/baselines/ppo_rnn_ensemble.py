@@ -41,6 +41,8 @@ MODEL_DOWNCAST = {
 class PPOEnsembleParams(base_ppo.PPOParams):
     """PPO params with RNNEnsemble backbone configuration."""
 
+    project_name: str = "ppo_rnn_ensemble"
+    logging: str | None = "wandb"
     model_config: PolicyConfig = field(
         default_factory=lambda: PolicyConfig(
             model_name="bptt",
@@ -52,8 +54,8 @@ class PPOEnsembleParams(base_ppo.PPOParams):
     train_encoder: bool = False
     env_params: EnvironmentConfig = field(
         default_factory=lambda: EnvironmentConfig(
-            env_name="halfcheetah",
-            init_kwargs={"backend": "mjx"},
+            env_name="hopper",
+            init_kwargs={"backend": "spring"},
             batch_size=32,
         )
     )
@@ -212,7 +214,7 @@ def train_and_eval(
 
 
 if __name__ == "__main__":
-    args: PPOEnsembleParams = simple_parsing.parse(PPOEnsembleParams, config_path='config/ppo_rnn_ensemble.yaml', add_config_path_arg=True)
+    args: PPOEnsembleParams = simple_parsing.parse(PPOEnsembleParams, add_config_path_arg=True)
     if args.ckpt_path and args.fresh:
         restore_path = base_ppo.resolve_restore_path(args.ckpt_path)
         print(f"Restoring config from: {restore_path}")

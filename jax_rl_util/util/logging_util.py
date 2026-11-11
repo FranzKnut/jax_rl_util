@@ -827,9 +827,14 @@ def create_sweep_interactively(
     pprint(sweep_config)
     # Estimate number of runs and upload to wandb
     est_runs = count_combinations(sweep_config["parameters"])
+    sweeped_over = extract_keys_with_values(sweep_config["parameters"])
+
     print("Entity:", entity)
     print("Project:", project)
     print("Est. runs:", est_runs)
+    for k, v in sweeped_over.items():
+        if len(v) > 1:  
+            print(f"- {k}: {', '.join(map(str, v))}")
     name = input(f'Enter custom sweep name ("{sweep_config.get("name", "")}"):  ')
 
     if config_repo_dir is not None:
@@ -873,7 +878,7 @@ def create_sweep_interactively(
         print("> ID:   " + sweep_id, file=f)
         print("", file=f)
         print("**Description**", file=f)
-        for k, v in extract_keys_with_values(sweep_config["parameters"]).items():
+        for k, v in sweeped_over.items():
             print(f"- {k}: {', '.join(map(str, v))}", file=f)
         print("", file=f)
         if config_repo_dir is not None:
@@ -887,7 +892,7 @@ def create_sweep_interactively(
             file=f,
         )
 
-    return sweep_id
+    return entity + "/" + project + "/" + sweep_id
 
 
 def update_sweep_dict(d, u):
