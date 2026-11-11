@@ -1,0 +1,15 @@
+---
+## Sweep PPO 32 (xnhff844)
+Created at: 2026-11-11 20:16:48
+Est. runs: 120
+
+> ID:   xnhff844
+
+**Description**
+- seed: 1, 2, 3, 4, 5
+- env_params.parameters.env_name: brax-ant, brax-halfcheetah, brax-hopper, brax-reacher, brax-walker2d, brax-humanoid
+- model: LRU, CTRNN
+- meta_rl: True, False
+
+Git hash: 793642d
+URL: https://wandb.ai/franzknut/PPO-RNN/sweeps/xnhff844

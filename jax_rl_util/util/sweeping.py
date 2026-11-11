@@ -268,7 +268,9 @@ def extract_keys_with_values(d: dict, parent_key: str = "") -> dict:
         if "values" in v:
             result[key_path] = v["values"]
         elif "distribution" in v:
-            result[key_path] = f"{v['distribution']} [{v.get('min', '')}, {v.get('max', '')}]"
+            result[key_path] = (
+                f"{v['distribution']} [{v.get('min', '')}, {v.get('max', '')}]"
+            )
         else:
             result.update(extract_keys_with_values(v, key_path))
     return result
@@ -293,7 +295,9 @@ def _git(repo_dir, *args) -> str:
     """Run a git command in `repo_dir` and return its stripped output."""
     import subprocess
 
-    out = subprocess.run(["git", "-C", str(repo_dir), *args], capture_output=True, text=True)
+    out = subprocess.run(
+        ["git", "-C", str(repo_dir), *args], capture_output=True, text=True
+    )
     return out.stdout.strip()
 
 
@@ -331,6 +335,8 @@ def create_sweep_interactively(
     -------
     str
         Sweep path ``<entity>/<project>/<sweep_id>``.
+    int
+        Estimated number of runs in the sweep.
     """
     import wandb
 
@@ -385,7 +391,7 @@ def create_sweep_interactively(
     with open(f"sweeps/{name}.txt", "w") as f:
         f.write("\n".join(lines) + "\n")
 
-    return sweep_path
+    return sweep_path, est_runs
 
 
 def parse_sweep_args(args: list[str] | None = None) -> SweepConfig:
@@ -456,7 +462,7 @@ def create_sweep(
         return "dry-run"
     project = options.project or project or (default and default.project_name)
     entity = options.entity or entity or (default and default.repo) or WANDB_ENTITY
-    sweep_path = create_sweep_interactively(
+    sweep_path, est_runs = create_sweep_interactively(
         sweep_config,
         project,
         config_repo_dir=config_repo_dir,
@@ -465,10 +471,7 @@ def create_sweep(
     )
     if print_agent_command:
         print(f"Created sweep {sweep_path}. Start an agent with:")
-        if os.path.exists("launch_batch_slurm.sh"):
-            print(f'./launch_batch_slurm.sh "wandb agent {sweep_path}"')
-        else:
-            print(f"wandb agent {sweep_path}")
+        print(f'./launch_batch_slurm.sh "wandb agent {sweep_path}" {est_runs}')
     return sweep_path
 
 
