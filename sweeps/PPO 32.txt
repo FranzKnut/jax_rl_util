@@ -1,9 +1,9 @@
 ---
-## Sweep PPO 32 (cec54kds)
-Created at: 2026-11-11 23:07:41
+## Sweep PPO 32 (io466qgk)
+Created at: 2026-11-11 23:19:12
 Est. runs: 120
 
-> ID:   cec54kds
+> ID:   io466qgk
 
 **Description**
 - seed: 1, 2, 3, 4, 5
@@ -11,5 +11,5 @@ Est. runs: 120
 - model: LRU, CTRNN
 - meta_rl: True, False
 
-Git hash: d4e7aa6
-URL: https://wandb.ai/franzknut/PPO-RNN/sweeps/cec54kds
+Git hash: f675594
+URL: https://wandb.ai/franzknut/PPO-RNN/sweeps/io466qgk

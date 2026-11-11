@@ -64,7 +64,8 @@ def make_sweep_config(
     program : str or os.PathLike, optional
         Script the agent runs. Usually ``__file__``; it is stored relative to
         the current working directory, which should be the repo root that the
-        agents are started from.
+        agents are started from. The agent runs it as a module (``python -m``)
+        so imports resolve to that checkout, not to an installed copy.
     name : str, optional
         Default sweep name.
     method : str, optional
@@ -97,11 +98,19 @@ def make_sweep_config(
     if program is not None:
         sweep_config["program"] = os.path.relpath(program)
         # No ${args}: runs read the sweep parameters from wandb.config in `with_logger`.
-        command = command or ["${env}", "${interpreter}", "${program}", TRIAL_FLAG]
+        command = command or ["${env}", "${interpreter}", *_program_target(program), TRIAL_FLAG]
     if command is not None:
         sweep_config["command"] = command
     sweep_config["parameters"] = params
     return sweep_config
+
+
+def _program_target(program: str | os.PathLike) -> list[str]:
+    """Return ``["-m", module]`` for `program`, or the path form if outside the cwd."""
+    rel = os.path.relpath(program)
+    if rel.startswith(os.pardir):
+        return ["${program}"]
+    return ["-m", os.path.splitext(rel)[0].replace(os.sep, ".")]
 
 
 def update_sweep_dict(d: dict, u: Mapping) -> dict:
