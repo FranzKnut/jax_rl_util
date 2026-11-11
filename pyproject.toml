@@ -18,9 +18,9 @@ simple-parsing = "^0.1.6"
 jaxtyping      = "*"
 jax            = "*"
 distrax        = "*"
-box2d = "^2.3.10"
-pygame = "^2.6.1"
-swig = "^4.4.1"
+box2d          = "^2.3.10"
+pygame         = "^2.6.1"
+swig           = "^4.4.1"
 
 
 [build-system]
