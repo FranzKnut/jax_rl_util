@@ -27,7 +27,7 @@ set -- "${args[@]}"
 cmd=${1:?usage: ./launch_batch_slurm.sh [--no-prep] <command> [jobs_per_server]}
 num_tasks=${2:-1}
 
-launch="$sbatch_script python -m $cmd"
+launch="$sbatch_script poetry run python -m $cmd"
 run_id=$(date +%Y%m%d_%H%M%S)
 
 # Snapshot server list once to avoid races if the file changes mid-run.

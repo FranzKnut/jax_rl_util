@@ -167,3 +167,4 @@ tmp/
 logs/
 data/
 output/
+poetry.lock
