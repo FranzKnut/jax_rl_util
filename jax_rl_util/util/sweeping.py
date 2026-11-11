@@ -307,7 +307,7 @@ def create_sweep_interactively(
 ) -> str:
     """Create a wandb sweep, asking for confirmation and a sweep name.
 
-    A description of the sweep is written to ``logs/sweeps/<name>.txt``.
+    A description of the sweep is written to ``sweeps/<name>.txt``.
     For more info on the config format, see the wandb documentation.
 
     Parameters
@@ -363,7 +363,7 @@ def create_sweep_interactively(
     sweep_id = wandb.sweep(sweep_config, project=project, entity=entity, **kwargs)
     sweep_path = f"{entity}/{project}/{sweep_id}"
 
-    os.makedirs("logs/sweeps", exist_ok=True)
+    os.makedirs("sweeps", exist_ok=True)
     lines = [
         "---",
         f"## Sweep {name} ({sweep_id})",
@@ -382,7 +382,7 @@ def create_sweep_interactively(
     if based_on_sweep is not None:
         lines.append(f"Based on sweep: {based_on_sweep}")
     lines.append(f"URL: https://wandb.ai/{entity}/{project}/sweeps/{sweep_id}")
-    with open(f"logs/sweeps/{name}.txt", "w") as f:
+    with open(f"sweeps/{name}.txt", "w") as f:
         f.write("\n".join(lines) + "\n")
 
     return sweep_path
