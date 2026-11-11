@@ -1,7 +1,7 @@
 #!/bin/bash
 
-#SBATCH -J "RoboRacer_PreTraining"
-#SBATCH --gpus=2
+#SBATCH -J "jax_rl_util"
+## SBATCH --gpus=2
 #SBATCH --output=./slurm_out/%x-%A_%a.out
 
 # MAKE SURE OUTPUT DIR EXISTS!!
