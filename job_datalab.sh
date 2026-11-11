@@ -20,7 +20,6 @@ mkdir -p $TMPDIR
 
 source ~/.bashrc
 micromamba activate jax
-source run.sh
 
 echo $@
 $@
