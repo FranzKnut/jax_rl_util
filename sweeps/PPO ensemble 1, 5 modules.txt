@@ -1,0 +1,17 @@
+---
+## Sweep PPO ensemble 1, 5 modules (4xiirap5)
+Created at: 2026-11-12 18:11:51
+Est. runs: 54
+
+> ID:   4xiirap5
+
+**Description**
+- seed: 1, 2, 3
+- env_params.parameters.env_name: hopper, halfcheetah, ant
+- optimizer_params.parameters.learning_rate: 0.001
+- model_config.parameters.model_name: bptt, lru, lrc
+- model_config.parameters.num_modules: 1, 5
+
+Git hash: 2fa9494
+URL: https://wandb.ai/franzknut/ppo_rnn_ensemble/sweeps/4xiirap5
+Launch: ./launch_batch_slurm.sh "wandb agent franzknut/ppo_rnn_ensemble/4xiirap5" 54

@@ -9,10 +9,20 @@
 # only names the SLURM jobs.
 
 repo_dir="jax_rl_util"
+
+## SERVER SPECIFIC CONFIGURATION
+# servers=("datalab")
+servers=("vsc5")
 # micromamba, not mamba: the alias isn't expanded in non-interactive bash
-install="git clone git@github.com:FranzKnut/jax_rl_util.git && cd jax_rl_util && source ~/.bashrc && micromamba activate jax && poetry update"
-prep="git pull && source ~/.bashrc && micromamba activate jax && poetry update && mkdir -p slurm_out"
-sbatch_script="job_datalab.sh"
+# activate="source ~/.bashrc && micromamba activate jax"
+activate="echo"
+# sbatch_script="job_datalab.sh"
+sbatch_script="job_vsc.sh"
+## END SERVER SPECIFIC CONFIGURATION
+
+install="git clone git@github.com:FranzKnut/jax_rl_util.git && cd jax_rl_util && $activate && poetry update"
+prep="git pull && $activate && poetry update && mkdir -p slurm_out"
+
 
 skip_prep=0
 args=()
@@ -31,7 +41,7 @@ launch="$sbatch_script poetry run python -m $cmd"
 run_id=$(date +%Y%m%d_%H%M%S)
 
 # Snapshot server list once to avoid races if the file changes mid-run.
-servers=("datalab")
+
 # while IFS= read -r server || [ -n "$server" ]; do
 #     [ -z "$server" ] && continue
 #     if [[ "$server" == \#* ]]; then

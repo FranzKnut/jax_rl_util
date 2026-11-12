@@ -4,6 +4,8 @@
 #SBATCH --partition=zen3_0512
 #SBATCH --ntasks=10
 #SBATCH --qos=zen3_0512
+#SBATCH --mem=32G
+#SBATCH --time=3:00:00
 #SBATCH --output=./slurm_out/%x-%A_%a.out
 
 # MAKE SURE OUTPUT DIR EXISTS!!

@@ -38,11 +38,11 @@ PARAMS = {
         }
     },
     # Optimizer
-    # "optimizer_params": {"parameters": {
-    #     "learning_rate": {"values": [1e-3]},
-    #     "opt_name": {"value": "sgd"},
-    #     "gradient_clip": {"value": None},
-    # }},
+    "optimizer_params": {"parameters": {
+        "learning_rate": {"values": [1e-3]},
+        "opt_name": {"value": "adam"},
+        "gradient_clip": {"value": None},
+    }},
     # RNN
     "num_units": {"value": 32},
     "model": {"values": ["LRU", "CTRNN"]},
