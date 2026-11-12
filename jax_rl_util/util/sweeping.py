@@ -316,6 +316,7 @@ def create_sweep_interactively(
     config_repo_dir=None,
     based_on_sweep: str | None = None,
     entity: str = WANDB_ENTITY,
+    print_agent_command: bool = True,
     **kwargs,
 ) -> str:
     """Create a wandb sweep, asking for confirmation and a sweep name.
@@ -337,6 +338,9 @@ def create_sweep_interactively(
         Sweep this one builds on, e.g. for pretrained models. Only logged.
     entity : str, optional
         wandb entity.
+    print_agent_command : bool, optional
+        Whether to print how to start agents for the new sweep, and add that
+        command to the description.
     **kwargs
         Passed on to `wandb.sweep`.
 
@@ -397,6 +401,11 @@ def create_sweep_interactively(
     if based_on_sweep is not None:
         lines.append(f"Based on sweep: {based_on_sweep}")
     lines.append(f"URL: https://wandb.ai/{entity}/{project}/sweeps/{sweep_id}")
+    if print_agent_command:
+        launch = f'./launch_batch_slurm.sh "wandb agent {sweep_path}" {est_runs}'
+        lines.append(f"Launch: {launch}")
+        print(f"Created sweep {sweep_path}. Start an agent with:")
+        print(launch)
     with open(f"sweeps/{name}.txt", "w") as f:
         f.write("\n".join(lines) + "\n")
 
@@ -457,7 +466,7 @@ def create_sweep(
     based_on_sweep : str, optional
         See `create_sweep_interactively`.
     print_agent_command : bool, optional
-        Whether to print how to start an agent for the new sweep.
+        See `create_sweep_interactively`.
 
     Returns
     -------
@@ -471,16 +480,14 @@ def create_sweep(
         return "dry-run"
     project = options.project or project or (default and default.project_name)
     entity = options.entity or entity or (default and default.repo) or WANDB_ENTITY
-    sweep_path, est_runs = create_sweep_interactively(
+    sweep_path = create_sweep_interactively(
         sweep_config,
         project,
         config_repo_dir=config_repo_dir,
         based_on_sweep=based_on_sweep,
         entity=entity,
+        print_agent_command=print_agent_command,
     )
-    if print_agent_command:
-        print(f"Created sweep {sweep_path}. Start an agent with:")
-        print(f'./launch_batch_slurm.sh "wandb agent {sweep_path}" {est_runs}')
     return sweep_path
 
 
