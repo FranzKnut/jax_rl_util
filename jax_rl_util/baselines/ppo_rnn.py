@@ -871,7 +871,10 @@ def make_train(
             # Compute the last value
             x = normalize(env_state.obs, _normalizer_state)
             if config.meta_rl:
-                x = jnp.concatenate([x, re_action, env_state.reward], axis=-1)
+                x = jnp.concatenate(
+                    [x, re_action, env_state.reward.reshape((env.batch_size, 1))],
+                    axis=-1,
+                )
             ac_in = (x[None], env_state.done[None, :])
             _, _, _last_val = network.apply(
                 train_state.params, hstate, ac_in, rngs={"default": rng}
@@ -1257,8 +1260,6 @@ def train_and_eval(
         return logger["best_eval_reward"]
     except Exception as e:
         raise e
-    finally:
-        logger.finalize()
 
 
 if __name__ == "__main__":

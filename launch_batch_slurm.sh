@@ -10,18 +10,21 @@
 
 repo_dir="jax_rl_util"
 
-## SERVER SPECIFIC CONFIGURATION
-# servers=("datalab")
-servers=("vsc5")
+### SERVER SPECIFIC CONFIGURATION
+## datalb
+servers=("datalab")
 # micromamba, not mamba: the alias isn't expanded in non-interactive bash
-# activate="source ~/.bashrc && micromamba activate jax"
-activate="echo"
-# sbatch_script="job_datalab.sh"
-sbatch_script="job_vsc.sh"
-## END SERVER SPECIFIC CONFIGURATION
+activate="source ~/.bashrc && micromamba activate jax"
+sbatch_script="job_datalab.sh"
+## vsc5
+# servers=("vsc5")
+# activate="echo"
+# sbatch_script="job_vsc.sh"
+### END SERVER SPECIFIC CONFIGURATION
 
+slurm_out_dir="slurm_out"
 install="git clone git@github.com:FranzKnut/jax_rl_util.git && cd jax_rl_util && $activate && poetry update"
-prep="git pull && $activate && poetry update && mkdir -p slurm_out"
+prep="git pull && $activate && poetry update && mkdir -p $slurm_out_dir"
 
 
 skip_prep=0
@@ -72,7 +75,7 @@ fi
 for server in "${servers[@]}"; do
     echo
 
-    ssh "$server" "env REPO_DIR='$repo_dir' RUN_ID='$run_id' NUM_TASKS='$num_tasks' INSTALL='$install' PREP='$prep' SKIP_PREP='$skip_prep' LAUNCH='$launch' SWEEP_ID='$cmd' bash -s" <<'EOF'
+    ssh "$server" "env REPO_DIR='$repo_dir' RUN_ID='$run_id' NUM_TASKS='$num_tasks' INSTALL='$install' PREP='$prep' SLURM_OUT_DIR='$slurm_out_dir' SKIP_PREP='$skip_prep' LAUNCH='$launch' SWEEP_ID='$cmd' bash -s" <<'EOF'
 # set -euo pipefail
 export PATH="~/.local/bin:$PATH"
 
@@ -96,9 +99,9 @@ for i in $(seq 1 "$NUM_TASKS"); do
     echo
     echo "Launching agent $i"
     session_name="${REPO_DIR}_${SWEEP_ID##*/}_${RUN_ID}_${i}"
-    mkdir -p slurm_out
-    echo sbatch --job-name="$session_name" $LAUNCH
-    sbatch --job-name="$session_name" $LAUNCH
+    mkdir -p $SLURM_OUT_DIR
+    echo sbatch --job-name="$session_name" --output=$SLURM_OUT_DIR/slurm-%x_%j.out $LAUNCH
+    sbatch --job-name="$session_name" --output=$SLURM_OUT_DIR/slurm-%x_%j.out $LAUNCH
 done
 
 echo
