@@ -13,6 +13,7 @@ from jax_rl_util.optimizers import OptimizerConfig
 from jax_rl_util.td_lambda.rnn_ac import RNNActorCritic
 from jax_rl_util.util.logging_util import DummyLogger, with_logger
 from jax_rtrl.models.cells import CELL_TYPES
+from jax_rtrl.models.seq_models import RNNEnsembleConfig
 from jax_rtrl.networks.policies import PolicyConfig
 
 RESET_AWARE_MODELS = {
@@ -51,7 +52,8 @@ class PPOEnsembleParams(base_ppo.PPOParams):
             dist_scale_bounds=(1e-5, 1.0),
         )
     )
-    train_encoder: bool = False
+    rnn_config: RNNEnsembleConfig | None = None  # Shared RNN before actor and critic, e.g. from an RTRRL checkpoint
+    train_encoder: bool = False  # Let gradients flow into the encoder and the shared RNN
     env_params: EnvironmentConfig = field(
         default_factory=lambda: EnvironmentConfig(
             env_name="hopper",
@@ -81,6 +83,14 @@ def _resolve_rnn_config(config: "PPOEnsembleParams") -> PolicyConfig:
         updates["hidden_size"] = config.num_units
 
     return replace(base_cfg, **updates)
+
+
+def _downcast(config):
+    """Replace an online model name by the one PPO trains with BPTT, e.g. ``rflo`` by ``bptt``."""
+    if config is None or config.model_name is None:
+        return config
+    mapped = MODEL_DOWNCAST.get(config.model_name, config.model_name)
+    return config if mapped == config.model_name else replace(config, _layers=config.layers, model_name=mapped)
 
 
 def _extract_value(value_dist):
@@ -117,7 +127,7 @@ class EnsembleActorCritic(nn.Module):
         self.cell = RNNActorCritic(
             a_dim=self.action_dim,
             discrete=self.discrete,
-            # rnn_config=policy_cfg,
+            rnn_config=_downcast(self.config.rnn_config),
             policy_config=policy_cfg,
             critic_config=critic_cfg,
             use_cnn=use_cnn,
