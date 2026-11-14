@@ -218,7 +218,8 @@ def make_output(cfg: EvalConfig, df: pd.DataFrame, suffix: str = ""):
     Returns
     -------
     matplotlib.figure.Figure or tuple or dict
-        Figure, ``(table, text)`` for tables, or the summary dict.
+        Figure, ``(table, text)`` for tables, or the summary dict (summaries
+        also save a per-hyperparameter effects figure).
     """
     value = "value" if cfg.kind == "line" and "key" in df.columns else cfg.value
     figsize = tuple(cfg.figsize) if cfg.figsize else None
@@ -243,7 +244,10 @@ def make_output(cfg: EvalConfig, df: pd.DataFrame, suffix: str = ""):
         return T.make_table(df, value, cfg.index, cfg.by, cfg.measure, cfg.decimals, cfg.table_format,
                             cfg.row_order or None, cfg.col_order or None, cfg.transpose)
     elif cfg.kind == "summary":
-        return T.summarize(df, value, cfg.by)
+        result = T.summarize(df, value, cfg.by)
+        fig = P.effects(df, value, cfg.by, cfg.split_by, cfg.err, sharey=True, rot=cfg.rot, **common)
+        P.save_fig(fig, (cfg.out or cfg.name or cfg.kind) + suffix, cfg.out_dir, cfg.formats, cfg.transparent)
+        return result
     else:
         raise ValueError(f"Unknown kind {cfg.kind}")
     P.save_fig(fig, (cfg.out or cfg.name or cfg.kind) + suffix, cfg.out_dir, cfg.formats, cfg.transparent)

@@ -189,6 +189,29 @@ def _cache_ext(fmt: str) -> str:
     return {"parquet": ".parquet", "json": ".json"}[fmt]
 
 
+def _arrow_safe(col: pd.Series) -> pd.Series:
+    """Make an object column storable in parquet.
+
+    wandb summaries mix numbers with strings such as ``"NaN"`` or ``"Infinity"``
+    in one column. Columns that are numeric apart from such strings become
+    floats; other mixed columns become strings (missing values stay missing).
+    """
+    vals = col.dropna()
+    if vals.empty or len({type(v) for v in vals}) == 1:
+        return col
+    if all(isinstance(v, (int, float, np.number)) or (isinstance(v, str) and _is_float(v)) for v in vals):
+        return col.map(lambda v: np.nan if v is None else float(v)).astype(float)
+    return col.map(lambda v: v if v is None or (isinstance(v, float) and np.isnan(v)) else str(v))
+
+
+def _is_float(s: str) -> bool:
+    try:
+        float(s)
+        return True
+    except ValueError:
+        return False
+
+
 def save_table(df: pd.DataFrame, path: str) -> str:
     """Save a run or history table. Dict columns are stored as JSON strings.
 
@@ -210,6 +233,9 @@ def save_table(df: pd.DataFrame, path: str) -> str:
         if out[c].dtype == object and out[c].map(lambda v: isinstance(v, (dict, list))).any():
             out[c] = out[c].map(lambda v: json.dumps(v, default=str) if isinstance(v, (dict, list)) else v)
     if path.endswith(".parquet"):
+        for c in out.columns:
+            if pd.api.types.is_object_dtype(out[c]):
+                out[c] = _arrow_safe(out[c])
         out.to_parquet(path, index=False)
     elif path.endswith(".json"):
         out.to_json(path, orient="records", lines=True, date_format="iso", default_handler=str)
@@ -420,6 +446,7 @@ def load_runs(source, flatten: bool = True) -> pd.DataFrame:
     dfs = []
     for p in paths:
         d = _read_one(p)
+        d = d.copy()  # wide wandb tables arrive fragmented
         d["source"] = os.path.splitext(os.path.basename(p))[0]
         dfs.append(d)
     df = pd.concat(dfs, ignore_index=True)

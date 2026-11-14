@@ -411,3 +411,70 @@ def scatter(
     finish_kw["xlabel"] = finish_kw.get("xlabel") or x
     finish_kw["ylabel"] = finish_kw.get("ylabel") or y
     return _finish(fig, [ax], **finish_kw)
+
+
+def effects(
+    df: pd.DataFrame,
+    value: str,
+    by,
+    split_by: str = "",
+    err: str = "sem",
+    figsize=None,
+    sharey: bool = True,
+    rot: float = 0,
+    **finish_kw,
+):
+    """Effect of each hyperparameter on its own: one panel per column in ``by``.
+
+    Each panel shows the mean of ``value`` (usually normalized per env) for every
+    value of that hyperparameter, averaged over all other settings, with error
+    bars. If ``split_by`` is given, the mean per split (e.g. per env) is drawn
+    as dots on top, so outliers like a single env that behaves differently
+    stand out.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Run table.
+    value : str
+        Score column.
+    by : str or list[str]
+        Hyperparameter columns, one panel each.
+    split_by : str, optional
+        Column whose group means are drawn as dots.
+    err : str, optional
+        Error bar: "sem", "std" or "" for none, by default "sem".
+    figsize : tuple, optional
+        Figure size, by default 2.5 inches per panel.
+    sharey : bool, optional
+        Share the y axis, by default True.
+    rot : float, optional
+        Tick label rotation, by default 0.
+    **finish_kw
+        ``title``, ``ylim``, ``xlim``, ``ylabel``, ``xlabel``, ``logy``.
+
+    Returns
+    -------
+    matplotlib.figure.Figure
+    """
+    by = [by] if isinstance(by, str) else list(by)
+    fig, axes = _subplots(len(by), figsize or (2.5 * len(by), 3), sharey=sharey)
+    cycle = plt.rcParams["axes.prop_cycle"].by_key()["color"]
+    splits = ordered(df[split_by].dropna().unique()) if split_by else []
+    for ax, col in zip(axes, by, strict=True):
+        d = df.assign(_label=df[col].astype(str))
+        g = d.groupby("_label")[value]
+        labels = list(g.mean().sort_values(ascending=False).index)
+        ax.bar(labels, g.mean().reindex(labels), yerr=g.agg(err).reindex(labels) if err else None,
+               color="lightgray", edgecolor="gray", capsize=3)
+        for i, s in enumerate(splits):
+            m = d[d[split_by] == s].groupby("_label")[value].mean().reindex(labels)
+            ax.scatter(range(len(labels)), m, color=cycle[i % len(cycle)], s=18, zorder=3,
+                       label=str(s) if ax is axes[0] else None)
+        ax.set_xticks(range(len(labels)))
+        ax.set_xticklabels(labels, rotation=rot, ha="right" if rot else "center")
+        ax.set_title(col)
+        ax.grid(alpha=0.3, axis="y")
+    if splits:
+        fig.legend(loc="upper center", ncol=len(splits), bbox_to_anchor=(0.5, 0.0), frameon=False)
+    return _finish(fig, axes, **finish_kw)
