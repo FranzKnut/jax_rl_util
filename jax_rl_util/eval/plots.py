@@ -9,7 +9,7 @@ import numpy as np
 import pandas as pd
 from matplotlib.lines import Line2D
 
-from jax_rl_util.eval.select import group_label, ordered
+from jax_rl_util.eval.select import _as_list, group_label, ordered
 
 PLOT_DIR = "plots"
 
@@ -55,7 +55,17 @@ def _subplots(n: int, figsize=None, rows: int = 1, sharey: bool = False):
     return fig, axes[:n]
 
 
+def _split_column(df, split_by):
+    """``(df, column)`` with several ``split_by`` columns joined into one label column."""
+    split_by = _as_list(split_by)
+    if len(split_by) <= 1:
+        return df, (split_by[0] if split_by else "")
+    rows = df[split_by].notna().all(axis=1)
+    return df.assign(_split=group_label(df, split_by).where(rows)), "_split"
+
+
 def _splits(df, split_by, split_order=None):
+    df, split_by = _split_column(df, split_by)
     if not split_by:
         return [("", df)]
     keys = ordered(df[split_by].dropna().unique(), split_order)
@@ -85,7 +95,7 @@ def boxplot(
     df: pd.DataFrame,
     value: str,
     by,
-    split_by: str = "",
+    split_by: str | list[str] = "",
     order: list | None = None,
     split_order: list | None = None,
     label_fn: Callable[[pd.Series], str] | None = None,
@@ -105,8 +115,8 @@ def boxplot(
         Column to plot.
     by : str or list[str]
         Columns that define the boxes; joined into one label.
-    split_by : str, optional
-        Column with one subplot per value, by default none.
+    split_by : str or list[str], optional
+        Column(s) with one subplot per (joined) value, by default none.
     order, split_order : list, optional
         Preferred order of box labels / subplots.
     label_fn : Callable, optional
@@ -143,7 +153,7 @@ def barplot(
     df: pd.DataFrame,
     value: str,
     by,
-    split_by: str = "",
+    split_by: str | list[str] = "",
     agg: str = "mean",
     err: str = "std",
     order: list | None = None,
@@ -165,7 +175,7 @@ def barplot(
         Column to plot.
     by : str or list[str]
         Columns that define the bars.
-    split_by : str, optional
+    split_by : str or list[str], optional
         Column with one subplot per value.
     agg : str, optional
         Bar height, by default "mean".
@@ -259,7 +269,7 @@ def lineplot(
     x: str = "step",
     value: str = "value",
     run: str = "run_id",
-    split_by: str = "",
+    split_by: str | list[str] = "",
     agg: str = "mean",
     shade: str = "std",
     window: int = 0,
@@ -288,7 +298,7 @@ def lineplot(
         Columns that define the lines.
     x, value, run : str, optional
         Step, value and run id columns.
-    split_by : str, optional
+    split_by : str or list[str], optional
         Column with one subplot per value.
     agg, shade, window, downsample
         See ``aggregate_curves``.
@@ -417,7 +427,7 @@ def effects(
     df: pd.DataFrame,
     value: str,
     by,
-    split_by: str = "",
+    split_by: str | list[str] = "",
     err: str = "sem",
     figsize=None,
     sharey: bool = True,
@@ -440,7 +450,7 @@ def effects(
         Score column.
     by : str or list[str]
         Hyperparameter columns, one panel each.
-    split_by : str, optional
+    split_by : str or list[str], optional
         Column whose group means are drawn as dots.
     err : str, optional
         Error bar: "sem", "std" or "" for none, by default "sem".
@@ -460,6 +470,7 @@ def effects(
     by = [by] if isinstance(by, str) else list(by)
     fig, axes = _subplots(len(by), figsize or (2.5 * len(by), 3), sharey=sharey)
     cycle = plt.rcParams["axes.prop_cycle"].by_key()["color"]
+    df, split_by = _split_column(df, split_by)
     splits = ordered(df[split_by].dropna().unique()) if split_by else []
     for ax, col in zip(axes, by, strict=True):
         d = df.assign(_label=df[col].astype(str))

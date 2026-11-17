@@ -20,14 +20,14 @@ from jax_rl_util.util.sweeping import create_sweep, is_trial_run, make_sweep_con
 PARAMS = {
     # Training
     "debug": {"value": False},
-    "seed": {"values": [1, 2, 3]},
+    "seed": {"values": [1, 2]},
     # Logging
     "log_code": {"value": False},
     "save_model": {"value": False},
     # Environment
     "env_params": {
         "parameters": {
-            "env_name": {"values": ["hopper", "halfcheetah", "ant"]},
+            "env_name": {"values": ["hopper", "halfcheetah", "ant", "humanoid", "walker2d"]},
             "batch_size": {"value": 32},
             "max_ep_length": {"value": 1000},
             "obs_mask": {"value": None},
@@ -45,8 +45,8 @@ PARAMS = {
     "model_config": {
         "parameters": {
             "model_name": {"values": ["bptt", "lru", "lrc"]},
-            "hidden_size": {"value": 32},
-            "num_layers": {"value": 1},
+            "hidden_size": {"value": 64},
+            "num_layers": {"value": 2},
             "num_modules": {"values": [1, 5]},
         }
     },
@@ -55,7 +55,7 @@ PARAMS = {
 
 def run_trial():
     """Train PPO with an RNN ensemble as one run of the sweep."""
-    with_logger(train_and_eval, PPOEnsembleParams(logging="wandb"))
+    with_logger(train_and_eval, PPOEnsembleParams(logging="wandb", repo="tuwien_roboracer"))
 
 
 if __name__ == "__main__":

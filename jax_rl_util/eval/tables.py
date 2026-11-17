@@ -54,6 +54,7 @@ def make_table(
     transpose: bool = False,
     show_count: bool = False,
     verbose: bool = True,
+    bold: Literal["", "min", "max"] = "",
 ) -> tuple[pd.DataFrame, str]:
     """Make a ``measure ± std`` table from a run table.
 
@@ -81,6 +82,8 @@ def make_table(
         Append ``(n)`` with the number of seeds to each cell, by default False.
     verbose : bool, optional
         Print the raw pivot and the formatted table, by default True.
+    bold : {"", "min", "max"}, optional
+        Bold the cell with the lowest or highest ``measure`` in each column.
 
     Returns
     -------
@@ -100,6 +103,10 @@ def make_table(
     center, std, count = pivot[measure], pivot["std"], pivot["count"]
     # A single seed has no std; show the value alone
     table = center.map(f.format) + (pm + std.fillna(0).map(f.format)).where(std.notna(), "")
+    if bold:
+        best = center.eq(center.min() if bold == "min" else center.max())
+        wrap = "\\textbf{{{}}}" if fmt == "latex" else "**{}**"
+        table = table.where(~best, table.map(wrap.format))
     if show_count:
         table = table + " (" + count.astype(int).astype(str) + ")"
     table = table.where(center.notna(), "")

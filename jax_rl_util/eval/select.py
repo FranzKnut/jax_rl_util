@@ -194,14 +194,15 @@ def group_label(df: pd.DataFrame, by, sep: str = " ") -> pd.Series:
     Returns
     -------
     pd.Series
-        Labels; empty strings if ``by`` is empty.
+        Labels; empty strings if ``by`` is empty. Missing values are left
+        out of the label.
     """
     by = _as_list(by)
     if not by:
         return pd.Series([""] * len(df), index=df.index)
-    if len(by) == 1:
-        return df[by[0]].astype(str)
-    return df[by].astype(str).agg(sep.join, axis=1).str.strip()
+    # pandas >= 3 keeps NaN through astype(str), so blank it first
+    parts = df[by].astype(object).where(df[by].notna(), "").astype(str)
+    return parts.agg(lambda row: sep.join(v for v in row if v), axis=1)
 
 
 def ordered(values, order: list | None = None) -> list:

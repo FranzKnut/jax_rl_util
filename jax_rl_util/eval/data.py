@@ -343,7 +343,7 @@ def _run_rows(runs, history_keys=None, x_key="_step", max_step=None):
 
 
 def download_runs(
-    project: str,
+    project: str | list[str],
     sweeps: list[str] | None = None,
     filters: dict | None = None,
     entity: str = ENTITY,
@@ -358,10 +358,11 @@ def download_runs(
 
     Parameters
     ----------
-    project : str
-        wandb project, ``"name"`` or ``"entity/name"``.
+    project : str or list[str]
+        wandb project(s), ``"name"`` or ``"entity/name"``. With several, each
+        sweep is looked up in every project and cached under the one holding it.
     sweeps : list[str], optional
-        Sweep ids. By default all runs of the project go into ``all.<ext>``.
+        Sweep ids. By default all runs of each project go into ``all.<ext>``.
     filters : dict, optional
         Extra wandb API filters (MongoDB style), by default None.
     entity : str, optional
@@ -384,10 +385,47 @@ def download_runs(
     Returns
     -------
     list[str]
-        Paths of the run caches.
+        Paths of the run caches. Fresh downloads get a ``project`` column.
     """
-    api = None
-    path = project if "/" in project else f"{entity}/{project}"
+    projects = [project] if isinstance(project, str) else list(project)
+    api, paths = None, []
+    for p in projects:
+        path = p if "/" in p else f"{entity}/{p}"
+        # With several projects a sweep lives in one of them; skip the others.
+        if len(projects) > 1 and sweeps:
+            api = api or _wandb_api()
+            found = [s for s in sweeps if _sweep_exists(api, path, s)]
+        else:
+            found = sweeps
+        if sweeps and not found:
+            continue
+        paths += _download_project(
+            path, found, filters, out_dir, force, history_keys, x_key, max_step, fmt, api
+        )
+    if sweeps and len(projects) > 1:
+        cached = {os.path.splitext(os.path.basename(x))[0] for x in paths}
+        missing = [s for s in sweeps if s not in cached]
+        if missing:
+            print(f"Sweeps {missing} not found in any of {projects}")
+    return paths
+
+
+def _wandb_api():
+    import wandb
+
+    return wandb.Api(timeout=60)
+
+
+def _sweep_exists(api, path: str, sweep: str) -> bool:
+    try:
+        api.sweep(f"{path}/{sweep}")
+    except Exception:  # noqa: BLE001
+        return False
+    return True
+
+
+def _download_project(path, sweeps, filters, out_dir, force, history_keys, x_key, max_step, fmt, api):
+    """`download_runs` for one ``entity/project`` path; returns the run cache paths."""
     paths = []
     for sweep in sweeps or [None]:
         out = cache_path(path, sweep, out_dir=out_dir, fmt=fmt)
@@ -397,15 +435,13 @@ def download_runs(
             print(f"Using cached {out}")
             paths.append(out)
             continue
-        if api is None:
-            import wandb
-
-            api = wandb.Api(timeout=60)
+        api = api or _wandb_api()
         _filters = dict(filters or {})
         if sweep is not None:
             _filters["sweep"] = sweep
         print(f"Downloading {path} {sweep or ''} ...")
         runs_df, hist_df = _run_rows(api.runs(path, filters=_filters, per_page=100), history_keys, x_key, max_step)
+        runs_df["project"] = path.split("/")[-1]
         if sweep is not None:
             try:
                 runs_df["Sweep_name"] = api.sweep(f"{path}/{sweep}").name

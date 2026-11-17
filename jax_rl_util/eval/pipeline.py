@@ -9,6 +9,7 @@ A repo describes each plot or table as an ``EvalConfig`` preset and calls
 """
 
 import dataclasses
+import os
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -36,7 +37,7 @@ class EvalConfig:
 
     # Data source: explicit files, or a wandb project (cached in data_dir)
     data: list[str] = field(default_factory=list)  # run or history files, dirs or globs
-    project: str = ""  # wandb project, "name" or "entity/name"
+    project: list[str] = field(default_factory=list)  # wandb project(s), "name" or "entity/name"; a str works too
     sweeps: list[str] = field(default_factory=list)  # sweep ids, empty for the whole project
     history_keys: list[str] = field(default_factory=list)  # metrics to download for line plots
     x_key: str = "_step"  # history step key on wandb
@@ -54,7 +55,7 @@ class EvalConfig:
     transform: Callable[[pd.DataFrame], pd.DataFrame] | None = field(default=None, cmd=False)  # after filtering
     value: str = "best_eval_reward"  # score column, or history key for line plots
     by: list[str] = field(default_factory=list)  # boxes / bars / lines / table columns
-    split_by: str = ""  # one subplot per value
+    split_by: list[str] = field(default_factory=list)  # one subplot per (joined) value; a str works too
     figure_by: str = ""  # one figure per value
     per_seed: Literal["best", "latest", "none"] = "best"  # dedup runs per (by, split_by, seed)
     seed: str = "seed"
@@ -100,6 +101,8 @@ class EvalConfig:
     measure: str = "mean"
     decimals: int = 2
     table_format: Literal["latex", "md"] = "latex"
+    show_count: bool = False  # append (n) runs to each cell
+    bold: Literal["", "min", "max"] = ""  # bold the lowest or highest cell per column
     row_order: list[str] = field(default_factory=list)
     col_order: list[str] = field(default_factory=list)
     transpose: bool = False
@@ -110,6 +113,13 @@ class EvalConfig:
     formats: list[str] = field(default_factory=lambda: ["pdf"])
     transparent: bool = False
     show: bool = False
+
+    def __post_init__(self):
+        """Accept a single project and split_by name, as older presets pass them."""
+        if isinstance(self.project, str):
+            self.project = [self.project] if self.project else []
+        if isinstance(self.split_by, str):
+            self.split_by = [self.split_by] if self.split_by else []
 
     def replace(self, **kw) -> "EvalConfig":
         """Copy with some fields changed."""
@@ -144,7 +154,12 @@ def load(cfg: EvalConfig, derive: Callable | None = None) -> pd.DataFrame:
             cfg.history_keys or ([cfg.value] if history else None), cfg.x_key,
         )
         if history:
-            paths =[D.cache_path(cfg.project, s, True, cfg.data_dir) for s in (cfg.sweeps or [None])]
+            # Each run cache <dir>/<project>/<sweep> has its history next to it
+            paths = [
+                D.cache_path(os.path.basename(os.path.dirname(p)), os.path.splitext(os.path.basename(p))[0],
+                             True, os.path.dirname(os.path.dirname(p)))
+                for p in paths
+            ]
     return D.load_history(paths, meta_fn=derive) if history else D.load_runs(paths)
 
 
@@ -186,13 +201,13 @@ def prepare(cfg: EvalConfig, df: pd.DataFrame, derive: Callable | None = None) -
     if cfg.transform is not None:
         df = cfg.transform(df)
     if cfg.kind not in ("line", "scatter", "download") and cfg.per_seed != "none":
-        keys = cfg.by + [k for k in (cfg.split_by, cfg.figure_by, cfg.index) if k] + cfg.seed_keys
+        keys = cfg.by + cfg.split_by + [k for k in (cfg.figure_by, cfg.index) if k] + cfg.seed_keys
         if cfg.per_seed == "best":
             df = S.best_per_seed(df, value, keys, cfg.seed, cfg.maximize)
         else:
             df = S.latest_per_seed(df, keys, cfg.seed)
     if cfg.normalize:
-        df = S.normalize_per(df, value, cfg.normalize_by or [cfg.split_by])
+        df = S.normalize_per(df, value, cfg.normalize_by or cfg.split_by)
     return df
 
 
@@ -225,7 +240,7 @@ def make_output(cfg: EvalConfig, df: pd.DataFrame, suffix: str = ""):
     figsize = tuple(cfg.figsize) if cfg.figsize else None
     common = dict(figsize=figsize, **_finish_kw(cfg))
     if cfg.kind == "box":
-        print(df.groupby([k for k in [cfg.split_by, *cfg.by] if k], dropna=False)[value].count().to_string())
+        print(df.groupby([*cfg.split_by, *cfg.by], dropna=False)[value].count().to_string())
         fig = P.boxplot(df, value, cfg.by, cfg.split_by, cfg.order, cfg.split_order, cfg.label_fn, cfg.rows,
                         sharey=cfg.sharey, rot=cfg.rot, **common)
     elif cfg.kind == "bar":
@@ -242,7 +257,8 @@ def make_output(cfg: EvalConfig, df: pd.DataFrame, suffix: str = ""):
                         legend_title=cfg.legend_title, **common)
     elif cfg.kind == "table":
         return T.make_table(df, value, cfg.index, cfg.by, cfg.measure, cfg.decimals, cfg.table_format,
-                            cfg.row_order or None, cfg.col_order or None, cfg.transpose)
+                            cfg.row_order or None, cfg.col_order or None, cfg.transpose, cfg.show_count,
+                            bold=cfg.bold)
     elif cfg.kind == "summary":
         result = T.summarize(df, value, cfg.by)
         fig = P.effects(df, value, cfg.by, cfg.split_by, cfg.err, sharey=True, rot=cfg.rot, **common)

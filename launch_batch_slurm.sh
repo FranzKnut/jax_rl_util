@@ -1,57 +1,60 @@
 #!/usr/bin/env bash
 # Launch wandb sweep agents across the SLURM servers in slurm_servers.txt.
 #
-#   ./launch_batch_slurm.sh [--no-prep] <entity/project/sweep_id> [jobs_per_server]
+#   ./launch_batch_slurm.sh [--no-prep] [--server vsc5|datalab] <entity/project/sweep_id> [jobs_per_server]
 #
 # --no-prep skips the git pull / poetry update step on the servers.
+# --server picks the SLURM server (default: vsc5).
 #
 # `make_sweep_policy.py` prints the sweep path when it creates a sweep. `model`
 # only names the SLURM jobs.
 
 repo_dir="jax_rl_util"
+usage="usage: ./launch_batch_slurm.sh [--no-prep] [--server vsc5|datalab] <command> [jobs_per_server]"
+
+skip_prep=0
+server="vsc5"
+args=()
+while (( $# )); do
+    case "$1" in
+        --no-prep) skip_prep=1 ;;
+        --server) server=${2:?$usage}; shift ;;
+        --server=*) server=${1#--server=} ;;
+        *) args+=("$1") ;;
+    esac
+    shift
+done
+set -- "${args[@]}"
 
 ### SERVER SPECIFIC CONFIGURATION
-## datalb
-servers=("datalab")
-# micromamba, not mamba: the alias isn't expanded in non-interactive bash
-activate="source ~/.bashrc && micromamba activate jax"
-sbatch_script="job_datalab.sh"
-## vsc5
-# servers=("vsc5")
-# activate="echo"
-# sbatch_script="job_vsc.sh"
+case "$server" in
+    datalab)
+        servers=("datalab")
+        # micromamba, not mamba: the alias isn't expanded in non-interactive bash
+        activate="source ~/.bashrc && micromamba activate jax"
+        sbatch_script="job_datalab.sh"
+        ;;
+    vsc5)
+        servers=("vsc5")
+        activate="echo"
+        sbatch_script="job_vsc.sh"
+        ;;
+    *)
+        echo "Unknown server: $server (expected vsc5 or datalab)"
+        exit 1
+        ;;
+esac
 ### END SERVER SPECIFIC CONFIGURATION
 
 slurm_out_dir="slurm_out"
 install="git clone git@github.com:FranzKnut/jax_rl_util.git && cd jax_rl_util && $activate && poetry update"
-prep="git pull && $activate && poetry update && mkdir -p $slurm_out_dir"
+prep="git pull && { $activate && poetry update; mkdir -p $slurm_out_dir; }"
 
-
-skip_prep=0
-args=()
-for arg in "$@"; do
-    case "$arg" in
-        --no-prep) skip_prep=1 ;;
-        *) args+=("$arg") ;;
-    esac
-done
-set -- "${args[@]}"
-
-cmd=${1:?usage: ./launch_batch_slurm.sh [--no-prep] <command> [jobs_per_server]}
+cmd=${1:?$usage}
 num_tasks=${2:-1}
 
 launch="$sbatch_script poetry run python -m $cmd"
 run_id=$(date +%Y%m%d_%H%M%S)
-
-# Snapshot server list once to avoid races if the file changes mid-run.
-
-# while IFS= read -r server || [ -n "$server" ]; do
-#     [ -z "$server" ] && continue
-#     if [[ "$server" == \#* ]]; then
-#         continue
-#     fi
-#     servers+=("$server")
-# done < slurm_servers.txt
 
 if (( ${#servers[@]} == 0 )); then
     echo "No valid servers found in slurm_servers.txt"
