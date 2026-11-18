@@ -310,6 +310,14 @@ def _git(repo_dir, *args) -> str:
     return out.stdout.strip()
 
 
+def _check_num_runs(sweep_config: dict, num_runs: int | None) -> int:
+    """Return `num_runs`, or the grid size; raise if a grid disagrees."""
+    grid_size = count_combinations(sweep_config["parameters"])
+    if sweep_config.get("method") == "grid" and num_runs not in (None, grid_size):
+        raise ValueError(f"num_runs={num_runs}, but the grid has {grid_size} runs.")
+    return num_runs or grid_size
+
+
 def create_sweep_interactively(
     sweep_config: dict,
     project: str | None = None,
@@ -317,6 +325,7 @@ def create_sweep_interactively(
     based_on_sweep: str | None = None,
     entity: str = WANDB_ENTITY,
     print_agent_command: bool = True,
+    num_runs: int | None = None,
     **kwargs,
 ) -> str:
     """Create a wandb sweep, asking for confirmation and a sweep name.
@@ -341,6 +350,10 @@ def create_sweep_interactively(
     print_agent_command : bool, optional
         Whether to print how to start agents for the new sweep, and add that
         command to the description.
+    num_runs : int, optional
+        Target number of runs, e.g. for random or bayes sweeps. By default
+        the grid size from `count_combinations`; for grid sweeps it must
+        equal that.
     **kwargs
         Passed on to `wandb.sweep`.
 
@@ -354,7 +367,7 @@ def create_sweep_interactively(
     import wandb
 
     pprint(sweep_config)
-    est_runs = count_combinations(sweep_config["parameters"])
+    est_runs = _check_num_runs(sweep_config, num_runs)
     swept = extract_keys_with_values(sweep_config["parameters"])
 
     print("Entity:", entity)
@@ -443,6 +456,7 @@ def create_sweep(
     config_repo_dir=".",
     based_on_sweep: str | None = None,
     print_agent_command: bool = True,
+    num_runs: int | None = None,
 ) -> str:
     """Print or create a sweep, as chosen by the `SweepConfig` command line options.
 
@@ -467,6 +481,8 @@ def create_sweep(
         See `create_sweep_interactively`.
     print_agent_command : bool, optional
         See `create_sweep_interactively`.
+    num_runs : int, optional
+        See `create_sweep_interactively`.
 
     Returns
     -------
@@ -476,7 +492,7 @@ def create_sweep(
     options = parse_sweep_args()
     if options.dry_run:
         pprint(sweep_config)
-        print("Est. runs:", count_combinations(sweep_config["parameters"]))
+        print("Est. runs:", _check_num_runs(sweep_config, num_runs))
         return "dry-run"
     project = options.project or project or (default and default.project_name)
     entity = options.entity or entity or (default and default.repo) or WANDB_ENTITY
@@ -487,6 +503,7 @@ def create_sweep(
         based_on_sweep=based_on_sweep,
         entity=entity,
         print_agent_command=print_agent_command,
+        num_runs=num_runs,
     )
     return sweep_path
 
