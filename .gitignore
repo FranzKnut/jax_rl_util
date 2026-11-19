@@ -168,3 +168,4 @@ logs/
 data/
 output/
 poetry.lock
+MUJOCO_LOG.TXT

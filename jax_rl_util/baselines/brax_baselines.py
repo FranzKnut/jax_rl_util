@@ -36,10 +36,10 @@ class BraxBaselineConfig(LoggableConfig):
 
     project_name: str = "brax_baselines"
     logging: str | None = "wandb"
-    force: bool = False  # Force re-training even if model already exists
+    force: bool = True  # Force re-training even if model already exists
     env_config: EnvironmentConfig = field(
         default_factory=lambda: EnvironmentConfig(
-            env_name="hopper",
+            env_name="halfcheetah",
             init_kwargs={
                 "backend": "spring",
                 #     "reward_config": {
