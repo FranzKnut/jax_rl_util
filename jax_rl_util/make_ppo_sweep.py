@@ -38,11 +38,13 @@ PARAMS = {
         }
     },
     # Optimizer
-    "optimizer_params": {"parameters": {
-        "learning_rate": {"values": [1e-3]},
-        "opt_name": {"value": "adam"},
-        "gradient_clip": {"value": None},
-    }},
+    "optimizer_params": {
+        "parameters": {
+            "learning_rate": {"values": [1e-3]},
+            "opt_name": {"value": "adam"},
+            "gradient_clip": {"value": None},
+        }
+    },
     # RNN
     "num_units": {"value": 32},
     "model": {"values": ["LRU", "CTRNN"]},
@@ -59,8 +61,14 @@ if __name__ == "__main__":
     if is_trial_run():
         run_trial()
     else:
-        name = f"PPO {PARAMS['num_units']['value']}"
         create_sweep(
-            make_sweep_config(PARAMS, PPOParams, program=__file__, name=name),
+            make_sweep_config(
+                PARAMS,
+                PPOParams,
+                program=__file__,
+                metric="best_eval_reward",
+                goal="maximize",
+                name=f"PPO {PARAMS['num_units']['value']}",
+            ),
             PPOParams(),
         )

@@ -27,7 +27,9 @@ PARAMS = {
     # Environment
     "env_params": {
         "parameters": {
-            "env_name": {"values": ["hopper", "halfcheetah", "ant", "humanoid", "walker2d"]},
+            "env_name": {
+                "values": ["hopper", "halfcheetah", "ant", "humanoid", "walker2d"]
+            },
             "batch_size": {"value": 32},
             "max_ep_length": {"value": 1000},
             "obs_mask": {"value": None},
@@ -55,7 +57,9 @@ PARAMS = {
 
 def run_trial():
     """Train PPO with an RNN ensemble as one run of the sweep."""
-    with_logger(train_and_eval, PPOEnsembleParams(logging="wandb", repo="tuwien_roboracer"))
+    with_logger(
+        train_and_eval, PPOEnsembleParams(logging="wandb", repo="tuwien_roboracer")
+    )
 
 
 if __name__ == "__main__":
@@ -65,6 +69,13 @@ if __name__ == "__main__":
         modules = PARAMS["model_config"]["parameters"]["num_modules"]["values"]
         name = f"PPO ensemble {', '.join(map(str, modules))} modules"
         create_sweep(
-            make_sweep_config(PARAMS, PPOEnsembleParams, program=__file__, name=name),
+            make_sweep_config(
+                PARAMS,
+                PPOEnsembleParams,
+                program=__file__,
+                metric="best_eval_reward",
+                goal="maximize",
+                name=name,
+            ),
             PPOEnsembleParams(),
         )

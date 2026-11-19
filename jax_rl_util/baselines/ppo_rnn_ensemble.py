@@ -5,6 +5,7 @@ from dataclasses import dataclass, field, replace
 import flax.linen as nn
 import jax
 import jax.numpy as jnp
+import numpy as np
 import simple_parsing
 from jax_rl_util.baselines import ppo_rnn as base_ppo
 from jax_rl_util.envs import EnvironmentConfig
@@ -15,13 +16,6 @@ from jax_rl_util.util.logging_util import DummyLogger, with_logger
 from jax_rtrl.models.cells import CELL_TYPES
 from jax_rtrl.models.seq_models import RNNEnsembleConfig
 from jax_rtrl.networks.policies import PolicyConfig
-
-RESET_AWARE_MODELS = {
-    "lru",
-    "lru_rtrl",
-    "s5",
-    "s5_rtrl",
-}
 
 MODEL_DOWNCAST = {
     "rflo": "bptt",
@@ -56,7 +50,7 @@ class PPOEnsembleParams(base_ppo.PPOParams):
     train_encoder: bool = False  # Let gradients flow into the encoder and the shared RNN
     env_params: EnvironmentConfig = field(
         default_factory=lambda: EnvironmentConfig(
-            env_name="hopper",
+            env_name="halfcheetah",
             init_kwargs={"backend": "spring"},
             batch_size=32,
         )
@@ -73,8 +67,8 @@ def _resolve_rnn_config(config: "PPOEnsembleParams") -> PolicyConfig:
     """Resolve final RNNEnsemble config from PPO and optional RTRRL-style fields."""
     base_cfg = config.model_config
     model_name = base_cfg.model_name
-    if model_name.lower() in CELL_TYPES:
-        mapped = MODEL_DOWNCAST.get(model_name, model_name)
+    if model_name is not None and model_name.lower() in CELL_TYPES:
+        mapped = MODEL_DOWNCAST.get(model_name.lower(), model_name)
         if mapped != model_name:
             print(f"WARNING: PPOEnsemble uses '{mapped}' instead of online model '{model_name}'.")
         model_name = mapped
@@ -121,6 +115,11 @@ class EnsembleActorCritic(nn.Module):
             policy_cfg = replace(policy_cfg, out_dist="Categorical")
         elif policy_cfg.out_dist in {None, "Deterministic"}:
             policy_cfg = replace(policy_cfg, out_dist="LogStddevNormal")
+        elif policy_cfg.out_dist == "NormalTanh" and self.action_limits is not None:
+            low, high = (tuple(float(b) for b in np.ravel(lim)) for lim in self.action_limits)
+            if any(lo != -1.0 for lo in low) or any(hi != 1.0 for hi in high):
+                # Tanh only covers [-1, 1], so stretch it onto the env's bounds
+                policy_cfg = replace(policy_cfg, out_dist="ScaledNormalTanh", dist_loc_bounds=(low, high))
 
         critic_cfg = replace(policy_cfg, out_dist="Deterministic")
 
@@ -195,11 +194,24 @@ class EnsembleActorCritic(nn.Module):
         """Initialize the recurrent carry state."""
         return self.cell.initialize_carry(rng, input_shape)
 
+    @nn.nowrap
+    def param_labels(self, params):
+        """Label encoder and shared RNN params ``"frozen"`` unless ``train_encoder``, the rest ``"train"``."""
+        frozen = () if self.config.train_encoder else ("enc", "rnn")
+
+        def _label(path, _):
+            keys = tuple(getattr(k, "key", None) for k in path)
+            return "frozen" if len(keys) > 2 and keys[1] == "cell" and keys[2] in frozen else "train"
+
+        return jax.tree_util.tree_map_with_path(_label, params)
+
 
 def _prepare_config(config: PPOEnsembleParams) -> PPOEnsembleParams:
     rnn_config = _resolve_rnn_config(config)
     updates = {
         "model_config": rnn_config,
+        # Selects the optimizer's no-decay params and the default checkpoint path
+        "model": rnn_config.model_name or "mlp",
     }
     if rnn_config.hidden_size is not None and rnn_config.hidden_size != config.num_units:
         updates["num_units"] = rnn_config.hidden_size
@@ -214,6 +226,9 @@ def train_and_eval(
 ):
     """Train PPO with RNNEnsemble dynamics."""
     config = _prepare_config(config)
+    has_encoder = config.model_config.use_cnn or (config.rnn_config is not None and config.rnn_config.model_name)
+    if has_encoder and not config.train_encoder and param_overrides is None and config.fresh:
+        print("WARNING: train_encoder is False but no pretrained params are given, so the encoder stays random.")
     return base_ppo.train_and_eval(
         config,
         logger=logger,

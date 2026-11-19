@@ -74,7 +74,7 @@ class PPOParams(LoggableConfig):
     save_model: bool = False
     ckpt_path: str | None = None  # path or wandb run id
     fresh: bool = True  # Only load the hyperparameters, not the model
-    record_best_eval_episode: bool = True
+    record_best_eval_episode: bool = False
     deterministic_eval: bool = True
     measure_time: bool = False
 
@@ -86,9 +86,8 @@ class PPOParams(LoggableConfig):
             batch_size=128,
         )
     )
-    dt: float = 1.0
     normalize_obs: bool = False
-    normalize_gae: bool = False
+    normalize_gae: bool = True
 
     # Model Settings
     model: str = "CTRNN"
@@ -96,8 +95,6 @@ class PPOParams(LoggableConfig):
     num_units: int = 32
     meta_rl: bool = False
     act_dist_name: str = "normal"
-    log_norms: bool = False
-    record_best_eval_episode: bool = False
 
     # Training Settings
     episodes: int = 1000
@@ -113,7 +110,7 @@ class PPOParams(LoggableConfig):
     rollout_horizon: int = 20
     train_batch_size: int = 256
     update_steps: int = 10
-    update_epochs: int = 4
+    update_epochs: int = 4  # Gradient steps per update, one sampled minibatch each
     fixed_env_rng: bool = False
 
     # Optimization settings
@@ -479,19 +476,36 @@ class Transition(NamedTuple):
     obs: jnp.ndarray
     hidden: jnp.ndarray
     info: jnp.ndarray
+    truncated: jnp.ndarray
     # state: jnp.ndarray
     env_state: brax.envs.State = None
     next_env_state: brax.envs.State = None
 
 
+def _truncation(env_state, done):
+    """Get the time-limit truncation flag, zeros if the env doesn't report it."""
+    return env_state.info.get("truncation", jnp.zeros_like(done))
+
+
 def calculate_gae(transitions, values, last_val, gamma=0.99, gae_lambda=0.95):
-    """Compute the generalized advantage estimates."""
+    """
+    Compute the generalized advantage estimates.
+
+    Notes
+    -----
+    Truncated steps get zero advantage, so their value target is the prediction itself,
+    as in Brax PPO. The next observation after an auto-reset is the reset one, so the
+    bootstrap value of a truncated episode isn't available.
+    """
 
     def _get_advantages(carry, _batch: tuple[Transition, jax.Array]):
         gae, next_value = carry
         _transition, _value = _batch
         next_done, reward = _transition.done, _transition.reward.squeeze()
-        delta = reward + gamma * next_value * (1 - next_done) - _value
+        next_done = next_done.astype(_value.dtype)
+        truncated = _transition.truncated.astype(_value.dtype)
+        terminal = next_done * (1 - truncated)
+        delta = (reward + gamma * next_value * (1 - terminal) - _value) * (1 - truncated)
         gae = delta + gamma * gae_lambda * (1 - next_done) * gae
         return (gae, _value), gae
 
@@ -599,7 +613,7 @@ def make_train(
             restored_cfg = normalize_legacy_optimizer_config(restored_cfg)
             if "ckpt_path" not in restored_cfg:
                 restored_cfg["ckpt_path"] = config.ckpt_path
-            config = PPOParams.from_dict(restored_cfg, drop_extra_fields=True)
+            config = type(config).from_dict(restored_cfg, drop_extra_fields=True)
 
         if network_params is None:
             network_params = init_params
@@ -613,6 +627,12 @@ def make_train(
         if isinstance(optimizer_config, dict):
             optimizer_config = OptimizerConfig(**optimizer_config)
         tx = make_optimizer_for_model(config.model.lower(), optimizer_config)
+        if hasattr(network, "param_labels"):
+            # set_to_zero also keeps weight decay off frozen params
+            tx = optax.multi_transform(
+                {"train": tx, "frozen": optax.set_to_zero()},
+                network.param_labels(network_params),
+            )
         train_state = TrainState.create(
             apply_fn=network.apply,
             params=network_params,
@@ -639,6 +659,25 @@ def make_train(
 
             def normalize(x, y):
                 return x  # noqa
+
+        def _policy_input(obs, prev_act, prev_rew, _normalizer_state):
+            """Normalize raw observations and append previous action and reward for meta-RL."""
+            x = normalize(obs, _normalizer_state)
+            if obs_transform_fn is not None:
+                x = obs_transform_fn(x)
+            if config.meta_rl:
+                x = jnp.concatenate(
+                    [x, prev_act, prev_rew.reshape((*x.shape[:-1], 1))], axis=-1
+                )
+            return x
+
+        def _env_action(action):
+            """Map a policy sample to the action sent to the env."""
+            if act_transform_fn is not None:
+                action = act_transform_fn(action)
+            if env_info["act_clip"]:
+                action = jnp.clip(action, *action_clip)
+            return action
 
         # Make Buffer
         buffer = fbx.make_trajectory_buffer(
@@ -667,10 +706,6 @@ def make_train(
 
             print("Evaluating with key:", rng_init)
             env_state = eval_env.reset(rng_init)
-            # Normalize observations
-            env_state = env_state.replace(
-                obs=normalize(env_state.obs, _normalizer_state)
-            )  # TODO: don't write normalized obs back to env_state, only use for policy input
             runner_state = (
                 env_state,
                 jnp.zeros((eval_env.batch_size, env.action_size)),
@@ -689,18 +724,12 @@ def make_train(
                 rng, _rng = jax.random.split(rng)
 
                 # SELECT ACTION
-                x = _env_state.obs[None, :]
-                if obs_transform_fn is not None:
-                    x = obs_transform_fn(x)
-                if config.meta_rl:
-                    x = jnp.concatenate(
-                        [
-                            x,
-                            last_act[None],
-                            _env_state.reward.reshape((1, eval_env.batch_size, -1)),
-                        ],
-                        axis=-1,
-                    )
+                x = _policy_input(
+                    _env_state.obs[None],
+                    last_act[None],
+                    _env_state.reward[None],
+                    _normalizer_state,
+                )
                 ac_in = (x, _env_state.done[None, :])
                 next_hstate, pi, value = network.apply(
                     params, prev_hstate, ac_in, rngs={"default": _rng}
@@ -709,11 +738,8 @@ def make_train(
                     action = pi.mode()
                 else:
                     action = pi.sample(seed=_rng)
-                if act_transform_fn is not None:
-                    action = act_transform_fn(action)
-                if env_info["act_clip"]:
-                    action = jnp.clip(action, *action_clip)
                 log_prob = pi.log_prob(action)
+                action = _env_action(action)
                 value, action, log_prob = (
                     value.squeeze(0),
                     action.squeeze(0),
@@ -739,6 +765,7 @@ def make_train(
                     # next_obs= # next_env_state.obs,
                     hidden=prev_hstate,
                     info=_env_state.info,
+                    truncated=_truncation(next_env_state, next_env_state.done),
                     # state=_env_state.pipeline_state,
                 )
 
@@ -786,40 +813,31 @@ def make_train(
                 rng, _rng = jax.random.split(rng)
 
                 # SELECT ACTION
-                x = normalize(env_state.obs, _normalizer_state)
-                if obs_transform_fn is not None:
-                    x = obs_transform_fn(x)
-                if config.meta_rl:
-                    x = jnp.concatenate(
-                        [x, last_act, env_state.reward.reshape((env.batch_size, 1))],
-                        axis=-1,
-                    )
+                x = _policy_input(
+                    env_state.obs, last_act, env_state.reward, _normalizer_state
+                )
                 ac_in = (x[None], env_state.done[None, :])
                 next_hstate, pi, value = network.apply(
                     train_state.params, prev_hstate, ac_in, rngs={"default": _rng}
                 )
-                action = pi.sample(seed=_rng)
-                if act_transform_fn is not None:
-                    action = act_transform_fn(action)
-                if env_info["act_clip"]:
-                    action = jnp.clip(action, *action_clip)
-                log_prob = pi.log_prob(action)
-                value, action, log_prob = (
+                # Store the raw sample so the loss sees the same log-prob
+                raw_action = pi.sample(seed=_rng)
+                log_prob = pi.log_prob(raw_action)
+                action = _env_action(raw_action)
+                value, raw_action, action, log_prob = (
                     value.squeeze(0),
+                    raw_action.squeeze(0),
                     action.squeeze(0),
                     log_prob.squeeze(0),
                 )
 
                 # STEP ENV
                 next_env_state = env.step(env_state, action)
-                next_env_state = next_env_state.replace(
-                    obs=normalize(next_env_state.obs, _normalizer_state)
-                )
 
                 transition = Transition(
                     prev_done=env_state.done,
                     done=next_env_state.done,
-                    action=action,
+                    action=raw_action,
                     prev_action=last_act,
                     value=value,
                     reward=next_env_state.reward,
@@ -829,6 +847,7 @@ def make_train(
                     # next_obs= # next_env_state.obs,
                     hidden=prev_hstate,
                     info=env_state.info,
+                    truncated=_truncation(next_env_state, next_env_state.done),
                     # state=env_state.pipeline_state,
                 )
 
@@ -861,20 +880,11 @@ def make_train(
                 runner_state
             )
 
-            # UPDATE NORMALIZER
-            if config.normalize_obs:
-                _normalizer_state = running_statistics.update(
-                    _normalizer_state, traj_batch.obs
-                )
-
             # CALCULATE ADVANTAGES
             # Compute the last value
-            x = normalize(env_state.obs, _normalizer_state)
-            if config.meta_rl:
-                x = jnp.concatenate(
-                    [x, re_action, env_state.reward.reshape((env.batch_size, 1))],
-                    axis=-1,
-                )
+            x = _policy_input(
+                env_state.obs, re_action, env_state.reward, _normalizer_state
+            )
             ac_in = (x[None], env_state.done[None, :])
             _, _, _last_val = network.apply(
                 train_state.params, hstate, ac_in, rngs={"default": rng}
@@ -910,16 +920,12 @@ def make_train(
                             lambda a: a[0], transition.hidden
                         )  # T=0, B, H
                         # RERUN NETWORK
-                        x = normalize(transition.obs, _normalizer_state)
-                        if config.meta_rl:
-                            x = jnp.concatenate(
-                                [
-                                    x,
-                                    transition.prev_action,
-                                    transition.prev_reward.reshape((*x.shape[:2], 1)),
-                                ],
-                                axis=-1,
-                            )
+                        x = _policy_input(
+                            transition.obs,
+                            transition.prev_action,
+                            transition.prev_reward,
+                            _normalizer_state,
+                        )
                         _, pi, v_hat = network.apply(
                             params,
                             _init_hstate,
@@ -940,11 +946,13 @@ def make_train(
 
                         # CALCULATE ACTOR LOSS
                         diff = log_prob - transition.log_prob
-                        if not env_info["discrete"]:
-                            diff = diff.mean(axis=-1)
+                        if diff.ndim > transition.done.ndim:
+                            # Joint log-prob of independent action dims
+                            diff = diff.sum(axis=-1)
                         # diff = jnp.clip(diff, max=10)  # HACK avoids some NaNs!
                         ratio = jnp.exp(diff)
-                        _gae = (_gae - _gae.mean()) / (_gae.std() + 1e-8)
+                        if config.normalize_gae:
+                            _gae = (_gae - _gae.mean()) / (_gae.std() + 1e-8)
                         _gae = _gae.reshape(*ratio.shape)
                         loss_actor1 = ratio * _gae
                         loss_actor2 = (
@@ -1016,6 +1024,12 @@ def make_train(
             update_state, loss_info = jax.lax.scan(
                 _update_epoch, update_state, np.arange(config.update_epochs)
             )
+
+            # UPDATE NORMALIZER after the loss, which must see the rollout's statistics
+            if config.normalize_obs:
+                _normalizer_state = running_statistics.update(
+                    _normalizer_state, traj_batch.obs
+                )
             runner_state = (
                 update_state[0],
                 env_state,
@@ -1055,6 +1069,8 @@ def make_train(
         # Get initial reward
         initial_eval_reward, _traj = eval_model(runner_state[0].params, runner_state[2])
         best_eval_reward = -np.inf
+        eval_reward = initial_eval_reward
+        best_params = runner_state[0].params
         steps_since_best = 0
         logger["initial_eval"] = initial_eval_reward
         print(f"Initial eval reward: {initial_eval_reward:.2f}")
@@ -1179,7 +1195,6 @@ def make_train(
                         "reward": t.reward,
                         "done": t.done,
                         **t.info,
-                        **t.state,
                     }
 
                 out_dir = f"data/{config.env_params.env_name}"
@@ -1196,8 +1211,7 @@ def make_train(
                     **_prep_ep(trajectories),
                 )
 
-                _prep_ep(trajectories)
-                env_params = getattr(env, "params")
+                env_params = getattr(env, "params", None)
                 if env_params:
                     with open(
                         f"{out_dir}/ppo_env_params_{str(config.seed)}.pkl", "wb"

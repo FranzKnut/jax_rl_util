@@ -50,7 +50,9 @@ PARAMS = {
             "max_ep_length": {"value": 1000},
             "init_kwargs": {
                 "parameters": {
-                    "backend": {"values": ["spring"]},  # "mjx", "generalized", "positional"
+                    "backend": {
+                        "values": ["spring"]
+                    },  # "mjx", "generalized", "positional"
                 }
             },
         }
@@ -67,9 +69,18 @@ if __name__ == "__main__":
     if is_trial_run():
         run_trial()
     else:
-        backends = PARAMS["env_config"]["parameters"]["init_kwargs"]["parameters"]["backend"]["values"]
+        backends = PARAMS["env_config"]["parameters"]["init_kwargs"]["parameters"][
+            "backend"
+        ]["values"]
         name = f"brax baselines ({', '.join(backends)})"
         create_sweep(
-            make_sweep_config(PARAMS, BraxBaselineConfig, program=__file__, name=name),
+            make_sweep_config(
+                PARAMS,
+                BraxBaselineConfig,
+                program=__file__,
+                name=name,
+                metric="best_eval_reward",
+                goal="maximize",
+            ),
             BraxBaselineConfig(),
         )
