@@ -46,21 +46,29 @@ class PPOEnsembleParams(base_ppo.PPOParams):
             dist_scale_bounds=(1e-5, 1.0),
         )
     )
-    rnn_config: RNNEnsembleConfig | None = None  # Shared RNN before actor and critic, e.g. from an RTRRL checkpoint
-    train_encoder: bool = False  # Let gradients flow into the encoder and the shared RNN
+    rnn_config: RNNEnsembleConfig | None = (
+        None  # Shared RNN before actor and critic, e.g. from an RTRRL checkpoint
+    )
+    train_encoder: bool = (
+        False  # Let gradients flow into the encoder and the shared RNN
+    )
     env_params: EnvironmentConfig = field(
         default_factory=lambda: EnvironmentConfig(
             env_name="halfcheetah",
             init_kwargs={"backend": "spring"},
-            batch_size=32,
+            batch_size=2048,
         )
     )
     optimizer_params: OptimizerConfig = field(
         default_factory=lambda: OptimizerConfig(
             opt_name="adam",
-            learning_rate=1e-3,
+            learning_rate=3e-4,
         )
     )
+    normalize_obs: bool = True  # Normalize observations with running statistics
+    gamma: float = 0.95  # Discount factor
+    ent_coef: float = 0.001  # Entropy regularization coefficient
+    clip_value: bool = False  # Clip value updates to clip_eps around the rollout value
 
 
 def _resolve_rnn_config(config: "PPOEnsembleParams") -> PolicyConfig:
@@ -70,10 +78,16 @@ def _resolve_rnn_config(config: "PPOEnsembleParams") -> PolicyConfig:
     if model_name is not None and model_name.lower() in CELL_TYPES:
         mapped = MODEL_DOWNCAST.get(model_name.lower(), model_name)
         if mapped != model_name:
-            print(f"WARNING: PPOEnsemble uses '{mapped}' instead of online model '{model_name}'.")
+            print(
+                f"WARNING: PPOEnsemble uses '{mapped}' instead of online model '{model_name}'."
+            )
         model_name = mapped
     updates = {"model_name": model_name}
-    if model_name is not None and base_cfg.hidden_size is None and base_cfg.layers is None:
+    if (
+        model_name is not None
+        and base_cfg.hidden_size is None
+        and base_cfg.layers is None
+    ):
         updates["hidden_size"] = config.num_units
 
     return replace(base_cfg, **updates)
@@ -84,7 +98,11 @@ def _downcast(config):
     if config is None or config.model_name is None:
         return config
     mapped = MODEL_DOWNCAST.get(config.model_name, config.model_name)
-    return config if mapped == config.model_name else replace(config, _layers=config.layers, model_name=mapped)
+    return (
+        config
+        if mapped == config.model_name
+        else replace(config, _layers=config.layers, model_name=mapped)
+    )
 
 
 def _extract_value(value_dist):
@@ -116,10 +134,14 @@ class EnsembleActorCritic(nn.Module):
         elif policy_cfg.out_dist in {None, "Deterministic"}:
             policy_cfg = replace(policy_cfg, out_dist="LogStddevNormal")
         elif policy_cfg.out_dist == "NormalTanh" and self.action_limits is not None:
-            low, high = (tuple(float(b) for b in np.ravel(lim)) for lim in self.action_limits)
+            low, high = (
+                tuple(float(b) for b in np.ravel(lim)) for lim in self.action_limits
+            )
             if any(lo != -1.0 for lo in low) or any(hi != 1.0 for hi in high):
                 # Tanh only covers [-1, 1], so stretch it onto the env's bounds
-                policy_cfg = replace(policy_cfg, out_dist="ScaledNormalTanh", dist_loc_bounds=(low, high))
+                policy_cfg = replace(
+                    policy_cfg, out_dist="ScaledNormalTanh", dist_loc_bounds=(low, high)
+                )
 
         critic_cfg = replace(policy_cfg, out_dist="Deterministic")
 
@@ -155,13 +177,21 @@ class EnsembleActorCritic(nn.Module):
             @nn.compact
             def __call__(self, carry_i, xs):
                 obs_i, done_i, h0_i = xs
-                carry_i = jax.tree.map(lambda a, b: jnp.where(done_i, a, b), h0_i, carry_i)
-                encoded, rnn_state = self.cell.encode(carry_i[0], obs_i, reset=done_i, training=True)
+                carry_i = jax.tree.map(
+                    lambda a, b: jnp.where(done_i, a, b), h0_i, carry_i
+                )
+                encoded, rnn_state = self.cell.encode(
+                    carry_i[0], obs_i, reset=done_i, training=True
+                )
                 if not _train_encoder:
                     encoded = jax.lax.stop_gradient(encoded)
                     rnn_state = jax.lax.stop_gradient(rnn_state)
-                v_state, v_dist = self.cell.value(encoded, obs_i, carry_i[1], training=True)
-                pi_state, _pi_dist = self.cell.policy(encoded, pi_state=carry_i[2], training=True)
+                v_state, v_dist = self.cell.value(
+                    encoded, obs_i, carry_i[1], training=True
+                )
+                pi_state, _pi_dist = self.cell.policy(
+                    encoded, pi_state=carry_i[2], training=True
+                )
 
                 _value = _extract_value(v_dist)
                 if isinstance(_pi_dist, tuple):
@@ -170,8 +200,12 @@ class EnsembleActorCritic(nn.Module):
 
         batch_step = nn.vmap(
             _StepModule,
-            variable_axes={k: None for k in ["params", "falign", "batch_stats", "wiring"]},
-            split_rngs={k: False for k in ["params", "falign", "batch_stats", "wiring"]},
+            variable_axes={
+                k: None for k in ["params", "falign", "batch_stats", "wiring"]
+            },
+            split_rngs={
+                k: False for k in ["params", "falign", "batch_stats", "wiring"]
+            },
             in_axes=(0, 0),
             out_axes=(0, 0),
         )
@@ -179,14 +213,18 @@ class EnsembleActorCritic(nn.Module):
         scan_step = nn.scan(
             batch_step,
             variable_broadcast=["params", "falign", "batch_stats", "wiring"],
-            split_rngs={k: False for k in ["params", "falign", "batch_stats", "wiring"]},
+            split_rngs={
+                k: False for k in ["params", "falign", "batch_stats", "wiring"]
+            },
             in_axes=0,
             out_axes=0,
         )
 
         h0_t = jax.tree.map(lambda x: jnp.broadcast_to(x, (obs.shape[0], *x.shape)), h0)
 
-        carry, (pi_dist, value) = scan_step(cell=self.cell, name="scan_step")(carry, (obs, dones, h0_t))
+        carry, (pi_dist, value) = scan_step(cell=self.cell, name="scan_step")(
+            carry, (obs, dones, h0_t)
+        )
         return carry, pi_dist, value
 
     @nn.nowrap
@@ -201,7 +239,11 @@ class EnsembleActorCritic(nn.Module):
 
         def _label(path, _):
             keys = tuple(getattr(k, "key", None) for k in path)
-            return "frozen" if len(keys) > 2 and keys[1] == "cell" and keys[2] in frozen else "train"
+            return (
+                "frozen"
+                if len(keys) > 2 and keys[1] == "cell" and keys[2] in frozen
+                else "train"
+            )
 
         return jax.tree_util.tree_map_with_path(_label, params)
 
@@ -213,7 +255,10 @@ def _prepare_config(config: PPOEnsembleParams) -> PPOEnsembleParams:
         # Selects the optimizer's no-decay params and the default checkpoint path
         "model": rnn_config.model_name or "mlp",
     }
-    if rnn_config.hidden_size is not None and rnn_config.hidden_size != config.num_units:
+    if (
+        rnn_config.hidden_size is not None
+        and rnn_config.hidden_size != config.num_units
+    ):
         updates["num_units"] = rnn_config.hidden_size
     return replace(config, **updates)
 
@@ -226,9 +271,18 @@ def train_and_eval(
 ):
     """Train PPO with RNNEnsemble dynamics."""
     config = _prepare_config(config)
-    has_encoder = config.model_config.use_cnn or (config.rnn_config is not None and config.rnn_config.model_name)
-    if has_encoder and not config.train_encoder and param_overrides is None and config.fresh:
-        print("WARNING: train_encoder is False but no pretrained params are given, so the encoder stays random.")
+    has_encoder = config.model_config.use_cnn or (
+        config.rnn_config is not None and config.rnn_config.model_name
+    )
+    if (
+        has_encoder
+        and not config.train_encoder
+        and param_overrides is None
+        and config.fresh
+    ):
+        print(
+            "WARNING: train_encoder is False but no pretrained params are given, so the encoder stays random."
+        )
     return base_ppo.train_and_eval(
         config,
         logger=logger,
@@ -239,7 +293,9 @@ def train_and_eval(
 
 
 if __name__ == "__main__":
-    args: PPOEnsembleParams = simple_parsing.parse(PPOEnsembleParams, add_config_path_arg=True)
+    args: PPOEnsembleParams = simple_parsing.parse(
+        PPOEnsembleParams, add_config_path_arg=True
+    )
     if args.ckpt_path and args.fresh:
         restore_path = base_ppo.resolve_restore_path(args.ckpt_path)
         print(f"Restoring config from: {restore_path}")

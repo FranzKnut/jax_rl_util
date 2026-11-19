@@ -108,9 +108,9 @@ class PPOParams(LoggableConfig):
     eval_batch_size: int = 10
     collect_steps: int = 100
     rollout_horizon: int = 20
-    train_batch_size: int = 256
-    update_steps: int = 10
-    update_epochs: int = 4  # Gradient steps per update, one sampled minibatch each
+    train_batch_size: int = 512
+    update_steps: int = 1
+    update_epochs: int = 256  # Gradient steps per update, one sampled minibatch each
     fixed_env_rng: bool = False
 
     # Optimization settings
@@ -123,6 +123,7 @@ class PPOParams(LoggableConfig):
     gamma: float = 0.99
     gae_lambda: float = 0.95
     clip_eps: float = 0.2
+    clip_value: bool = True  # Clip value updates to clip_eps around the rollout value
     ent_coef: float = 0e-5
     vf_coef: float = 0.5
     anneal_ent: bool = False
@@ -935,14 +936,14 @@ def make_train(
                         log_prob = pi.log_prob(transition.action)
 
                         # CALCULATE VALUE LOSS
-                        value_pred_clipped = transition.value + (
-                            v_hat - transition.value
-                        ).clip(-config.clip_eps, config.clip_eps)
                         value_losses = jnp.square(_val - v_hat)
-                        value_losses_clipped = jnp.square(_val - value_pred_clipped)
-                        value_loss = (
-                            0.5 * jnp.maximum(value_losses, value_losses_clipped).mean()
-                        )
+                        if config.clip_value:
+                            value_pred_clipped = transition.value + (
+                                v_hat - transition.value
+                            ).clip(-config.clip_eps, config.clip_eps)
+                            value_losses_clipped = jnp.square(_val - value_pred_clipped)
+                            value_losses = jnp.maximum(value_losses, value_losses_clipped)
+                        value_loss = 0.5 * value_losses.mean()
 
                         # CALCULATE ACTOR LOSS
                         diff = log_prob - transition.log_prob
@@ -966,10 +967,15 @@ def make_train(
                         loss_actor = -jnp.minimum(loss_actor1, loss_actor2).mean()
                         total_loss = loss_actor + config.vf_coef * value_loss
 
-                        if hasattr(pi, "distribution"):
-                            entropy = pi.distribution.entropy().mean()
-                        else:
-                            entropy = pi.entropy().mean()
+                        try:
+                            entropy = pi.entropy()
+                        except NotImplementedError:
+                            # Transformed dists with non-constant Jacobian
+                            entropy = pi.distribution.entropy()
+                        if entropy.ndim > transition.done.ndim:
+                            # Joint entropy of independent action dims
+                            entropy = entropy.sum(axis=-1)
+                        entropy = entropy.mean()
                         if config.ent_coef:
                             total_loss -= entropy_schedule(epoch) * entropy
 
@@ -979,6 +985,9 @@ def make_train(
                             "entropy": entropy,
                             "gae": _gae,
                             "log_prob_diff": diff,
+                            "value_clip_frac": (
+                                jnp.abs(v_hat - transition.value) > config.clip_eps
+                            ).mean(),
                         }
                         if config.sparsity_penalty:
                             from jax_rtrl.models.regularization import (
@@ -1120,7 +1129,10 @@ def make_train(
                     else:
                         steps_since_best += 1
                     log_steps = (
-                        (i + 1) * config.collect_steps * config.env_params.batch_size
+                        (i + 1)
+                        * config.update_steps
+                        * config.collect_steps
+                        * config.env_params.batch_size
                     )
 
                     logger.log(loggables, step=log_steps)
